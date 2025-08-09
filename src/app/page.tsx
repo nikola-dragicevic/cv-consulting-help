@@ -180,101 +180,278 @@ export default function CVConsultationService() {
           </div>
         </div>
       </section>
+      {/* === MATCHING + PAID SIDE-BY-SIDE SECTION === */}
+      <section id="match-vs-paid" className="py-20 bg-white">
+  <div className="container mx-auto px-4">
+    <div className="grid lg:grid-cols-2 gap-12 items-start">
+      
+      {/* 🔍 FREE MATCHING FORM */}
+      <div className="bg-slate-50 rounded-xl p-6 shadow-md border">
+        <h2 className="text-2xl font-bold mb-4 text-slate-900 text-center">
+          🔍 Matcha dig med rätt jobb (gratis)
+        </h2>
+        <p className="text-center text-slate-600 mb-6">
+          Ladda upp ditt CV, fyll i dina uppgifter och få jobbförslag baserat på dina preferenser – helt kostnadsfritt.
+        </p>
 
-      {/* Packages Section */}
-      <section id="packages" className="py-20 bg-slate-50">
-        <div className="container mx-auto px-4">
-          <div className="text-center space-y-4 mb-16">
-            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Välj ditt paket</h2>
-            <p className="text-xl text-slate-600 max-w-2xl mx-auto">
-              Välj det paket som passar dina behov. Konsultation rekommenderas för bästa resultat.
-            </p>
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="fullName">Fullständigt namn</Label>
+            <Input id="fullName" placeholder="Förnamn Efternamn" />
           </div>
 
-          <div className="max-w-4xl mx-auto">
-            <RadioGroup value={selectedPackage} onValueChange={setSelectedPackage} className="space-y-6">
-              {packages.map((pkg) => (
-  <label key={pkg.id} htmlFor={pkg.id} className="block cursor-pointer">
-    <input
-      type="radio"
-      id={pkg.id}
-      value={pkg.id}
-      checked={selectedPackage === pkg.id}
-      onChange={() => setSelectedPackage(pkg.id)}
-      className="sr-only"
-    />
-    <Card
-  className={`relative transition-all duration-200 hover:shadow-md ${
-    selectedPackage === pkg.id
-      ? pkg.recommended
-        ? "ring-2 ring-amber-400 shadow-lg"
-        : "ring-2 ring-blue-500 shadow-lg"
-      : ""
-  }`}
-    >
-      {pkg.recommended && (
-  <div className="absolute -top-3 left-6">
-    <Badge className="bg-amber-500 hover:bg-amber-600 text-white">⭐ Rekommenderas</Badge>
-  </div>
-)}
+          <div>
+            <Label htmlFor="emailFree">E-postadress</Label>
+            <Input id="emailFree" type="email" placeholder="din@email.se" />
+          </div>
 
-{pkg.recommended && selectedPackage === pkg.id && (
-  <div className="absolute bottom-4 right-4 animate-fade-in-up">
-    <Badge className="bg-blue-600 text-white text-xs px-3 py-1 shadow-md rounded-full">
-      ✅ Rekommenderat val
-    </Badge>
-  </div>
-)}
-      <CardHeader className="pb-4">
-        <div className="flex items-start gap-4">
-          <div className="mt-1">
-            <div
-              className={`w-4 h-4 rounded-full border-2 ${
-                selectedPackage === pkg.id ? "bg-blue-500 border-blue-600" : "border-gray-400"
-              }`}
+          <div>
+            <Label htmlFor="phoneFree">Telefonnummer</Label>
+            <Input id="phoneFree" placeholder="070-123 45 67" />
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="city">Stad</Label>
+              <Input id="city" placeholder="Stockholm, Göteborg etc." />
+            </div>
+            <div>
+              <Label htmlFor="street">Gata (utan nummer)</Label>
+              <Input id="street" placeholder="Ex: Klarabergsgatan" />
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="cvUpload">CV (PDF, DOCX, TXT)</Label>
+            <Input
+              id="cvUpload"
+              type="file"
+              accept=".pdf,.doc,.docx,.txt"
+              className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
             />
           </div>
-          <div className="flex-1">
-            <div className="flex justify-between items-start mb-2">
-              <CardTitle className="text-xl">{pkg.name}</CardTitle>
-              <div className="text-2xl font-bold text-blue-600">{pkg.price} kr</div>
-            </div>
-            <CardDescription className="text-base">{pkg.description}</CardDescription>
-          </div>
+
+          <div className="space-y-6 mt-6">
+  <h3 className="text-lg font-semibold text-slate-800">Matchningsquiz (Rekommenderas starkt för bästa matchning)</h3>
+  <p className="text-sm text-slate-500 -mt-2">
+    Du kan hoppa över detta – men ju mer vi vet, desto bättre blir dina jobbförslag.
+  </p>
+
+  {/* Archetype Ranking */}
+  <div>
+    <Label>Vilken typ av arbete gillar du mest?</Label>
+    <select className="mt-2 w-full border rounded-md px-3 py-2 text-sm">
+      <option value="">Välj ett alternativ</option>
+      <option value="creator">Skapa och bygga (t.ex. hantverk, praktiskt arbete)</option>
+      <option value="organizer">Planera och organisera (t.ex. logistik, administration)</option>
+      <option value="helper">Hjälpa andra (t.ex. vård, kundsupport)</option>
+      <option value="analyst">Analysera och tänka (t.ex. teknik, forskning)</option>
+      <option value="communicator">Kommunicera och övertyga (t.ex. försäljning, PR)</option>
+      <option value="artist">Skapa och uttrycka kreativitet (t.ex. design, konst)</option>
+    </select>
+  </div>
+
+  {/* Workplace Preference Sliders (simplified) */}
+  <div>
+    <Label>Arbetsmiljö</Label>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2 text-sm">
+      <div>
+        <Label htmlFor="pace">Tempo</Label>
+        <select id="pace" className="mt-1 w-full border rounded-md px-3 py-2">
+          <option value="">–</option>
+          <option value="relaxed">Lugnt och stabilt</option>
+          <option value="fast">Snabbt och dynamiskt</option>
+        </select>
+      </div>
+      <div>
+        <Label htmlFor="collab">Samarbete</Label>
+        <select id="collab" className="mt-1 w-full border rounded-md px-3 py-2">
+          <option value="">–</option>
+          <option value="independent">Självständigt arbete</option>
+          <option value="collaborative">Tätt samarbete i team</option>
+        </select>
+      </div>
+      <div>
+        <Label htmlFor="structure">Struktur</Label>
+        <select id="structure" className="mt-1 w-full border rounded-md px-3 py-2">
+          <option value="">–</option>
+          <option value="flexible">Flexibelt och spontant</option>
+          <option value="structured">Tydligt och förutsägbart</option>
+        </select>
+      </div>
+      <div>
+        <Label htmlFor="companySize">Företagsstorlek</Label>
+        <select id="companySize" className="mt-1 w-full border rounded-md px-3 py-2">
+          <option value="">–</option>
+          <option value="small">Litet team (2–20)</option>
+          <option value="medium">Mellanstort (20–200)</option>
+          <option value="large">Stort företag (1000+)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  {/* Values (checkbox multi-select) */}
+  <div>
+    <Label>Vad är viktigast för dig i ett jobb?</Label>
+    <div className="mt-2 space-y-2 text-sm">
+      {[
+        "Balans mellan jobb och fritid",
+        "Hög lön",
+        "Stabilitet och trygghet",
+        "Personlig utveckling",
+        "Ledarskapsmöjligheter",
+        "Göra nytta för samhället",
+        "Frihet och självständighet",
+        "Status och erkännande",
+        "Kreativitet och innovation",
+        "Stark teamkänsla",
+      ].map((label, i) => (
+        <div key={i} className="flex items-center space-x-2">
+          <input type="checkbox" id={`val-${i}`} className="w-4 h-4" />
+          <label htmlFor={`val-${i}`} className="text-slate-700">{label}</label>
         </div>
-      </CardHeader>
-      <CardContent>
-        <div className="ml-8">
-          <ul className="space-y-2">
-            {pkg.features.map((feature, index) => (
-              <li key={index} className="flex items-center gap-3">
-                <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
-                <span className="text-sm">{feature}</span>
-              </li>
+      ))}
+    </div>
+  </div>
+  <div>
+  <Label htmlFor="additionalInfo">Övrig information (Lite extra som höjer matchningsförmåga)</Label>
+  <Textarea
+    id="additionalInfo"
+    placeholder="Skriv vad du vill – extra detaljer, drömjobb, situation osv."
+    rows={4}
+/>
+</div>
+</div>
+
+          <Button
+  className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg py-3"
+  onClick={async () => {
+    const form = new FormData()
+    form.append("fullName", (document.getElementById("fullName") as HTMLInputElement)?.value)
+    form.append("email", (document.getElementById("emailFree") as HTMLInputElement)?.value)
+    form.append("phone", (document.getElementById("phoneFree") as HTMLInputElement)?.value)
+    form.append("city", (document.getElementById("city") as HTMLInputElement)?.value)
+    form.append("street", (document.getElementById("street") as HTMLInputElement)?.value)
+    form.append("additionalInfo", (document.getElementById("additionalInfo") as HTMLTextAreaElement)?.value)
+
+    const file = (document.getElementById("cvUpload") as HTMLInputElement)?.files?.[0]
+    if (file) form.append("cv", file)
+
+    form.append("archetype", (document.querySelector("select") as HTMLSelectElement)?.value || "")
+
+    form.append("pace", (document.getElementById("pace") as HTMLSelectElement)?.value)
+    form.append("collab", (document.getElementById("collab") as HTMLSelectElement)?.value)
+    form.append("structure", (document.getElementById("structure") as HTMLSelectElement)?.value)
+    form.append("companySize", (document.getElementById("companySize") as HTMLSelectElement)?.value)
+
+    document.querySelectorAll('input[type="checkbox"]:checked').forEach((el) => {
+      form.append("values", (el.nextElementSibling as HTMLLabelElement)?.innerText)
+    })
+
+    const res = await fetch("/api/create-candidate-profile", {
+      method: "POST",
+      body: form,
+    })
+
+    const result = await res.json()
+
+    if (result.success) {
+      alert("✅ Tack! Vi återkommer med matchningar inom kort.")
+    } else {
+      alert("❌ Något gick fel. Försök igen.")
+    }
+  }}
+>
+  Skicka in för matchning (gratis)
+</Button>
+        </div>
+      </div>
+
+      {/* 🎯 PAID PACKAGE SELECTION */}
+      <div className="bg-slate-50 rounded-xl p-6 shadow-md border">
+        <h2 className="text-2xl font-bold mb-4 text-slate-900 text-center">🎯 Behöver du mer hjälp?</h2>
+        <p className="text-center text-slate-600 mb-6">
+          Jag hjälper dig att skapa ett professionellt CV, personligt brev och förbereder dig inför intervjuer.
+        </p>
+
+        <div className="space-y-6">
+          <RadioGroup value={selectedPackage} onValueChange={setSelectedPackage} className="space-y-6">
+            {packages.map((pkg) => (
+              <label key={pkg.id} htmlFor={pkg.id} className="block cursor-pointer">
+                <input
+                  type="radio"
+                  id={pkg.id}
+                  value={pkg.id}
+                  checked={selectedPackage === pkg.id}
+                  onChange={() => setSelectedPackage(pkg.id)}
+                  className="sr-only"
+                />
+                <Card
+                  className={`transition-all duration-200 hover:shadow-md relative ${
+                    selectedPackage === pkg.id
+                      ? pkg.recommended
+                        ? "ring-2 ring-amber-400 shadow-lg"
+                        : "ring-2 ring-blue-500 shadow-lg"
+                      : ""
+                  }`}
+                >
+                  {pkg.recommended && (
+                    <div className="absolute -top-3 left-6">
+                      <Badge className="bg-amber-500 text-white">⭐ Rekommenderas</Badge>
+                    </div>
+                  )}
+                  <CardHeader className="pb-4">
+                    <div className="flex items-start gap-4">
+                      <div className="mt-1">
+                        <div
+                          className={`w-4 h-4 rounded-full border-2 ${
+                            selectedPackage === pkg.id
+                              ? "bg-blue-500 border-blue-600"
+                              : "border-gray-400"
+                          }`}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-start mb-2">
+                          <CardTitle className="text-xl">{pkg.name}</CardTitle>
+                          <div className="text-2xl font-bold text-blue-600">{pkg.price} kr</div>
+                        </div>
+                        <CardDescription className="text-base">{pkg.description}</CardDescription>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="ml-8 space-y-2">
+                      {pkg.features.map((feature, index) => (
+                        <li key={index} className="flex items-center gap-3">
+                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <span className="text-sm">{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              </label>
             ))}
-          </ul>
-        </div>
-      </CardContent>
-    </Card>
-  </label>
-))}
+          </RadioGroup>
 
-            </RadioGroup>
-
-            <div className="text-center mt-8">
-              <Button
-                size="lg"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-4 text-lg"
-                onClick={handlePackageSelect}
-                disabled={!selectedPackage}
-              >
-                Välj paket och fortsätt
-              </Button>
-            </div>
+          <div className="text-center">
+            <Button
+              size="lg"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-4 text-lg"
+              onClick={handlePackageSelect}
+              disabled={!selectedPackage}
+            >
+              Välj paket och fortsätt
+            </Button>
           </div>
         </div>
-      </section>
-
+      </div>
+    </div>
+  </div>
+</section>
+      
       {/* Checkout Form */}
       {showCheckout && selectedPkg && (
         <section className="py-20 bg-blue-50">
