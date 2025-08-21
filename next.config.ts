@@ -1,12 +1,7 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  output: 'export',
-  
-  // Add these lines to disable image optimization
-  images: {
-    unoptimized: true,
-  },
-};
-
-export default nextConfig;
+// next.config.js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // REMOVE this if present:
+  // output: "export",
+}
+module.exports = nextConfig
