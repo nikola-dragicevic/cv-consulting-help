@@ -11,7 +11,7 @@ function jsonError(message: string, status = 500) {
   return NextResponse.json({ error: message }, { status })
 }
 
-const CITY_FALLBACK: Record<string, { lat: number; lon: number; county?: string; metro?: string }> = {
+const SWEDISH_CITIES: Record<string, { lat: number; lon: number; county?: string; metro?: string }> = {
   stockholm: { lat: 59.3293, lon: 18.0686, county: "01", metro: "stockholm" },
   göteborg:  { lat: 57.7089, lon: 11.9746, county: "14", metro: "goteborg" },
   goteborg:  { lat: 57.7089, lon: 11.9746, county: "14", metro: "goteborg" },
@@ -20,6 +20,16 @@ const CITY_FALLBACK: Record<string, { lat: number; lon: number; county?: string;
   uppsala:   { lat: 59.8586, lon: 17.6389, county: "03", metro: "uppsala" },
   bålsta:    { lat: 59.5692, lon: 17.5277, county: "03", metro: "stockholm" },
   balsta:    { lat: 59.5692, lon: 17.5277, county: "03", metro: "stockholm" },
+  linköping: { lat: 58.4108, lon: 15.6214, county: "05", metro: "linkoping" },
+  örebro:    { lat: 59.2741, lon: 15.2066, county: "18", metro: "orebro" },
+  västerås:  { lat: 59.6162, lon: 16.5528, county: "19", metro: "vasteras" },
+  jönköping: { lat: 57.7826, lon: 14.1618, county: "06", metro: "jonkoping" },
+  norrköping: { lat: 58.5877, lon: 16.1924, county: "05", metro: "norrkoping" },
+  lund:      { lat: 55.7047, lon: 13.1910, county: "12", metro: "malmo" },
+  umeå:      { lat: 63.8258, lon: 20.2630, county: "24", metro: "umea" },
+  gävle:     { lat: 60.6749, lon: 17.1413, county: "21", metro: "gavle" },
+  borås:     { lat: 57.7210, lon: 12.9401, county: "14", metro: "boras" },
+  eskilstuna: { lat: 59.3706, lon: 16.5077, county: "04", metro: "eskilstuna" },
 }
 
 function coerceGeo(input: { city?: string; lat?: number; lon?: number; county_code?: string | null }) {
@@ -27,7 +37,7 @@ function coerceGeo(input: { city?: string; lat?: number; lon?: number; county_co
     return { lat: input.lat, lon: input.lon, county: input.county_code ?? null, metro: null as string | null }
   }
   const key = (input.city || "").trim().toLowerCase()
-  const f = CITY_FALLBACK[key]
+  const f = SWEDISH_CITIES[key]
   if (f) return { lat: f.lat, lon: f.lon, county: input.county_code ?? f.county ?? null, metro: f.metro ?? null }
   return null
 }
@@ -49,8 +59,12 @@ export type JobRow = {
   id: string
   headline: string
   location?: string | null
+  location_lat?: number | null
+  location_lon?: number | null
+  company_size?: string | null
   work_modality?: string | null
   job_url?: string | null
+  webpage_url?: string | null
   s_profile?: number | null
   s_wish?: number | null
   final_score?: number | null
@@ -93,53 +107,72 @@ export async function POST(req: Request) {
       if (upErr) console.warn("candidate_profiles upsert warning:", upErr.message)
     }
 
-    // 3) fetch candidates (RPC)
-    const { data, error } = await supabaseServer.rpc("match_jobs_profile", {
-      v_profile,
-      u_lat: geo.lat,
-      u_lon: geo.lon,
-      radius_km: radiusKm,
-      metro: geo.metro,
-      county: geo.county,
-      p_top_k: 50,
-    })
-    if (error) return jsonError(`RPC match_jobs_profile: ${error.message}`, 500)
+    // 3) fetch candidates (temporarily remove embedding requirement)
+    const { data, error } = await supabaseServer
+      .from("job_ads")
+      .select(`
+        id, headline, description_text, location, location_lat, location_lon,
+        city, company_size, work_modality, job_url, webpage_url
+      `)
+      .not("city", "is", null)
+      .limit(50) // Get more since we'll filter by geography
+
+    if (error) return jsonError(`Direct query error: ${error.message}`, 500)
 
     const rows = (data ?? []) as Array<Record<string, any>>
 
-    // Try to obtain vectors from RPC rows; if missing, fetch from job_ads by id
-    const vectorKeys = ["job_vector", "job_embedding", "embedding", "embedding_vector", "vector"]
-    const jobsWithVectors = rows.map(r => {
-      let vec: number[] | undefined
-      for (const k of vectorKeys) {
-        const v = (r as any)[k]
-        if (Array.isArray(v) && typeof v[0] === "number") { vec = v; break }
+    // Add coordinates for jobs that only have city
+    const jobsWithCoords = rows.map(r => {
+      let jobLat = r.location_lat
+      let jobLon = r.location_lon
+
+      // If no coordinates but has city, use city center
+      if ((!jobLat || !jobLon) && r.city) {
+        const cityCoords = SWEDISH_CITIES[r.city.toLowerCase().trim()]
+        if (cityCoords) {
+          jobLat = cityCoords.lat
+          jobLon = cityCoords.lon
+        }
       }
-      return { row: r, vec }
+
+      return { ...r, job_lat: jobLat, job_lon: jobLon }
     })
 
-    const idsNeeding = jobsWithVectors.filter(x => !x.vec).map(x => String(x.row.id))
-    if (idsNeeding.length > 0) {
-      const { data: embRows, error: embErr } = await supabaseServer
-        .from("job_ads")
-        .select("id, embedding")
-        .in("id", idsNeeding)
-      if (!embErr && Array.isArray(embRows)) {
-        const embMap = new Map<string, number[]>()
-        for (const e of embRows) if (Array.isArray(e.embedding)) embMap.set(String(e.id), e.embedding as number[])
-        for (const j of jobsWithVectors) if (!j.vec) j.vec = embMap.get(String(j.row.id))
-      }
+    // Filter by geographic distance
+    function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+      const R = 6371 // Earth's radius in kilometers
+      const dLat = (lat2 - lat1) * Math.PI / 180
+      const dLon = (lon2 - lon1) * Math.PI / 180
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2)
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+      return R * c
     }
+
+    const nearbyJobs = jobsWithCoords
+      .filter(r => r.job_lat && r.job_lon)
+      .filter(r => calculateDistance(geo.lat, geo.lon, r.job_lat, r.job_lon) <= radiusKm)
+      .slice(0, 10) // Limit to 10 jobs
+
+    // Process without embeddings for now (will add back later)
+    const jobsWithVectors = nearbyJobs.map(r => {
+      return { row: r, vec: undefined }
+    })
 
     // 4) Build response
     const jobs: JobRow[] = jobsWithVectors.map(({ row, vec }) => {
-      const s_profile = vec ? cosineSimilarity(v_profile, vec) : null
+      const s_profile = 0.5 // Dummy score for now
       return {
         id: String(row.id),
         headline: row.headline ?? String(row.title ?? ""),
-        location: row.location ?? null,
+        location: row.location || row.city || null,
+        location_lat: typeof row.job_lat === 'number' ? row.job_lat : null,
+        location_lon: typeof row.job_lon === 'number' ? row.job_lon : null,
+        company_size: row.company_size ?? null,
         work_modality: row.work_modality ?? null,
         job_url: row.job_url ?? null,
+        webpage_url: row.webpage_url ?? null,
         s_profile,
         s_wish: null,
         final_score: s_profile ?? 0,

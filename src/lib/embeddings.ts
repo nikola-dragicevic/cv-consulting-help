@@ -3,7 +3,7 @@
 // Minimal, deterministic 384-dim stub so API routes always return JSON.
 // Replace later with OpenAI / your Ollama client.
 
-export const DIMS = 384;
+export const DIMS = 768;
 
 /**
  * Deterministic pseudo-random float in [0,1) derived from string + index.
