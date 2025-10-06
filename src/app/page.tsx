@@ -465,37 +465,51 @@ export default function CVConsultationService() {
 
   // File upload handler for CV files (.txt and .pdf)
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    setError(null)
-    const file = e.target.files?.[0]
-    if (!file) return
+    setError(null);
+    setLoading(true); // show loading indicator
+    const file = e.target.files?.[0];
+    if (!file) {
+      setLoading(false);
+      return;
+    }
 
-    const fileName = file.name.toLowerCase()
-    const isPdf = file.type === "application/pdf" || fileName.endsWith(".pdf")
-    const isText = file.type === "text/plain" || fileName.endsWith(".txt")
+    const fileName = file.name.toLowerCase();
+    const isPdf = file.type === "application/pdf" || fileName.endsWith(".pdf");
+    const isText = file.type === "text/plain" || fileName.endsWith(".txt");
 
     if (!isPdf && !isText) {
-      setError("Endast .txt och .pdf filer stöds.")
-      e.currentTarget.value = ""
-      return
+      setError("Endast .txt och .pdf filer stöds.");
+      setLoading(false);
+      e.currentTarget.value = ""; // clear file input
+      return;
     }
 
     try {
       if (isText) {
-        // Handle text files
-        const text = await file.text()
-        setCvText(text)
+        const text = await file.text();
+        setCvText(text);
       } else if (isPdf) {
-        // Handle PDF files - for now show message that PDF parsing is coming
-        setError("PDF-parsning kommer snart. Använd text-format tills vidare.")
-        e.currentTarget.value = ""
-        return
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const response = await fetch("/api/parse-pdf", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error("Misslyckades att läsa PDF på servern.");
+        }
+
+        const data = await response.json();
+        setCvText(data.text || "");
       }
     } catch (err) {
-      console.error("file read error", err)
-      setError("Kunde inte läsa filen.")
+      console.error("file read error", err);
+      setError("Kunde inte läsa filen.");
     } finally {
-      // clear input so same file can be uploaded again if needed
-      e.currentTarget.value = ""
+      setLoading(false);
+      e.currentTarget.value = ""; // clear input so same file can be uploaded again
     }
   }
 
@@ -660,7 +674,6 @@ export default function CVConsultationService() {
           <p className="text-slate-600">Inga resultat ännu. Sök först, eller justera plats/CV.</p>
         ) : viewMode === 'map' ? (
           <InteractiveJobMap
-            jobs={jobs.filter(j => j.location_lat && j.location_lon).slice(0, freeJobsShown)}
             onLocationChange={handleMapLocationChange}
             initialCenter={cityToGeo(city) ? { lat: cityToGeo(city)!.lat, lon: cityToGeo(city)!.lon } : undefined}
             initialRadius={radiusKm}
