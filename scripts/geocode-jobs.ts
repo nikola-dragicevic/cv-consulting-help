@@ -1,176 +1,146 @@
-// scripts/geocode-jobs.ts - Update job_ads with geocoded addresses
+// scripts/geocode-jobs.ts - Effektiv batch-geokodning av jobbannonser
 
-// Load environment variables FIRST
-import dotenv from 'dotenv'
-import path from 'path'
+import dotenv from 'dotenv';
+import path from 'path';
+import { createClient } from '@supabase/supabase-js';
 
-// Try multiple .env locations
-const envPath = path.join(process.cwd(), '.env')
-console.log('Loading .env from:', envPath)
-const result = dotenv.config({ path: envPath })
+// --- Miljövariabler ---
+// Säkerställer att .env-filer laddas korrekt
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-if (result.error) {
-  console.error('❌ Error loading .env:', result.error)
-  process.exit(1)
+const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error('❌ Saknar Supabase miljövariabler. Kontrollera din .env-fil.');
+  process.exit(1);
 }
 
-console.log('✅ Environment loaded')
-console.log('SUPABASE_URL exists:', !!process.env.SUPABASE_URL || !!process.env.NEXT_PUBLIC_SUPABASE_URL)
-console.log('SERVICE_KEY exists:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
+const supabaseServer = createClient(supabaseUrl, supabaseServiceKey);
 
-import { supabaseServer } from '../src/lib/supabaseServer'
-import { extractAddressFromJobDescription } from '../src/lib/addressExtractor'
-import { geocodeAddress, getFallbackCoordinates } from '../src/lib/geocoder'
+// --- Geokodningslogik ---
 
-interface JobRecord {
-  id: string
-  headline: string
-  description_text: string
-  city: string
-  location: string | null
-  location_lat: number | null
-  location_lon: number | null
+interface GeocodingResult {
+  lat: number;
+  lon: number;
+  address: string;
 }
 
-async function geocodeJobsInBatches() {
-  console.log('🚀 Starting job geocoding process...')
+// Respekterar Nominatims policy (max 1 anrop/sekund)
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 1100; // 1.1 sekunder för säkerhetsmarginal
 
+async function rateLimitedFetch(url: string): Promise<Response> {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+    console.log(`   - Rate limiting: väntar ${waitTime}ms...`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+  lastRequestTime = Date.now();
+  // Uppdaterad User-Agent med din nya e-post
+  return fetch(url, { headers: { 'User-Agent': 'JobbNuGeocoding/1.0 (info@jobbnu.se)' } });
+}
+
+async function geocodeAddress(address: string): Promise<GeocodingResult | null> {
   try {
-    // 1. Fetch jobs that need geocoding
-    console.log('📊 Fetching jobs that need geocoding...')
+    const cleanAddress = encodeURIComponent(`${address}, Sweden`.trim());
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${cleanAddress}&countrycodes=se&limit=1`;
 
-    const { data: jobs, error } = await supabaseServer
-      .from('job_ads')
-      .select('id, headline, description_text, city, location, location_lat, location_lon')
-      .or('location_lat.is.null,location_lon.is.null')
-      .not('city', 'is', null)
-      .limit(100) // Start with 100 jobs for testing
+    const response = await rateLimitedFetch(url);
+    if (!response.ok) return null;
 
-    if (error) {
-      console.error('❌ Database error:', error)
-      return
-    }
+    const data = await response.json();
+    if (!data?.[0]) return null;
 
-    if (!jobs || jobs.length === 0) {
-      console.log('✅ No jobs need geocoding!')
-      return
-    }
-
-    console.log(`📋 Found ${jobs.length} jobs to geocode`)
-
-    // 2. Process each job
-    let processed = 0
-    let updated = 0
-
-    for (const job of jobs as JobRecord[]) {
-      processed++
-      console.log(`\n[${processed}/${jobs.length}] Processing: ${job.headline?.slice(0, 50)}...`)
-
-      try {
-        let lat: number | null = null
-        let lon: number | null = null
-        let extractedAddress: string | null = null
-
-        // Skip if already has coordinates
-        if (job.location_lat && job.location_lon) {
-          console.log('  ⏭️  Already has coordinates, skipping')
-          continue
-        }
-
-        // Method 1: Use existing location if available
-        if (job.location) {
-          console.log(`  🔍 Geocoding existing location: ${job.location}`)
-          const result = await geocodeAddress(job.location)
-          if (result) {
-            lat = result.lat
-            lon = result.lon
-            extractedAddress = job.location
-          }
-        }
-
-        // Method 2: Extract address from description
-        if (!lat && job.description_text) {
-          console.log('  📝 Extracting address from description...')
-          const addresses = extractAddressFromJobDescription(job.description_text, job.city)
-
-          for (const address of addresses) {
-            console.log(`  🔍 Trying: ${address}`)
-            const result = await geocodeAddress(address)
-            if (result && result.confidence > 0.3) {
-              lat = result.lat
-              lon = result.lon
-              extractedAddress = address
-              break
-            }
-          }
-        }
-
-        // Method 3: Use city fallback
-        if (!lat && job.city) {
-          console.log(`  🏙️  Using city fallback: ${job.city}`)
-          const fallback = getFallbackCoordinates(job.city)
-          if (fallback) {
-            lat = fallback.lat
-            lon = fallback.lon
-            extractedAddress = job.city
-          }
-        }
-
-        // Update database if we found coordinates
-        if (lat && lon) {
-          console.log(`  💾 Updating database: ${lat}, ${lon}`)
-
-          const updateData: any = {
-            location_lat: lat,
-            location_lon: lon,
-            // Update location field if we extracted a new address
-            ...(extractedAddress && !job.location ? { location: extractedAddress } : {})
-          }
-
-          const { error: updateError } = await supabaseServer
-            .from('job_ads')
-            .update(updateData)
-            .eq('id', job.id)
-
-          if (updateError) {
-            console.error(`  ❌ Update failed:`, updateError)
-          } else {
-            updated++
-            console.log(`  ✅ Updated successfully`)
-          }
-        } else {
-          console.log('  ❌ No coordinates found')
-        }
-
-      } catch (jobError) {
-        console.error(`  ❌ Error processing job ${job.id}:`, jobError)
-      }
-
-      // Progress report every 10 jobs
-      if (processed % 10 === 0) {
-        console.log(`\n📊 Progress: ${processed}/${jobs.length} processed, ${updated} updated`)
-      }
-    }
-
-    console.log(`\n🎉 Geocoding complete!`)
-    console.log(`📊 Final stats: ${processed} processed, ${updated} updated`)
-
+    const { lat, lon, display_name } = data[0];
+    return { lat: parseFloat(lat), lon: parseFloat(lon), address: display_name };
   } catch (error) {
-    console.error('💥 Fatal error:', error)
+    console.error(`  - Geokodningsfel för "${address}":`, error);
+    return null;
   }
 }
 
-// Run if called directly
-if (require.main === module) {
-  geocodeJobsInBatches()
-    .then(() => {
-      console.log('✅ Script finished')
-      process.exit(0)
-    })
-    .catch(error => {
-      console.error('💥 Script failed:', error)
-      process.exit(1)
-    })
+// --- Adressextrahering ---
+const STREET_PATTERN = /([A-ZÅÄÖ][a-zåäö]+(?:gatan|vägen|gränd| torg|plan))\s+(\d+[A-Z]?)/i;
+
+function extractBestAddress(description: string, city: string): string {
+    if (description) {
+        const match = description.match(STREET_PATTERN);
+        // Om en gatuadress hittas, använd den
+        if (match) return match[0];
+    }
+    // Annars, falla tillbaka på staden
+    return city;
 }
 
-export { geocodeJobsInBatches }
+// --- Huvudskript ---
+
+async function processJobs() {
+  console.log('🚀 Startar geokodningsprocess...');
+  let totalUpdated = 0;
+  const BATCH_SIZE = 50;
+
+  while (true) {
+    console.log(`\n--- Ny batch ---`);
+    console.log(`📊 Hämtar upp till ${BATCH_SIZE} jobb som saknar koordinater...`);
+
+    // **Kärnan i effektiviteten:** Hämtar BARA jobb där location_lat är null.
+    const { data: jobs, error } = await supabaseServer
+      .from('job_ads')
+      .select('id, headline, description_text, city')
+      .is('location_lat', null)
+      .not('city', 'is', null)
+      .limit(BATCH_SIZE);
+
+    if (error) {
+      console.error('❌ Databasfel:', error.message);
+      break;
+    }
+
+    if (!jobs || jobs.length === 0) {
+      console.log('✅ Inga fler jobb att geokoda. Processen är klar.');
+      break;
+    }
+
+    console.log(`📋 Hittade ${jobs.length} jobb att bearbeta.`);
+
+    for (const job of jobs) {
+      console.log(`  -> Bearbetar: ${job.id} (${job.headline.slice(0, 30)}...)`);
+
+      // 1. Hitta bästa adresskandidat
+      const addressToGeocode = extractBestAddress(job.description_text, job.city);
+      console.log(`     - Adresskandidat: "${addressToGeocode}"`);
+
+      // 2. Geokoda
+      const geoResult = await geocodeAddress(addressToGeocode);
+
+      // 3. Uppdatera databasen
+      if (geoResult) {
+        const { error: updateError } = await supabaseServer
+          .from('job_ads')
+          .update({
+            location_lat: geoResult.lat,
+            location_lon: geoResult.lon,
+            location: geoResult.address // Spara den fullständiga adressen
+          })
+          .eq('id', job.id);
+
+        if (updateError) {
+          console.error(`     ❌ DB-uppdatering misslyckades:`, updateError.message);
+        } else {
+          totalUpdated++;
+          console.log(`     ✅ Uppdaterad med lat/lon: ${geoResult.lat.toFixed(4)}, ${geoResult.lon.toFixed(4)}`);
+        }
+      } else {
+        console.warn(`     ⚠️ Kunde inte geokoda "${addressToGeocode}". Jobbet hoppas över för nu.`);
+        // Vi uppdaterar inte, så det kommer att försökas igen nästa gång skriptet körs.
+      }
+    }
+  }
+  console.log(`\n🎉 Klart! Totalt ${totalUpdated} jobb har uppdaterats med koordinater.`);
+}
+
+processJobs();
