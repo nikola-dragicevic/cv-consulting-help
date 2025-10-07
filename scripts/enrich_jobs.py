@@ -1,11 +1,19 @@
 # scripts/enrich_jobs.py
 
 import os
+import sys
 import asyncio
 import httpx
 import json
 from supabase import create_client, Client
 from dotenv import load_dotenv
+
+# Fix Windows console encoding
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except:
+        pass
 
 load_dotenv()
 

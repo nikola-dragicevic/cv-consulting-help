@@ -3,13 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "geocode": "node scripts/smart-geocode.js",
-    "geocode-simple": "node scripts/simple-geocode.js"
-  },
+  "dev": "next dev --turbopack",
+  "build": "next build",
+  "start": "next start",
+  "lint": "next lint",
+  "process:all": "python scripts/initial_load.py && python scripts/enrich_jobs.py && npx tsx scripts/geocode-jobs.ts"
+},
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-label": "^2.1.7",
