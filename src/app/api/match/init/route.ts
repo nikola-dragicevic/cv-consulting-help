@@ -1,12 +1,13 @@
 // src/app/api/match/init/route.ts
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabaseServer";
-import { embedProfile } from "@/lib/embeddings";
+// IMPORTANT: Change the import from 'embeddings' to our new 'ollama' utility
+import { embedProfile } from "@/lib/ollama";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Typdefinitionen som matchar vår SQL-funktion
+// ... (resten av MatchedJob-typen och jsonError-funktionen är oförändrad) ...
 type MatchedJob = {
   id: string;
   headline: string;
@@ -20,13 +21,11 @@ type MatchedJob = {
   s_profile: number;
 };
 
-// Helper för felhantering
 function jsonError(message: string, status = 500) {
   console.error("[API ERROR /match/init]", message);
   return NextResponse.json({ error: message }, { status });
 }
 
-// Stadskoordinater som fallback
 const SWEDISH_CITIES: Record<string, { lat: number; lon: number }> = {
   stockholm: { lat: 59.3293, lon: 18.0686 },
   göteborg:  { lat: 57.7089, lon: 11.9746 },
@@ -41,6 +40,7 @@ function getGeo(body: any) {
   const key = (body.city || "").trim().toLowerCase();
   return SWEDISH_CITIES[key] || null;
 }
+
 
 export async function POST(req: Request) {
   try {
@@ -60,10 +60,10 @@ export async function POST(req: Request) {
       return jsonError("radius_km must be a positive number", 400);
     }
 
-    // 1. Skapa vektor från CV-text
+    // 1. Skapa vektor från CV-text med den nya direkta metoden
     const v_profile = await embedProfile(body.cv_text);
 
-    // 2. Anropa RPC-funktionen (nu utan den felaktiga <typen>)
+    // 2. Anropa RPC-funktionen
     console.log(`Searching for jobs within ${radiusKm}km of ${geo.lat}, ${geo.lon}`);
     
     const { data, error } = await supabaseServer.rpc('match_jobs_initial', {
@@ -79,7 +79,6 @@ export async function POST(req: Request) {
       return jsonError(`Database RPC error: ${error.message}`);
     }
     
-    // Explicit typning av resultatet. Detta löser "any" problemet.
     const jobs = data as MatchedJob[] | null;
 
     // 3. Formatera och returnera svaret
@@ -92,7 +91,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ jobs: formattedJobs });
 
   } catch (e: any) {
-    console.error("Fatal error in /match/init:", e);
+    console.error("Fatal error in /match/init:", e.message);
+    // Return the specific error message from the python script if available
     return jsonError(e?.message || "Server error");
   }
 }

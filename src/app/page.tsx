@@ -465,6 +465,9 @@ export default function CVConsultationService() {
 
   // File upload handler for CV files (.txt and .pdf)
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    // Store a reference to the input element before any async operations
+    const target = e.currentTarget;
+
     setError(null);
     setLoading(true); // show loading indicator
     const file = e.target.files?.[0];
@@ -480,7 +483,7 @@ export default function CVConsultationService() {
     if (!isPdf && !isText) {
       setError("Endast .txt och .pdf filer stöds.");
       setLoading(false);
-      e.currentTarget.value = ""; // clear file input
+      if (target) target.value = ""; // clear file input
       return;
     }
 
@@ -509,7 +512,10 @@ export default function CVConsultationService() {
       setError("Kunde inte läsa filen.");
     } finally {
       setLoading(false);
-      e.currentTarget.value = ""; // clear input so same file can be uploaded again
+      // Use the stored reference to safely clear the input
+      if (target) {
+        target.value = "";
+      }
     }
   }
 

@@ -1,8 +1,8 @@
 // app/api/match/refine/route.ts
 import { NextResponse } from "next/server"
 import { supabaseServer } from "@/lib/supabaseServer"
-import { embedWish } from "@/lib/embeddings"
 import { supabaseBrowser } from "@/lib/supabaseBrowser"
+import { embedWish } from "@/lib/ollama"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
