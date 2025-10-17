@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -8,8 +8,11 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { Mail, Phone, FileText, Users, Award, Wand2, MapPin, Upload, X, Eye, Lock } from "lucide-react"
+import { Mail, Phone, FileText, Users, Award, Wand2, MapPin, Upload, X, Eye, Lock, User, LogIn } from "lucide-react"
 import InteractiveJobMap from "@/components/ui/InteractiveJobMap"
+import Image from "next/image"
+import type { User as SupabaseUser } from '@supabase/supabase-js'
+import { createClient } from "@supabase/supabase-js"
 
 /* ============================================================
    Types
@@ -345,6 +348,29 @@ function CareerWishlistForm({
    Main Page Component
 ============================================================ */
 export default function CVConsultationService() {
+  // User state (Supabase session)
+  const [user, setUser] = useState<SupabaseUser | null>(null);
+
+  // Initialize Supabase client
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+
+  // Check for user session on component mount
+  useEffect(() => {
+    const getSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        // @ts-ignore - data shape
+        setUser(data?.session?.user ?? null);
+      } catch (err) {
+        console.warn("Could not get supabase session", err);
+      }
+    };
+    getSession();
+  }, []);
+
   // Job Matching state
   const [city, setCity] = useState("")
   const [cvText, setCvText] = useState("")
@@ -532,110 +558,97 @@ export default function CVConsultationService() {
     <div className="min-h-screen bg-white">
       {/* === Job Matcher Header === */}
       <section className="border-b bg-gradient-to-br from-slate-50 via-blue-50 to-amber-50">
-        <div className="container mx-auto grid gap-6 px-4 py-10 lg:grid-cols-3">
-          <div className="lg:col-span-2">
+        <div className="container mx-auto grid gap-8 px-4 py-10 lg:grid-cols-5 items-center">
+          <div className="lg:col-span-3">
             <h1 className="text-3xl font-bold text-slate-900">Hitta jobb som matchar dig</h1>
-            <p className="mt-2 text-slate-600">
-              Steg 1: Välj plats och lägg in ditt CV. Vi visar direkt roller du är kvalificerad för.
-            </p>
-            <div className="mt-6 grid gap-4 sm:grid-cols-3">
-              <div className="sm:col-span-1">
-                <Label htmlFor="city">Stad / Postort</Label>
-                <div className="mt-1 flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-blue-600" />
-                  <Input id="city" placeholder="t.ex. Uppsala" value={city} onChange={(e) => setCity(e.target.value)} />
+            
+            {/* CONDITIONAL UI: Show different content based on login state */}
+            {user ? (
+               // LOGGED-IN VIEW
+              <div className="mt-6">
+                <p className="text-slate-600 mb-4">Välkommen tillbaka! Ditt CV och dina preferenser är sparade. Klicka nedan för att se dina senaste matchningar.</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700" onClick={onFindMatches} disabled={loading}>
+                    {loading ? "Söker…" : "🔎 Hitta mina matchningar"}
+                  </Button>
+                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => setShowWishlist(true)}>
+                    <Wand2 className="h-4 w-4 mr-2"/> Förfina med önskemål
+                  </Button>
                 </div>
-                <p className="mt-1 text-xs text-slate-500">
-                  Uppsala/Bålsta räknas mot Stockholmsområdet om du vill.
+              </div>
+            ) : (
+              // LOGGED-OUT / ANONYMOUS VIEW
+              <>
+                <p className="mt-2 text-slate-600">
+                  Steg 1: Välj plats och lägg in ditt CV. Vi visar direkt roller du är kvalificerad för.
                 </p>
-              </div>
-              <div className="sm:col-span-2">
-                <Label htmlFor="cvtext">CV (klistra in text för test)</Label>
-                <Textarea
-                  id="cvtext"
-                  rows={4}
-                  className="resize-none max-h-32 overflow-y-auto"
-                  placeholder="Klistra in ditt CV här (text) — PDF-parsning kan kopplas senare"
-                  value={cvText}
-                  onChange={(e) => setCvText(e.target.value)}
-                />
-                <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                  <Upload className="h-3.5 w-3.5" /> Du kan även ladda upp PDF eller .txt:
-                  <Input type="file" accept=".txt,.pdf" onChange={handleFileUpload} className="max-w-[240px]" />
+                <div className="mt-6 grid gap-4 sm:grid-cols-3">
+                  <div className="sm:col-span-1">
+                    <Label htmlFor="city">Stad / Postort</Label>
+                    <div className="mt-1 flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-blue-600" />
+                      <Input id="city" placeholder="t.ex. Uppsala" value={city} onChange={(e) => setCity(e.target.value)} />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Uppsala/Bålsta räknas mot Stockholmsområdet om du vill.
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label htmlFor="cvtext">CV (klistra in text för test)</Label>
+                    <Textarea
+                      id="cvtext"
+                      rows={4}
+                      className="resize-none max-h-32 overflow-y-auto"
+                      placeholder="Klistra in ditt CV här (text) — PDF-parsning kan kopplas senare"
+                      value={cvText}
+                      onChange={(e) => setCvText(e.target.value)}
+                    />
+                    <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                      <Upload className="h-3.5 w-3.5" /> Du kan även ladda upp PDF eller .txt:
+                      <Input type="file" accept=".txt,.pdf" onChange={handleFileUpload} className="max-w-[240px]" />
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
-              <div>
-                <Label htmlFor="radius">Pendlingsradie (km)</Label>
-                <Input
-                  id="radius"
-                  type="number"
-                  min={5}
-                  max={100}
-                  value={radiusKm}
-                  onChange={(e) => setRadiusKm(Number(e.target.value || 0))}
-                />
-              </div>
-              <div className="flex items-end gap-3">
-                <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={onFindMatches} disabled={loading}>
-                  {loading ? "Söker…" : "🔎 Hitta matchningar"}
-                </Button>
-              </div>
-              <div className="flex items-end gap-3">
-                <Button variant="outline" className="w-full" onClick={() => setDebugOpen((v) => !v)}>
-                  {debugOpen ? "Dölj debug" : "Visa debug"}
-                </Button>
-              </div>
-            </div>
+                <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <Label htmlFor="radius">Pendlingsradie (km)</Label>
+                    <Input
+                      id="radius"
+                      type="number"
+                      min={5}
+                      max={100}
+                      value={radiusKm}
+                      onChange={(e) => setRadiusKm(Number(e.target.value || 0))}
+                    />
+                  </div>
+                  <div className="flex items-end gap-3">
+                    <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={onFindMatches} disabled={loading}>
+                      {loading ? "Söker…" : "🔎 Hitta matchningar"}
+                    </Button>
+                  </div>
+                  <div className="flex items-end gap-3">
+                    <Button variant="outline" className="w-full" onClick={() => setDebugOpen((v) => !v)}>
+                      {debugOpen ? "Dölj debug" : "Visa debug"}
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+
             {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
           </div>
 
-          {/* Callout to Step 2 */}
-          <Card className="border-blue-200 bg-blue-50/50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-blue-700">
-                <Wand2 className="h-5 w-5" /> Förfina med dina önskemål
-              </CardTitle>
-              <CardDescription>
-                Steg 2: Berätta vad du vill — titlar, branscher, kultur och arbetssätt. Vi sorterar om listan.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button className="w-full" variant="outline" onClick={() => setShowWishlist(true)}>
-                Öppna "Career Wishlist"
-              </Button>
-              {lastWish && (
-                <div className="mt-3 text-xs text-slate-600">
-                  <p>Senaste önskemål tillämpat.</p>
-                </div>
-              )}
-              <div className="mt-2 flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  id="nearby"
-                  type="checkbox"
-                  className="accent-blue-600"
-                  checked={includeNearbyMetro}
-                  onChange={(e) => setIncludeNearbyMetro(e.target.checked)}
-                />
-                <Label htmlFor="nearby" className="text-xs">
-                  Inkludera närliggande storstadsområde (t.ex. Stockholm)
-                </Label>
-              </div>
-              <div className="mt-2 flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  id="remoteboost"
-                  type="checkbox"
-                  className="accent-blue-600"
-                  checked={remoteBoost}
-                  onChange={(e) => setRemoteBoost(e.target.checked)}
-                />
-                <Label htmlFor="remoteboost" className="text-xs">
-                  Prioritera fjärr-/hybridjobb (+0.05 boost)
-                </Label>
-              </div>
-            </CardContent>
-          </Card>
+          {/* YOUR PORTRAIT */}
+          <div className="lg:col-span-2 flex justify-center lg:justify-end">
+            <Image
+              src="/portrait.jpeg"
+              alt="Nikola Dragicevic"
+              width={300}
+              height={300}
+              className="rounded-full shadow-lg border-4 border-white object-cover aspect-square"
+              priority
+            />
+          </div>
         </div>
       </section>
 
