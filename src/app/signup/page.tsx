@@ -2,17 +2,11 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { createClient } from "@supabase/supabase-js"
+import { getBrowserSupabase } from "@/lib/supabaseBrowser"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
-
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
 
 export default function SignupPage() {
   const [email, setEmail] = useState("")
@@ -26,18 +20,31 @@ export default function SignupPage() {
     setError("")
     setMessage("")
 
+    const supabase = getBrowserSupabase()
+
+    // Get the current origin for the email redirect URL
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo: `${origin}/api/auth/callback?next=/profile`,
+      }
     })
 
     if (error) {
-      setError("Registreringen misslyckades. Försök igen.")
+      setError(`Registreringen misslyckades: ${error.message}`)
       console.error("Signup error:", error.message)
-    } else {
+    } else if (data.user) {
+      // Check if email confirmation is required
+      if (data.user.identities && data.user.identities.length === 0) {
+        setError("Den här e-postadressen är redan registrerad.")
+      } else {
         setMessage("Registrering lyckades! Vänligen kolla din e-post för att bekräfta ditt konto.")
-        // Optionally redirect after a delay
-        setTimeout(() => router.push('/login'), 3000);
+        // Redirect to login page after delay
+        setTimeout(() => router.push('/login'), 3000)
+      }
     }
   }
 

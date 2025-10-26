@@ -1,121 +1,129 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import { randomUUID } from "crypto"
+// app/api/profile/route.ts
+import { NextResponse } from "next/server";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
-// Helper function to create a Supabase client for Route Handlers
-const createSupabaseRouteHandlerClient = async () => {
-  // cookies() in Next.js route handlers returns a RequestCookies instance (not a direct map);
-  // ensure we await/use it correctly in case the runtime returns a promise-like object.
-  const cookieStore = await cookies()
+// If you prefer Node runtime instead, uncomment this and keep using `import { randomUUID } from "crypto"`:
+// export const runtime = "nodejs";
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!, // Use Service Role Key for admin-level actions
-    {
-      cookies: {
-        // The createServerClient expects functions that operate synchronously on cookies.
-        // We adapt the RequestCookies API to the shape expected by the Supabase SSR helper.
-        get(name: string) {
-          const c = cookieStore.get?.(name)
-          return c ? c.value : undefined
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          try {
-            // RequestCookies.set accepts an object with name and value and optional attributes
-            cookieStore.set({ name, value, ...options })
-          } catch (error) {
-            // Setting cookies can fail in some SSR contexts — swallow safely.
-          }
-        },
-        remove(name: string, options?: CookieOptions) {
-          try {
-            // There's no explicit remove API on RequestCookies; set cookie with empty value and maxAge=0
-            cookieStore.set({ name, value: '', maxAge: 0, ...options })
-          } catch (error) {
-            // Ignore
-          }
-        },
-      },
-    }
-  )
-}
+// GET: return the current user's profile (or null if none)
+export async function GET() {
+  const supabase = await getServerSupabase(); // await the async helper
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
 
-
-// GET function to fetch the user's profile
-export async function GET(req: NextRequest) {
-  const supabase = await createSupabaseRouteHandlerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-    if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { data: profile, error } = await supabase
-        .from('candidate_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
-    if (error && error.code !== 'PGRST116') { // Ignore "no rows found" error
-        console.error("GET Profile Error:", error.message);
-        return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json(profile);
-}
-
-
-// POST function to update the user's profile
-export async function POST(req: NextRequest) {
-  const supabase = await createSupabaseRouteHandlerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (userErr || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const { data, error } = await supabase
+    .from("candidate_profiles")
+    .select("*")
+    .eq("user_id", user.id)
+    .single();
+
+  // If not found, return null (client will prefill with email)
+  if (error && (error as any).code === "PGRST116") {
+    return NextResponse.json(null);
+  }
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  return NextResponse.json(data);
+}
+
+// POST: upsert profile + optional CV upload
+export async function POST(req: Request) {
+  const supabase = await getServerSupabase(); // await the async helper
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
+
+  if (userErr || !user) {
+    console.error("Auth error:", userErr?.message);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  console.log("Processing profile update for user:", user.id, user.email);
+
   try {
-    const formData = await req.formData()
-    const file = formData.get("cv") as File | null
+    const formData = await req.formData();
+
+    const file = formData.get("cv") as File | null;
     let cv_url: string | null = null;
 
+    // Handle CV upload first
     if (file) {
-      const cvFilename = `${user.id}/${randomUUID()}_${file.name}`
-      const { error: uploadError } = await supabase.storage
-        .from("cvs")
-        .upload(cvFilename, file, { upsert: true });
+      console.log("Uploading CV file:", file.name, "Size:", file.size);
 
-      if (uploadError) throw new Error(`CV upload failed: ${uploadError.message}`);
-      
-      const { data: { publicUrl } } = supabase.storage.from('cvs').getPublicUrl(cvFilename);
-      cv_url = publicUrl;
+      // Use Web Crypto so this works on Edge AND Node
+      const path = `${user.id}/${crypto.randomUUID()}_${file.name}`;
+
+      const { error: uploadError } = await supabase
+        .storage
+        .from("cvs")
+        .upload(path, file, { upsert: true });
+
+      if (uploadError) {
+        console.error("Storage upload error:", uploadError);
+        throw new Error(`CV upload failed: ${uploadError.message}`);
+      }
+
+      const { data: pub } = supabase.storage.from("cvs").getPublicUrl(path);
+      cv_url = pub?.publicUrl ?? null;
+      console.log("CV uploaded successfully to:", cv_url);
     }
 
-    const profileData: any = {
+    // Check if profile already exists
+    const { data: existingProfile, error: fetchError } = await supabase
+      .from("candidate_profiles")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error("Error checking existing profile:", fetchError);
+    }
+
+    console.log("Existing profile:", existingProfile ? "Found" : "Not found");
+
+    const profileData: Record<string, any> = {
       user_id: user.id,
       email: user.email,
-      full_name: formData.get("fullName") as string,
-      phone: formData.get("phone") as string,
-      city: formData.get("city") as string,
-      street: formData.get("street") as string,
+      full_name: String(formData.get("fullName") ?? ""),
+      phone: String(formData.get("phone") ?? ""),
+      city: String(formData.get("city") ?? ""),
+      street: String(formData.get("street") ?? ""),
     };
-    
+
     if (cv_url) {
-        profileData.cv_file_url = cv_url;
-        profileData.vector = null; // Invalidate old vector
+      profileData.cv_file_url = cv_url;
+      profileData.vector = null; // invalidate so you can recompute later
     }
 
-    const { error: upsertError } = await supabase
-      .from('candidate_profiles')
-      .upsert(profileData, { onConflict: 'user_id' });
+    console.log("Profile data to save:", { ...profileData, user_id: user.id });
 
-    if (upsertError) throw new Error(`Profile update failed: ${upsertError.message}`);
-    
+    // Use upsert with explicit conflict resolution
+    const { data: upsertData, error: upsertError } = await supabase
+      .from("candidate_profiles")
+      .upsert(profileData, {
+        onConflict: "user_id",
+        ignoreDuplicates: false
+      })
+      .select();
+
+    if (upsertError) {
+      console.error("Upsert error details:", {
+        message: upsertError.message,
+        details: upsertError.details,
+        hint: upsertError.hint,
+        code: upsertError.code
+      });
+      throw new Error(`Profile update failed: ${upsertError.message}`);
+    }
+
+    console.log("Profile upsert successful:", upsertData);
+
     return NextResponse.json({ success: true, newCvUrl: cv_url });
-
-  } catch (error: any) {
-    console.error("Profile update error:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (err: any) {
+    console.error("Profile update error:", err?.message || err);
+    return NextResponse.json({ error: err?.message || "Unknown error" }, { status: 500 });
   }
 }

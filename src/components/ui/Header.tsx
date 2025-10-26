@@ -3,29 +3,39 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
+import { getBrowserSupabase } from '@/lib/supabaseBrowser';
 import { Button } from '@/components/ui/button';
 import type { User } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
 export default function Header() {
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
+    const supabase = getBrowserSupabase();
+
     const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error("Error getting session:", error);
+        }
+        setUser(session?.user ?? null);
+        console.log("Header: Current user:", session?.user?.email || "Not logged in");
+      } catch (err) {
+        console.error("Error in getSession:", err);
+      } finally {
+        setLoading(false);
+      }
     };
 
     getSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("Header: Auth state changed:", _event, session?.user?.email || "No user");
       setUser(session?.user ?? null);
+      setLoading(false);
     });
 
     return () => {
@@ -34,8 +44,11 @@ export default function Header() {
   }, []);
 
   const handleLogout = async () => {
+    const supabase = getBrowserSupabase();
     await supabase.auth.signOut();
+    console.log("User logged out");
     router.push('/');
+    router.refresh();
   };
 
   return (
@@ -45,13 +58,17 @@ export default function Header() {
           CV-Hjälp
         </Link>
         <nav>
-          {user ? (
+          {loading ? (
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-gray-400">Laddar...</span>
+            </div>
+          ) : user ? (
             <div className="flex items-center gap-4">
               <span className="text-sm text-gray-600 hidden sm:block">{user.email}</span>
               <Link href="/profile">
                 <Button variant="outline" size="sm">Min Profil</Button>
               </Link>
-              <Button onClick={handleLogout} size="sm">Logga ut</Button>
+              <Button onClick={handleLogout} variant="destructive" size="sm">Logga ut</Button>
             </div>
           ) : (
             <div className="flex items-center gap-4">

@@ -1,12 +1,28 @@
 // src/lib/supabaseServer.ts
-import { createClient } from "@supabase/supabase-js"
+import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+export async function getServerSupabase() {
+  const cookieStore = await cookies(); // <- await here
 
-if (!url) console.error("Missing SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL")
-if (!serviceKey) console.error("Missing SUPABASE_SERVICE_ROLE_KEY (server)")
-
-export const supabaseServer = createClient(url!, serviceKey!, {
-  auth: { persistSession: false },
-})
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options: CookieOptions) {
+          // optional chaining for older Next types
+          // @ts-ignore
+          cookieStore.delete?.({ name, ...options });
+          cookieStore.set({ name, value: "", maxAge: 0, ...options });
+        },
+      },
+    }
+  );
+}

@@ -69,18 +69,27 @@ async def enrich_candidates():
 
         cv_summary = ""
         if candidate.get("cv_file_url"):
+            # Extract the storage path from the URL
+            # URL format: https://.../storage/v1/object/public/cvs/{path}
             file_name = candidate["cv_file_url"].split("cvs/")[-1]
-            local_path = os.path.join("./downloads", file_name)
+
+            # Create a safe local filename (flatten the path)
+            safe_filename = file_name.replace("/", "_").replace("\\", "_")
+            local_path = os.path.join("./downloads", safe_filename)
+
             try:
                 os.makedirs("./downloads", exist_ok=True)
-                signed = supabase.storage.from_("cvs").create_signed_url(file_name, 60 * 60)
+
+                # Use the storage path (not the URL)
+                storage_path = file_name
+                signed = supabase.storage.from_("cvs").create_signed_url(storage_path, 60 * 60)
                 signed_url = signed.get("signedURL") or signed.get("signed_url") or signed.get("signedUrl")
 
                 if not signed_url:
                     raise Exception("Could not generate signed URL")
 
                 print(f"🔗 Signed URL: {signed_url}")
-                print(f"📄 Downloading CV from signed URL...")
+                print(f"📄 Downloading CV to: {local_path}")
 
                 async with httpx.AsyncClient() as client:
                     dl_response = await client.get(signed_url)
@@ -90,8 +99,10 @@ async def enrich_candidates():
                     with open(local_path, "wb") as f:
                         f.write(dl_response.content)
 
+                print(f"✅ Downloaded {len(dl_response.content)} bytes")
                 raw_cv = extract_text_from_pdf(local_path)
                 cv_summary = summarize_cv_text(raw_cv)
+                print(f"📝 Extracted {len(raw_cv)} characters from PDF")
 
             except Exception as e:
                 print(f"⚠️ Failed to parse CV: {e}")
