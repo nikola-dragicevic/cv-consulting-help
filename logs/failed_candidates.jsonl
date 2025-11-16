@@ -1,0 +1,25 @@
+import json
+
+os.makedirs("logs", exist_ok=True)
+with open("logs/failed_candidates.jsonl", "a", encoding="utf-8") as f:
+    f.write(json.dumps({
+        "id": candidate["id"],
+        "full_name": candidate["full_name"],
+        "email": candidate["email"],
+        "error": str(e),
+    }) + "\n")
+{"id": "be22d97d-e276-4639-8ec8-6fdcc5de8b6e", "full_name": "Nikola Dragicevic", "email": "", "error": "'dict' object has no attribute 'data'"}
+{"id": "be22d97d-e276-4639-8ec8-6fdcc5de8b6e", "full_name": "Nikola Dragicevic", "email": "", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "be22d97d-e276-4639-8ec8-6fdcc5de8b6e", "full_name": "Nikola Dragicevic", "email": "", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "be22d97d-e276-4639-8ec8-6fdcc5de8b6e", "full_name": "Nikola Dragicevic", "email": "", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "ede11512-856f-438a-8234-04443ebca2f4", "full_name": "Lidia Dragicevic", "email": "dragiceviclidia218@gmail.com", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "21e392eb-dfaa-44fb-939e-df19c02cdb88", "full_name": "Marko Dragicevic", "email": "dragicevic.marko@ymail.com", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "be22d97d-e276-4639-8ec8-6fdcc5de8b6e", "full_name": "Nikola Dragicevic", "email": "", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "ede11512-856f-438a-8234-04443ebca2f4", "full_name": "Lidia Dragicevic", "email": "dragiceviclidia218@gmail.com", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "21e392eb-dfaa-44fb-939e-df19c02cdb88", "full_name": "Marko Dragicevic", "email": "dragicevic.marko@ymail.com", "error": "Client error '404 Not Found' for url 'http://localhost:11434/api/embeddings'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"}
+{"id": "be22d97d-e276-4639-8ec8-6fdcc5de8b6e", "full_name": "Nikola Dragicevic", "email": "", "error": "{'message': 'expected 384 dimensions, not 768', 'code': '22000', 'hint': None, 'details': None}"}
+{"id": "ede11512-856f-438a-8234-04443ebca2f4", "full_name": "Lidia Dragicevic", "email": "dragiceviclidia218@gmail.com", "error": "{'message': 'expected 384 dimensions, not 768', 'code': '22000', 'hint': None, 'details': None}"}
+{"id": "21e392eb-dfaa-44fb-939e-df19c02cdb88", "full_name": "Marko Dragicevic", "email": "dragicevic.marko@ymail.com", "error": "{'message': 'expected 384 dimensions, not 768', 'code': '22000', 'hint': None, 'details': None}"}
+{"id": "ad2778e6-90a5-4054-9d6a-b9959e0b713a", "full_name": "Nikola Dragicevic", "email": "wazzzaaaa46@gmail.com", "error": ""}
+{"id": "42bc7452-cce9-48ba-a7fb-a6621b856f54", "full_name": "Nikola Dragicevic", "email": "wazzzaaaa46@gmail.com", "error": "[Errno 2] No such file or directory: './downloads\\\\d0292a60-bf37-414c-baa7-f63d2dd5f836/4472cc1e-da60-4954-b1c4-be103b8c81ba_CV%20-%20Automation_Systemutvecklare%202024-01.pdf'"}
+{"id": "42bc7452-cce9-48ba-a7fb-a6621b856f54", "full_name": "Nikola Dragicevic", "email": "wazzzaaaa46@gmail.com", "error": ""}
