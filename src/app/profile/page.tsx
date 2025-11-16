@@ -8,7 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+<<<<<<< HEAD
 import { User, Eye } from "lucide-react";
+=======
+import { User } from "lucide-react";
+>>>>>>> origin/main
 
 interface Profile {
   full_name: string;
@@ -26,8 +30,11 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [cvFile, setCvFile] = useState<File | null>(null);
+<<<<<<< HEAD
   const [cvViewLoading, setCvViewLoading] = useState(false);
   const [cvViewError, setCvViewError] = useState<string | null>(null);
+=======
+>>>>>>> origin/main
 
   useEffect(() => {
     (async () => {
@@ -105,6 +112,7 @@ export default function ProfilePage() {
     if (profile) setProfile({ ...profile, [name]: value });
   };
 
+<<<<<<< HEAD
   const handleViewCv = async () => {
     setCvViewLoading(true);
     setCvViewError(null);
@@ -142,6 +150,8 @@ export default function ProfilePage() {
     }
   };
 
+=======
+>>>>>>> origin/main
   if (loading) return <div className="p-8">Laddar din profil...</div>;
   if (!profile) return <div className="p-8">Kunde inte ladda din profil. Vänligen logga in igen.</div>;
 
@@ -187,6 +197,7 @@ export default function ProfilePage() {
               <div className="flex items-center gap-3">
                 <Input id="cv-upload" type="file" accept=".pdf,.txt" onChange={(e) => setCvFile(e.target.files?.[0] || null)} />
                 {profile.cv_file_url && (
+<<<<<<< HEAD
                   <Button 
                     type="button" 
                     variant="outline"
@@ -199,6 +210,13 @@ export default function ProfilePage() {
                 )}
               </div>
               {cvViewError && <p className="text-xs text-red-600">{cvViewError}</p>}
+=======
+                  <Button type="button" variant="link" asChild>
+                    <a href={profile.cv_file_url} target="_blank" rel="noopener noreferrer">Visa nuvarande</a>
+                  </Button>
+                )}
+              </div>
+>>>>>>> origin/main
               <p className="text-xs text-slate-500">
                 Om du laddar upp en ny fil kommer den att ersätta din gamla. Detta triggar en ny matchningsanalys.
               </p>
