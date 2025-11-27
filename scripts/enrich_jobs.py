@@ -41,6 +41,7 @@ async def enrich_job_vectors():
     """Fetch jobs without vectors and create embeddings for them."""
     os.makedirs("logs", exist_ok=True)
     failed_jobs_path = "logs/enrich_failed_jobs.jsonl"
+    BATCH_DELAY = 5 # Ny konstant för fördröjning
 
     print(f"📦 Using embedding model: {EMBEDDING_MODEL}")
 

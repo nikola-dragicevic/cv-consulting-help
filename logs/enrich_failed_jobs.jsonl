@@ -1,2 +1,9 @@
 {"id": "30034416", "error": "<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>"}
 {"id": "29870115", "error": "<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>"}
+{"id": "30145935", "error": "<ConnectionTerminated error_code:0, last_stream_id:13115, additional_data:None>"}
+{"id": "30187857", "error": "<ConnectionTerminated error_code:0, last_stream_id:1831, additional_data:None>"}
+{"id": "30266569", "error": "<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>"}
+{"id": "30175957", "error": "<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>"}
+{"id": "30067546", "error": "{'message': 'JSON could not be generated', 'code': 502, 'hint': 'Refer to full message for details', 'details': 'b\\'\"gateway error: Error: Network connection lost.\"\\''}"}
+{"id": "30092998", "error": "<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>"}
+{"id": "30264256", "error": "<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>"}

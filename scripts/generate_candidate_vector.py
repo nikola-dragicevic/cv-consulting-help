@@ -55,7 +55,8 @@ async def enrich_candidates():
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print("🚀 Starting candidate vectorization...")
 
-    response = supabase.table("candidate_profiles").select("*").filter("vector", "is", "null").execute()
+    # Look for NULL in the correct 'profile_vector' column
+    response = supabase.table("candidate_profiles").select("*").filter("profile_vector", "is", "null").execute()
     candidates = response.data
 
     if not candidates:
@@ -120,7 +121,9 @@ async def enrich_candidates():
         try:
             vector = await get_local_embedding(prompt)
             if vector:
-                supabase.table("candidate_profiles").update({"vector": vector}).eq("id", candidate["id"]).execute()
+                # --- THIS IS THE FIX ---
+                # Save to 'profile_vector' instead of 'vector'
+                supabase.table("candidate_profiles").update({"profile_vector": vector}).eq("id", candidate["id"]).execute()
                 print(f"✅ Saved vector ({len(vector)} dims).")
             else:
                 raise ValueError("No embedding returned.")

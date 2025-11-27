@@ -3,6 +3,7 @@ import sys
 import json
 import httpx
 import os
+import math # NY IMPORT
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,9 +11,25 @@ load_dotenv()
 # --- Configuration ---
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 LOCAL_EMBEDDING_URL = "http://localhost:11434/api/embeddings"
+DIMS = 768
+
+def normalize_vector(vector: list[float]) -> list[float]:
+    """Beräknar L2-normen och normaliserar vektorn."""
+    if not vector:
+        return []
+    
+    # Beräkna L2-normen (magnituden)
+    magnitude = math.sqrt(sum(x**2 for x in vector))
+    
+    if magnitude == 0:
+        return [0.0] * DIMS
+        
+    # Normalisera vektorn genom att dividera med magnituden
+    return [x / magnitude for x in vector]
+
 
 def get_embedding(text: str) -> list[float]:
-    """Sends text to a local Ollama server and returns the embedding vector."""
+    """Skickar text till Ollama och returnerar den *normaliserade* embeddingvektorn."""
     try:
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
@@ -22,10 +39,11 @@ def get_embedding(text: str) -> list[float]:
             response.raise_for_status()
             embedding = response.json().get("embedding")
 
-            if not embedding or len(embedding) != 768:
+            if not embedding or len(embedding) != DIMS:
                 raise ValueError(f"Invalid embedding received. Length: {len(embedding) if embedding else 'None'}")
             
-            return embedding
+            # --- NORMALISERING APPLICERAS HÄR ---
+            return normalize_vector(embedding)
     except httpx.RequestError as e:
         error_message = {
             "error": "Failed to connect to local embedding model.",
@@ -43,14 +61,10 @@ def get_embedding(text: str) -> list[float]:
 
 if __name__ == "__main__":
     try:
-        # ** THE FIX IS HERE **
-        # Read from the binary buffer of stdin and decode it with a robust error handling strategy.
-        # 'surrogateescape' will preserve any problematic byte sequences, preventing a crash.
         prompt = sys.stdin.buffer.read().decode('utf-8', errors='surrogateescape')
         
         if prompt:
             vector = get_embedding(prompt)
-            # Print the resulting vector to stdout as a JSON array
             print(json.dumps(vector))
         else:
             error_message = {"error": "No prompt text provided via stdin to the embedding script."}
@@ -58,7 +72,6 @@ if __name__ == "__main__":
             sys.exit(1)
 
     except Exception as e:
-        # Catch any other potential startup errors
         error_message = {
             "error": "An error occurred in the main execution of the Python script.",
             "details": str(e)

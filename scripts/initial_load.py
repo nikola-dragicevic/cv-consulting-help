@@ -134,6 +134,16 @@ def upsert_jobs(jobs):
                 "webpage_url": job.get("webpage_url"),
                 "job_category": occupation.get("label"),
                 "requires_dl_b": job.get("driving_license_required", False),
+                
+                # --- CHANGE APPLIED HERE ---
+                # This is the "invalidation" step.
+                # By setting these to None, we flag them for re-processing
+                # by the enrich_jobs.py and geocode-jobs.ts scripts.
+                # This fixes the "stale data" problem.
+                "embedding": None,
+                "location_lat": None,
+                "location_lon": None
+                # --- END OF CHANGE ---
             }
             job_data_batch.append(job_data)
 

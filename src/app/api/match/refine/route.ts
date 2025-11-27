@@ -1,18 +1,17 @@
 // app/api/match/refine/route.ts
 import { NextResponse } from "next/server"
-import { supabaseServer } from "@/lib/supabaseServer"
-import { supabaseBrowser } from "@/lib/supabaseBrowser"
-import { embedWish } from "@/lib/ollama"
+import { getServerSupabase } from "@/lib/supabaseServer" // Correct import
+import { createClient } from "@supabase/supabase-js"     // Correct import
+import { embedWish, embedProfile } from "@/lib/ollama"  // <-- Added embedProfile
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 function jsonError(message: string, status = 500) {
-  console.error("[API ERROR]", message)
+  console.error("[API ERROR /match/refine]", message)
   return NextResponse.json({ error: message }, { status })
 }
 
-/** same minimal city fallback, in case client sends only city */
 const CITY_FALLBACK: Record<string, { lat: number; lon: number; county?: string; metro?: string }> = {
   stockholm: { lat: 59.3293, lon: 18.0686, county: "01", metro: "stockholm" },
   göteborg:  { lat: 57.7089, lon: 11.9746, county: "14", metro: "goteborg" },
@@ -36,10 +35,11 @@ function coerceGeo(input: { city?: string; lat?: number; lon?: number; county_co
 
 export async function POST(req: Request) {
   try {
-    // guard missing Supabase env vars early
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json({ error: "Supabase env vars missing" }, { status: 500 })
-    }
+    // 1. Create a new SERVICE ROLE client for backend actions
+    const supabaseService = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY! // Use the Service Key!
+    );
 
     let body: any
     try {
@@ -48,54 +48,76 @@ export async function POST(req: Request) {
       return jsonError("Invalid JSON body", 400)
     }
 
-    // validate required fields
+    // 2. Validate required fields
     if (!body?.candidate_id) {
-      return NextResponse.json({ error: "candidate_id is required" }, { status: 400 })
+      return jsonError("candidate_id is required", 400)
     }
     if (!body?.wish) {
-      return NextResponse.json({ error: "wish is required" }, { status: 400 })
+      return jsonError("wish is required", 400)
     }
 
-    // 1) Fetch candidate's saved 768-dim profile vector
-    const { data: cand, error: candErr } = await supabaseServer
-      .from("candidate_profiles")
-      .select("profile_vector, location_lat, location_lon, commute_radius_km")
-      .eq("id", body.candidate_id)
-      .maybeSingle()
+    // 3. Get the Profile Vector (v_profile)
+    let v_profile: number[];
+    let cand_geo: { lat: number | null, lon: number | null, radius: number | null } = { lat: null, lon: null, radius: null };
 
-    if (candErr) {
-      console.error("candidate_profiles read error:", candErr.message)
-      return NextResponse.json({ error: "Failed to read candidate profile" }, { status: 500 })
-    }
-    if (!cand?.profile_vector) {
-      return NextResponse.json(
-        { error: "No profile_vector for candidate. Run /match/init first (or persist vector)." },
-        { status: 400 }
-      )
-    }
-    const v_profile = cand.profile_vector as number[]
+    if (body.candidate_id === "demo-local" && body.cv_text) {
+      // ANONYMOUS USER: Generate vector from cv_text
+      console.log("Refining for anonymous user with cv_text.");
+      v_profile = await embedProfile(body.cv_text);
+      // cand_geo remains null, API will rely on wish_geo
 
-    // 2) Compute wish vector (768)
+    } else if (body.candidate_id !== "demo-local") {
+      // LOGGED-IN USER: Fetch vector from DB
+      console.log(`Refining for logged-in user: ${body.candidate_id}`);
+      
+      // --- THIS IS THE FIX ---
+      // Query on `user_id` instead of `id`
+      const { data: cand, error: candErr } = await supabaseService
+        .from("candidate_profiles")
+        .select("profile_vector, location_lat, location_lon, commute_radius_km")
+        .eq("user_id", body.candidate_id) // <-- THE FIX
+        .maybeSingle()
+      // --- END FIX ---
+
+      if (candErr) {
+        console.error("candidate_profiles read error:", candErr.message)
+        return jsonError("Failed to read candidate profile");
+      }
+      if (!cand?.profile_vector) {
+        // This error is correct if the vector is still null
+        return jsonError("Ditt CV analyseras fortfarande. Klicka 'Hitta matchningar' först.", 400);
+      }
+      
+      v_profile = cand.profile_vector as number[]
+      cand_geo = { lat: cand.location_lat, lon: cand.location_lon, radius: cand.commute_radius_km };
+
+    } else {
+      // Error case: Anonymous user with no cv_text
+      return jsonError("Refine requires a logged-in user or cv_text.", 400);
+    }
+
+    // 4. Compute wish vector
     const v_wish = await embedWish(body.wish)
 
-    // 3) Geo params: prefer provided lat/lon in wish, else fall back to candidate store, else city lookup
+    // 5. Determine Geo parameters
     const geoFromWish = (typeof body.wish.lat === "number" && typeof body.wish.lon === "number")
       ? { lat: body.wish.lat, lon: body.wish.lon, county: body.wish.county_code ?? null, metro: null as string | null }
       : null
+      
     const geo =
       geoFromWish ??
-      (cand.location_lat && cand.location_lon
-        ? { lat: cand.location_lat as number, lon: cand.location_lon as number, county: null as string | null, metro: null as string | null }
-        : coerceGeo({ city: body.wish.location_city }))
+      (cand_geo.lat && cand_geo.lon
+        ? { lat: cand_geo.lat as number, lon: cand_geo.lon as number, county: null as string | null, metro: null as string | null }
+        : coerceGeo({ city: body.wish.location_city })) // Fallback
 
     if (!geo) {
-      return NextResponse.json({ error: "Missing/unknown location for refine step" }, { status: 400 })
+      return jsonError("Missing/unknown location for refine step", 400)
     }
 
-    const radiusKm = Number(body.wish.radius_km ?? cand.commute_radius_km ?? 40)
-
-    // 4) Call RPC for re-ranked matches
-    const { data, error } = await supabaseServer.rpc("match_jobs_profile_wish", {
+    const radiusKm = Number(body.wish.radius_km ?? cand_geo.radius ?? 40)
+    
+    // 6. Call RPC for re-ranked matches
+    const { data, error } = await supabaseService.rpc("match_jobs_profile_wish", {
       v_profile,
       v_wish,
       u_lat: geo.lat,
@@ -109,7 +131,7 @@ export async function POST(req: Request) {
 
     if (error) {
       console.error("RPC error:", error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return jsonError(error.message, 500)
     }
 
     return NextResponse.json({ jobs: data ?? [] })

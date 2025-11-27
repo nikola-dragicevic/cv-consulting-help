@@ -19,7 +19,7 @@ as $$
     description_text,
     1 - (embedding <#> match_jobs.embedding) as similarity
   from job_ads
-  where embedding is not null
+  where embedding is not null AND is_active = true AND (application_deadline is null or application_deadline >= now())
   order by embedding <#> match_jobs.embedding
   limit top_k;
 $$;

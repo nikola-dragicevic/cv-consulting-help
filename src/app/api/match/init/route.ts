@@ -1,13 +1,12 @@
 // src/app/api/match/init/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
-// IMPORTANT: Change the import from 'embeddings' to our new 'ollama' utility
+import { getServerSupabase } from "@/lib/supabaseServer"; // Used to GET the user
+import { createClient } from "@supabase/supabase-js"; // Used to create the SERVICE client
 import { embedProfile } from "@/lib/ollama";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// ... (resten av MatchedJob-typen och jsonError-funktionen är oförändrad) ...
 type MatchedJob = {
   id: string;
   headline: string;
@@ -29,8 +28,11 @@ function jsonError(message: string, status = 500) {
 const SWEDISH_CITIES: Record<string, { lat: number; lon: number }> = {
   stockholm: { lat: 59.3293, lon: 18.0686 },
   göteborg:  { lat: 57.7089, lon: 11.9746 },
+  goteborg:  { lat: 57.7089, lon: 11.9746 },
   malmö:     { lat: 55.6050, lon: 13.0038 },
+  malmo:     { lat: 55.6050, lon: 13.0038 },
   uppsala:   { lat: 59.8586, lon: 17.6389 },
+  bålsta:    { lat: 59.567, lon: 17.527 },
 };
 
 function getGeo(body: any) {
@@ -44,11 +46,53 @@ function getGeo(body: any) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    // 1. Get User (using the standard helper, which uses ANON key)
+    const supabaseAnonClient = await getServerSupabase();
+    const { data: { user } } = await supabaseAnonClient.auth.getUser();
 
-    if (!body?.cv_text) {
-      return jsonError("cv_text is required", 400);
+    // 2. Create a new SERVICE ROLE client for backend actions
+    // This is the key fix.
+    const supabaseService = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY! // Use the Service Key!
+    );
+
+    const body = await req.json();
+    let v_profile: number[]; // This will hold the vector
+
+    // --- Conditional Logic ---
+    if (user) {
+      // USER IS LOGGED IN
+      // 3. Use the SERVICE client to query the database
+      console.log(`Authenticated request for user: ${user.id}`);
+      const { data: profile, error: profileError } = await supabaseService // <-- Use SERVICE client
+        .from('candidate_profiles')
+        .select('profile_vector')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (profileError || !profile) {
+        console.error("Profile fetch error:", profileError);
+        return jsonError("Kunde inte hitta din profil. Har du laddat upp ett CV på din profilsida?", 404);
+      }
+      if (!profile.profile_vector) {
+        return jsonError("Din profil analyseras fortfarande. Försök igen om en liten stund.", 400);
+      }
+
+      v_profile = profile.profile_vector;
+      console.log("Using stored profile vector.");
+
+    } else {
+      // ANONYMOUS USER
+      console.log("Anonymous request.");
+      if (!body?.cv_text) {
+        return jsonError("cv_text is required for anonymous users", 400);
+      }
+      // 1. Skapa vektor från CV-text
+      v_profile = await embedProfile(body.cv_text);
+      console.log("Generated vector on-the-fly.");
     }
+    // --- END LOGIC ---
 
     const geo = getGeo(body);
     if (!geo) {
@@ -60,14 +104,11 @@ export async function POST(req: Request) {
       return jsonError("radius_km must be a positive number", 400);
     }
 
-    // 1. Skapa vektor från CV-text med den nya direkta metoden
-    const v_profile = await embedProfile(body.cv_text);
-
-    // 2. Anropa RPC-funktionen
+    // 4. Use the SERVICE client to call the RPC function
     console.log(`Searching for jobs within ${radiusKm}km of ${geo.lat}, ${geo.lon}`);
     
-    const { data, error } = await supabaseServer.rpc('match_jobs_initial', {
-      v_profile: v_profile,
+    const { data, error } = await supabaseService.rpc('match_jobs_initial', { // <-- Use SERVICE client
+      v_profile: v_profile, // Use the vector from our logic above
       u_lat: geo.lat,
       u_lon: geo.lon,
       radius_km: radiusKm,
@@ -92,7 +133,6 @@ export async function POST(req: Request) {
 
   } catch (e: any) {
     console.error("Fatal error in /match/init:", e.message);
-    // Return the specific error message from the python script if available
     return jsonError(e?.message || "Server error");
   }
 }

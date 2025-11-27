@@ -3,9 +3,10 @@
 import React, { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { createClient } from "@supabase/supabase-js"
+import { getBrowserSupabase } from "@/lib/supabaseBrowser" 
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import Image from "next/image"
+import ContactForm from "@/components/ui/ContactForm"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,7 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { Mail, Phone, FileText, Users, Award, Wand2, MapPin, Upload, X, Eye, Lock, Star, Check, LogIn, User } from "lucide-react"
+import { Mail, Phone, FileText, Users, Award, Wand2, MapPin, Upload, X, Eye, Lock, Star, Check, LogIn, User, BrainCircuit, MessageSquareText } from "lucide-react"
 
 import InteractiveJobMap from "@/components/ui/InteractiveJobMap"
 
@@ -69,6 +70,7 @@ function cityToGeo(cityRaw: string): { lat: number; lon: number; county_code: st
     göteborg: { lat: 57.7089, lon: 11.9746, county_code: "O" },
     malmo: { lat: 55.605, lon: 13.0038, county_code: "M" },
     malmö: { lat: 55.605, lon: 13.0038, county_code: "M" },
+    sverige: { lat: 62.0, lon: 15.0, county_code: "" } 
   }
   return table[city]
 }
@@ -215,7 +217,8 @@ export default function UnifiedLandingPage() {
 
   // Supabase session
   const [user, setUser] = useState<SupabaseUser | null>(null)
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+  // FIXED: Use shared browser client to ensure session sync with Header
+  const supabase = getBrowserSupabase()
 
   useEffect(() => {
     const init = async () => {
@@ -249,8 +252,11 @@ export default function UnifiedLandingPage() {
   const [lastRefinePayload, setLastRefinePayload] = useState<any>(null)
 
   // Freemium
-  const FREE_JOB_LIMIT = 10
+  const jobLimit = user ? 20 : 10
   const [freeJobsShown, setFreeJobsShown] = useState(0)
+
+  // Disable radius input if city is "Sverige"
+  const isCountryWide = city.trim().toLowerCase() === "sverige";
 
   // Network helpers
   async function safeParseResponse(res: Response) {
@@ -265,36 +271,87 @@ export default function UnifiedLandingPage() {
   async function onFindMatches() {
     setError(null)
     if (!city.trim()) return setError("Ange en stad.")
-    if (!cvText.trim()) return setError("Klistra in lite CV‑text.")
 
     const geo = cityToGeo(city)
+    
     if (!geo) return setError("Okänd stad. Prova t.ex. Stockholm, Uppsala eller Göteborg.")
 
-    const payload = { city, lat: geo.lat ?? 0, lon: geo.lon ?? 0, county_code: geo.county_code ?? null, radius_km: radiusKm, cv_text: cvText }
-
-    try {
-      setLoading(true)
-      setLastInitPayload(payload)
-      const res = await fetch("/api/match/init", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-      const { data, raw } = await safeParseResponse(res)
-      if (!res.ok) {
-        console.error("Init failed:", raw)
-        setError(data?.error || "Kunde inte hämta matchningar.")
-        setJobs([])
-        return
+    // LOGGED IN FLOW
+    if (user) {
+      const payload = { 
+        lat: geo.lat, 
+        lon: geo.lon, 
+        radius_km: isCountryWide ? 9999 : radiusKm 
       }
-      const jobResults = data?.jobs || []
-      setJobs(jobResults)
-      setFreeJobsShown(Math.min(jobResults.length, FREE_JOB_LIMIT))
-    } catch (e) {
-      console.error(e)
-      setError("Kunde inte hämta matchningar.")
-    } finally {
-      setLoading(false)
+      try {
+        setLoading(true)
+        const res = await fetch("/api/match/for-user", { 
+          method: "POST", 
+          headers: { "Content-Type": "application/json" }, 
+          body: JSON.stringify(payload) 
+        })
+        const { data, raw } = await safeParseResponse(res)
+        
+        if (!res.ok) {
+          console.error("Match for user failed:", raw)
+          if (res.status === 404 || res.status === 400) {
+            setError(data?.error || "Din profil verkar saknas eller vara ofullständig. Kontrollera 'Min profil'.")
+          } else {
+            setError(data?.error || "Kunde inte hämta matchningar.")
+          }
+          setJobs([])
+          return
+        }
+
+        const jobResults = data?.jobs || []
+        setJobs(jobResults)
+        setFreeJobsShown(Math.min(jobResults.length, jobLimit))
+      } catch (e) {
+        console.error(e)
+        setError("Ett fel uppstod vid matchning.")
+      } finally {
+        setLoading(false)
+      }
+
+    } else {
+      // ANONYMOUS FLOW
+      if (!cvText.trim()) return setError("Klistra in lite CV‑text.")
+
+      const payload = { 
+        city, 
+        lat: geo.lat ?? 0, 
+        lon: geo.lon ?? 0, 
+        county_code: geo.county_code ?? null, 
+        radius_km: isCountryWide ? 9999 : radiusKm, 
+        cv_text: cvText 
+      }
+      try {
+        setLoading(true)
+        setLastInitPayload(payload)
+        const res = await fetch("/api/match/init", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+        const { data, raw } = await safeParseResponse(res)
+        if (!res.ok) {
+          console.error("Init failed:", raw)
+          setError(data?.error || "Kunde inte hämta matchningar.")
+          setJobs([])
+          return
+        }
+        const jobResults = data?.jobs || []
+        setJobs(jobResults)
+        setFreeJobsShown(Math.min(jobResults.length, jobLimit))
+      } catch (e) {
+        console.error(e)
+        setError("Kunde inte hämta matchningar.")
+      } finally {
+        setLoading(false)
+      }
     }
   }
 
   async function handleRefineSubmit(wish: Wish) {
+    // CLOSE MODAL IMMEDIATELY
+    setShowWishlist(false)
+
     const payload = { candidate_id: user?.id || "demo-local", wish: { ...wish, remoteBoost } }
     try {
       setLoading(true)
@@ -307,7 +364,6 @@ export default function UnifiedLandingPage() {
         return
       }
       setJobs(data?.jobs || [])
-      setShowWishlist(false)
     } catch (e) {
       console.error(e)
       setError("Kunde inte förfina matchningarna.")
@@ -357,25 +413,48 @@ export default function UnifiedLandingPage() {
 
   function handleMapLocationChange(lat: number, lon: number, radius: number) {
     setRadiusKm(radius)
-    if (cvText.trim()) onFindMatches()
+    if (user || cvText.trim()) onFindMatches()
   }
 
   // ===== Packages / Stripe =====
+  // FIXED: Updated to send proper JSON body
   async function handleChoosePackage(plan: "premium" | "standard" | "basic") {
     if (!user) {
-      // Nudge to register/login
       const proceed = confirm("Du behöver vara inloggad för att köpa ett paket. Vill du logga in/registrera dig nu?")
       if (proceed) router.push("/login")
       return
     }
-    // Hit your server route that creates a Stripe Checkout session
-    // Expect it to return { url } for redirect
     try {
-      const res = await fetch(`/api/checkout?plan=${plan}`, { method: "POST" })
+      // Define package details mapping
+      const packages = {
+        premium: { amount: 1300, packageName: "CV + Personligt Brev + Konsultation", description: "Fullständigt paket med coaching" },
+        standard: { amount: 1000, packageName: "CV + Personligt Brev", description: "CV och brev matchat mot tjänst" },
+        basic: { amount: 750, packageName: "CV", description: "Professionellt CV" }
+      }
+
+      const details = packages[plan]
+      
+      // Sending proper JSON body with headers
+      const res = await fetch("/api/checkout", { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...details,
+          // Assuming we want to send user details if available, or backend handles it from session/DB?
+          // Based on your backend code, it expects email, phone etc in body.
+          // For now, sending minimal required by your backend code:
+          email: user.email, 
+          firstName: "", // You might want to fetch this from profile if needed
+          lastName: "",
+          phone: ""
+        })
+      })
+
       const json = await res.json()
       if (json?.url) {
         window.location.href = json.url
       } else {
+        console.error("Checkout error:", json)
         alert("Kunde inte starta betalning just nu. Försök igen.")
       }
     } catch (e) {
@@ -386,15 +465,27 @@ export default function UnifiedLandingPage() {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* === HERO (jobbnu.se style) === */}
+      {/* === HERO === */}
       <section className="relative bg-gradient-to-br from-blue-50 via-white to-amber-50 py-20 lg:py-32">
         <div className="container mx-auto px-4">
           <div className="grid gap-12 lg:grid-cols-2 items-center">
             <div className="space-y-6">
-              <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 text-balance">Hej! Jag heter Nikola – låt mig hjälpa dig att få jobbet du vill ha.</h1>
-              <p className="text-xl text-slate-700">Jag har hjälpt många – nu är det din tur.</p>
-              <p className="text-lg text-slate-600">Det viktigaste jag erbjuder är inte bara texten – det är vägledning. Jag visar dig hur du söker jobb effektivt, hur du sticker ut, och hur du får intervju.</p>
-              <blockquote className="border-l-4 border-blue-600 pl-4 italic text-slate-700">"Varje person har en historia – min uppgift är att få den att sticka ut."</blockquote>
+              <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 text-balance">
+                Hitta jobben som andra missar.
+              </h1>
+              
+              <p className="text-xl text-slate-700">
+                Vår AI matchar inte bara nyckelord – den förstår din kompetens.
+              </p>
+              
+              <p className="text-lg text-slate-600">
+                Ladda upp ditt CV gratis, se din marknadsvärdering, och bli synlig för handplockade arbetsgivare.
+              </p>
+              
+              <blockquote className="border-l-4 border-blue-600 pl-4 italic text-slate-700">
+                "Inga falska löften. Bara ren data och smartare matchning."
+              </blockquote>
+
               <div className="flex flex-wrap gap-4">
                 <Button size="lg" className="bg-blue-600 hover:bg-blue-700" asChild>
                   <a href="#packages">🎯 Välj ditt paket</a>
@@ -403,10 +494,15 @@ export default function UnifiedLandingPage() {
                   <a href="#matcher">🔎 Matcha jobb nu</a>
                 </Button>
               </div>
+              
               <div className="flex items-center gap-2 text-sm text-slate-600">
-                <div className="flex">{[...Array(5)].map((_, i) => (<Star key={i} className="h-4 w-4 fill-amber-400 text-amber-400" />))}</div>
-                <span className="font-semibold">4.9/5</span>
-                <span>från 50+ kunder</span>
+                <div className="flex">
+                  {[...Array(5)].map((_, i) => (
+                    <Star key={i} className="h-4 w-4 fill-amber-400 text-amber-400" />
+                  ))}
+                </div>
+                <span className="font-semibold">Högsta betyg</span>
+                <span>från verifierade kandidater</span>
               </div>
             </div>
             <div className="flex justify-center lg:justify-end">
@@ -428,7 +524,7 @@ export default function UnifiedLandingPage() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {/* Premium */}
+            {/* Cards ... */}
             <Card className="relative border-2 border-blue-600 shadow-xl">
               <div className="absolute -top-4 left-1/2 -translate-x-1/2">
                 <Badge className="bg-blue-600 text-white px-4 py-1"><Star className="h-3 w-3 mr-1 inline" /> Rekommenderas</Badge>
@@ -440,7 +536,7 @@ export default function UnifiedLandingPage() {
               </CardHeader>
               <CardContent>
                 <ul className="space-y-3">
-                  {["Professionellt CV","Personligt brev","60 min personlig konsultation","Jobbsökningsstrategier","Intervjuförberedelse","Personlig coaching","Leverans inom 7-10 dagar"].map((item) => (
+                  {["Professionellt CV","Personligt brev","45 min personlig konsultation","Jobbsökningsstrategier","Intervjuförberedelse","Personlig coaching","Leverans inom 7-10 dagar"].map((item) => (
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
@@ -448,7 +544,6 @@ export default function UnifiedLandingPage() {
               </CardContent>
             </Card>
 
-            {/* Standard */}
             <Card className="border-2">
               <CardHeader className="text-center">
                 <CardTitle className="text-2xl">CV + Personligt Brev</CardTitle>
@@ -465,7 +560,6 @@ export default function UnifiedLandingPage() {
               </CardContent>
             </Card>
 
-            {/* Basic */}
             <Card className="border-2">
               <CardHeader className="text-center">
                 <CardTitle className="text-2xl">CV</CardTitle>
@@ -483,7 +577,7 @@ export default function UnifiedLandingPage() {
             </Card>
           </div>
 
-          {/* Not logged in hint under packages */}
+          {/* Only show if user is NOT logged in */}
           {!user && (
             <p className="mt-6 text-center text-sm text-slate-600">Inte registrerad än? <Link href="/login" className="text-blue-700 hover:underline inline-flex items-center gap-1"><LogIn className="h-4 w-4" /> Skapa konto eller logga in</Link> för att slutföra köp.</p>
           )}
@@ -506,7 +600,6 @@ export default function UnifiedLandingPage() {
               </CardHeader>
               <CardContent className="pt-6">
                 {user ? (
-                  // Logged-in: streamlined UI + profile link
                   <div className="space-y-6">
                     <p className="text-slate-600">Välkommen tillbaka! Ditt CV och dina preferenser kan sparas på ditt konto.</p>
                     <div className="grid gap-6 md:grid-cols-2">
@@ -520,18 +613,30 @@ export default function UnifiedLandingPage() {
                       </div>
                       <div>
                         <Label htmlFor="radius">Pendlingsradie (km)</Label>
-                        <Input id="radius" type="number" min={5} max={100} value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value || 0))} className="mt-2" />
+                        <Input 
+                          id="radius" 
+                          type="number" 
+                          min={5} 
+                          max={100} 
+                          value={radiusKm} 
+                          onChange={(e) => setRadiusKm(Number(e.target.value || 0))} 
+                          className="mt-2" 
+                          disabled={isCountryWide}
+                        />
                       </div>
                     </div>
-                    <div>
-                      <Label htmlFor="cvtext">CV‑text</Label>
-                      <Textarea id="cvtext" rows={6} className="mt-2 resize-none" placeholder="Klistra in ditt CV här (text) eller ladda upp en fil nedan..." value={cvText} onChange={(e) => setCvText(e.target.value)} />
-                      <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                        <Upload className="h-3.5 w-3.5" /> Du kan även ladda upp PDF eller .txt:
-                        <Input type="file" accept=".txt,.pdf" onChange={handleFileUpload} className="max-w-[240px]" />
+                    
+                    <div className="rounded-md bg-blue-50 p-4 mt-4 border border-blue-100">
+                      <div className="flex items-center gap-3">
+                         <FileText className="h-5 w-5 text-blue-600" />
+                         <div>
+                            <p className="text-sm font-medium text-blue-900">Ditt profil-CV används för matchning</p>
+                            <p className="text-xs text-blue-700">Vill du ändra ditt CV? Gå till <Link href="/profile" className="underline font-semibold hover:text-blue-900">Min Profil</Link>.</p>
+                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-3">
+                    
+                    <div className="flex flex-col sm:flex-row gap-3 mt-4">
                       <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={onFindMatches} disabled={loading}>{loading ? "Söker…" : "🔎 Hitta matchningar"}</Button>
                       <Button variant="outline" className="flex-1 bg-transparent" onClick={() => setShowWishlist(true)}><Wand2 className="h-4 w-4 mr-2" /> Förfina med önskemål</Button>
                       <Button variant="outline" className="flex-1" asChild>
@@ -540,7 +645,6 @@ export default function UnifiedLandingPage() {
                     </div>
                   </div>
                 ) : (
-                  // Anonymous: full v0 flow + register CTA
                   <div className="space-y-6">
                     <div className="grid gap-6 md:grid-cols-2">
                       <div>
@@ -553,7 +657,16 @@ export default function UnifiedLandingPage() {
                       </div>
                       <div>
                         <Label htmlFor="radius">Pendlingsradie (km)</Label>
-                        <Input id="radius" type="number" min={5} max={100} value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value || 0))} className="mt-2" />
+                        <Input 
+                          id="radius" 
+                          type="number" 
+                          min={5} 
+                          max={100} 
+                          value={radiusKm} 
+                          onChange={(e) => setRadiusKm(Number(e.target.value || 0))} 
+                          className="mt-2" 
+                          disabled={isCountryWide}
+                        />
                       </div>
                     </div>
 
@@ -583,7 +696,8 @@ export default function UnifiedLandingPage() {
         </div>
       </section>
 
-      {/* === RESULTS === */}
+      {/* === RESULTS & FOOTER & ETC === */}
+      {/* (Rest of the file remains the same, just ensuring component structure is complete) */}
       <section className="container mx-auto px-4 pb-10">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-2xl font-semibold">Dina matchningar</h3>
@@ -610,14 +724,12 @@ export default function UnifiedLandingPage() {
           <InteractiveJobMap onLocationChange={handleMapLocationChange} initialCenter={cityToGeo(city) ? { lat: cityToGeo(city)!.lat, lon: cityToGeo(city)!.lon } : undefined} initialRadius={radiusKm} />
         ) : (
           <>
-            {jobs.length > FREE_JOB_LIMIT && (
+            {jobs.length > jobLimit && (
               <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
                 <div className="flex items-start gap-3">
                   <Lock className="h-5 w-5 text-amber-600 mt-0.5" />
                   <div>
-                    <h4 className="font-semibold text-amber-800">Visar {FREE_JOB_LIMIT} av {jobs.length} jobb gratis</h4>
-                    <p className="text-sm text-amber-700 mt-1">Få tillgång till alla {jobs.length} jobb + jobbvarningar via e‑post genom att prenumerera.</p>
-                    <Button className="mt-3 bg-amber-600 hover:bg-amber-700 text-white">Prenumerera för fler jobb →</Button>
+                    <h4 className="font-semibold text-amber-800">Visar {jobLimit} av {jobs.length} jobb gratis</h4>
                   </div>
                 </div>
               </div>
@@ -657,12 +769,11 @@ export default function UnifiedLandingPage() {
                 </Card>
               ))}
             </div>
-
-            {/* Post-results CTA */}
-            {freeJobsShown > 0 && (
+             
+             {freeJobsShown > 0 && (
               <div className="mt-8 rounded-lg border border-blue-200 bg-blue-50 p-6">
                 <h4 className="text-lg font-semibold text-blue-900 mb-2">Vill du ha hjälp att sticka ut?</h4>
-                <p className="text-sm text-blue-800 mb-4">Jag hjälper dig att skapa ett CV och personligt brev som får dig till intervju. Boka en konsultation eller välj ett paket nedan.</p>
+                <p className="text-sm text-blue-800 mb-4">Jag hjälper dig att skapa ett CV och personligt brev som får dig till intervju. Boka en konsultation eller välj ett paket.</p>
                 <div className="flex flex-wrap gap-3">
                   <Button className="bg-blue-600 hover:bg-blue-700" asChild>
                     <a href="#packages">📋 Se paket & priser</a>
@@ -677,16 +788,19 @@ export default function UnifiedLandingPage() {
         )}
       </section>
 
-      {/* === WHY / SOCIAL PROOF === */}
       <section id="about" className="py-20 bg-slate-50">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto text-center space-y-8">
             <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Varför välja mig?</h2>
             <div className="grid md:grid-cols-3 gap-8 mt-12">
               <div className="text-center space-y-4">
-                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto"><Users className="h-8 w-8 text-blue-600" /></div>
-                <h3 className="text-xl font-semibold">50+ Nöjda Kunder</h3>
-                <p className="text-slate-600">Jag har hjälpt över 50 personer att landa sina drömjobb med personlig coaching och skräddarsydda ansökningar.</p>
+                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
+                  <BrainCircuit className="h-8 w-8 text-blue-600" />
+                </div>
+                <h3 className="text-xl font-semibold">Smart AI-Matchning</h3>
+                <p className="text-slate-600">
+                  Systemet förstår innebörden i ditt CV – inte bara nyckelord. Vi matchar din unika profil semantiskt mot tusentals annonser för att hitta dolda möjligheter.
+                </p>
               </div>
               <div className="text-center space-y-4">
                 <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto"><FileText className="h-8 w-8 text-blue-600" /></div>
@@ -703,7 +817,6 @@ export default function UnifiedLandingPage() {
         </div>
       </section>
 
-      {/* === FAQ === */}
       <section className="py-20 bg-white">
         <div className="container mx-auto px-4">
           <div className="text-center space-y-4 mb-16">
@@ -713,7 +826,7 @@ export default function UnifiedLandingPage() {
             <Accordion type="single" collapsible>
               <AccordionItem value="item-1">
                 <AccordionTrigger>Vad ingår i konsultationen?</AccordionTrigger>
-                <AccordionContent>Konsultationen är ett 60‑minuters personligt möte (video eller telefon) där vi går igenom din karriär, diskuterar dina mål, och skapar en konkret jobbsökningsstrategi.</AccordionContent>
+                <AccordionContent>Konsultationen är ett 45‑minuters personligt möte (video eller telefon) där vi går igenom din karriär, diskuterar dina mål, och skapar en konkret jobbsökningsstrategi.</AccordionContent>
               </AccordionItem>
               <AccordionItem value="item-2">
                 <AccordionTrigger>Hur lång tid tar leverans?</AccordionTrigger>
@@ -728,24 +841,25 @@ export default function UnifiedLandingPage() {
         </div>
       </section>
 
-      {/* === FOOTER === */}
       <footer id="contact" className="bg-slate-900 text-white py-16">
         <div className="container mx-auto px-4">
           <div className="grid md:grid-cols-3 gap-8">
             <div>
               <h3 className="text-xl font-bold mb-4">Kontakta Nikola</h3>
               <div className="space-y-3">
-                <div className="flex items-center gap-3"><Mail className="h-5 w-5" /><span>nikola@cvhjälp.se</span></div>
-                <div className="flex items-center gap-3"><Phone className="h-5 w-5" /><span>070-123 45 67</span></div>
+                <div className="flex items-center gap-3">
+                  <Mail className="h-5 w-5" />
+                  <span>info@jobbnu.se</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <MessageSquareText className="h-5 w-5" />
+                  <span>076-173 34 73 (Endast SMS)</span>
+                </div>
               </div>
             </div>
             <div>
               <h3 className="text-xl font-bold mb-4">Snabbkontakt</h3>
-              <div className="space-y-3">
-                <Input placeholder="Din e‑post" className="bg-slate-800 border-slate-700" />
-                <Textarea placeholder="Ditt meddelande" className="bg-slate-800 border-slate-700" rows={3} />
-                <Button className="bg-blue-600 hover:bg-blue-700">Skicka meddelande</Button>
-              </div>
+              <ContactForm />
             </div>
             <div>
               <h3 className="text-xl font-bold mb-4">Tjänster</h3>
@@ -765,7 +879,6 @@ export default function UnifiedLandingPage() {
         </div>
       </footer>
 
-      {/* Wishlist overlay */}
       {showWishlist && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
           <CareerWishlistForm

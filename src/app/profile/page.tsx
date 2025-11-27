@@ -8,8 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-// ...existing code...
-import { User, Eye } from "lucide-react";
+import { User, Eye } from "lucide-react"; 
+import Link from "next/link";
 
 interface Profile {
   full_name: string;
@@ -27,6 +27,9 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [cvFile, setCvFile] = useState<File | null>(null);
+  const [gdprAccepted, setGdprAccepted] = useState(false);
+  
+  // Kept the new state variables
   const [cvViewLoading, setCvViewLoading] = useState(false);
   const [cvViewError, setCvViewError] = useState<string | null>(null);
 
@@ -71,6 +74,11 @@ export default function ProfilePage() {
     e.preventDefault();
     if (!profile) return;
 
+    if (!gdprAccepted) {
+      setMessage("Du måste godkänna villkoren för att spara.");
+      return;
+    }
+    
     setLoading(true);
     setMessage("");
 
@@ -106,6 +114,7 @@ export default function ProfilePage() {
     if (profile) setProfile({ ...profile, [name]: value });
   };
 
+  // Kept the new 'handleViewCv' function
   const handleViewCv = async () => {
     setCvViewLoading(true);
     setCvViewError(null);
@@ -205,7 +214,30 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            <Button type="submit" disabled={loading} className="w-full">
+            <div className="flex items-start space-x-3 p-4 bg-slate-50 rounded-md border border-slate-200">
+              <input
+                id="gdpr-check"
+                type="checkbox"
+                checked={gdprAccepted}
+                onChange={(e) => setGdprAccepted(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600 cursor-pointer"
+              />
+              <div className="grid gap-1.5 leading-none">
+                <label
+                  htmlFor="gdpr-check"
+                  className="text-sm font-medium leading-snug cursor-pointer text-slate-700"
+                >
+                  Jag godkänner lagring av mina uppgifter
+                </label>
+                <p className="text-xs text-slate-500">
+                  Dina uppgifter sparas säkert internt och är endast tillgängliga för administratören. 
+                  Vi använder din e-post och telefon enbart för att kontakta dig vid jobbmatchningar. 
+                  Läs mer i vår <Link href="/integritetspolicy" target="_blank" className="text-blue-600 underline hover:text-blue-800">Integritetspolicy</Link>.
+                </p>
+              </div>
+            </div>
+
+            <Button type="submit" disabled={loading || !gdprAccepted} className="w-full">
               {loading ? "Sparar..." : "Spara ändringar"}
             </Button>
             {message && <p className="text-sm text-center text-green-600 mt-4">{message}</p>}

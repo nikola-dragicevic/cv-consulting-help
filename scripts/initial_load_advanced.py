@@ -6,7 +6,8 @@ import os
 import sys
 import requests
 import time
-from datetime import datetime, timedelta
+# Added timezone to ensure correct timestamp comparisons in DB
+from datetime import datetime, timedelta, timezone 
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -79,16 +80,39 @@ def generate_date_ranges(start_date, end_date, days_per_range=7):
 
     return ranges
 
+def cleanup_stale_jobs(run_timestamp):
+    """
+    Mark & Sweep: Deactivates jobs that were not seen in the current pipeline run.
+    Uses a 6-hour safety margin to prevent accidental deactivation during a slow run.
+    """
+    stale_threshold = run_timestamp - timedelta(hours=6)
+    
+    print(f"\n🧹 Sweeping for stale jobs (not seen since {stale_threshold.isoformat()})...")
+
+    # Find jobs where last_seen is older than the threshold AND they are still active
+    # This query finds jobs that were NOT successfully marked as seen in this run.
+    result = supabase.table("job_ads") \
+        .update({"is_active": False}) \
+        .lt("last_seen", stale_threshold.isoformat()) \
+        .eq("is_active", True) \
+        .execute()
+    
+    if hasattr(result, 'count'):
+        print(f"   Deactivated {result.count} stale jobs.")
+    else:
+        print("   Cleanup finished (count not reliably available).")
+
+
 def fetch_with_date_ranges():
     """Fetch jobs using date range pagination to bypass the 2100 limit"""
     print("[ADVANCED] Using date-range pagination to fetch all jobs...\n")
 
     # Start from 6 months ago to today
-    end_date = datetime.now()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=180)  # 6 months
 
     # Generate weekly date ranges
-    date_ranges = generate_date_ranges(start_date, end_date, days_per_range=7)
+    date_ranges = generate_date_ranges(start_date.replace(tzinfo=None), end_date.replace(tzinfo=None), days_per_range=7)
 
     print(f"[INFO] Splitting into {len(date_ranges)} date ranges (7 days each)")
     print(f"[INFO] Date range: {start_date.date()} to {end_date.date()}\n")
@@ -131,12 +155,15 @@ def fetch_with_date_ranges():
     return all_jobs
 
 def upsert_jobs(jobs):
-    """Upload jobs to Supabase"""
+    """Laddar upp jobb till Supabase i batcher"""
     if not jobs:
         print("[WARN] No jobs to upload")
         return
+    
+    # Capture the timestamp when the script RUNS
+    run_timestamp = datetime.now(timezone.utc)
 
-    print(f"\n[UPLOAD] Uploading {len(jobs)} jobs to Supabase...")
+    print(f"🛠  Laddar upp {len(jobs)} jobb till Supabase i batcher (Timestamp: {run_timestamp.isoformat()})...")
 
     batch_size = 100
     for i in range(0, len(jobs), batch_size):
@@ -144,6 +171,7 @@ def upsert_jobs(jobs):
         job_data_batch = []
 
         for job in batch:
+            # Extract fields safely from JobTechDev Search API response
             workplace = job.get("workplace_address") or {}
             occupation = job.get("occupation") or {}
             description = job.get("description") or {}
@@ -158,6 +186,18 @@ def upsert_jobs(jobs):
                 "webpage_url": job.get("webpage_url"),
                 "job_category": occupation.get("label"),
                 "requires_dl_b": job.get("driving_license_required", False),
+                
+                # --- NEW FIELD ---
+                "application_deadline": job.get("application_deadline"),
+                
+                # --- INVALIDATION FIX & MARK ---
+                # These attributes are reset to force re-processing by downstream scripts,
+                # ensuring no stale data is used for matching.
+                "embedding": None,          
+                "location_lat": None,       
+                "location_lon": None,       
+                "is_active": True,          # Mark as seen in the current feed
+                "last_seen": run_timestamp.isoformat() # Mark with current time
             }
             job_data_batch.append(job_data)
 
@@ -165,13 +205,16 @@ def upsert_jobs(jobs):
             supabase.table("job_ads").upsert(job_data_batch, on_conflict='id').execute()
             batch_num = i // batch_size + 1
             total_batches = ((len(jobs) - 1) // batch_size) + 1
-            print(f"  Batch {batch_num}/{total_batches} uploaded ({len(job_data_batch)} jobs)")
+            print(f"  Batch {batch_num}/{total_batches} uploaded ({len(job_data_batch)} jobb)")
         except Exception as e:
             print(f"  [ERROR] Upload failed for batch {i // batch_size + 1}: {e}")
 
-    print("[SUCCESS] Upload complete!")
+    print("✅ Uppladdning till Supabase klar.")
+    
+    # Run cleanup immediately after successful upsert
+    cleanup_stale_jobs(run_timestamp)
 
 if __name__ == "__main__":
-    jobs = fetch_with_date_ranges()
-    if jobs:
-        upsert_jobs(jobs)
+    jobs_to_load = fetch_with_date_ranges()
+    if jobs_to_load:
+        upsert_jobs(jobs_to_load)
