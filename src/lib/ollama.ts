@@ -1,7 +1,8 @@
 // src/lib/ollama.ts
 import { spawn } from 'child_process';
 
-export const DIMS = 768;
+export const DIMS = 1024;
+const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://localhost:8000";
 
 /**
  * Executes the Python embedding script securely, passing text via stdin.
@@ -49,12 +50,21 @@ function generateEmbedding(text: string): Promise<number[]> {
   });
 }
 
-export async function embedText(text = ""): Promise<number[]> {
-  const t = String(text || "").trim();
-  if (!t) {
-    return Array(DIMS).fill(0);
+export async function embedText(text: string): Promise<number[]> {
+  try {
+    const res = await fetch(`${WORKER_URL}/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    
+    if (!res.ok) throw new Error("Worker failed");
+    const data = await res.json();
+    return data.vector;
+  } catch (e) {
+    console.error("Embedding error:", e);
+    return [];
   }
-  return generateEmbedding(t);
 }
 
 // Keep the specific embedders for profiles and wishes for structured prompting

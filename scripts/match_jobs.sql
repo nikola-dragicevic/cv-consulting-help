@@ -2,7 +2,7 @@
 -- This SQL function finds the top N job matches for a given candidate vector
 
 create or replace function match_jobs(
-    embedding vector(768),
+    embedding vector(1024),
     top_k integer default 10
 )
 returns table (
