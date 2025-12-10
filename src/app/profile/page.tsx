@@ -32,6 +32,10 @@ export default function ProfilePage() {
   // Kept the new state variables
   const [cvViewLoading, setCvViewLoading] = useState(false);
   const [cvViewError, setCvViewError] = useState<string | null>(null);
+  
+  // Rate limiting state
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [countdown, setCountdown] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -74,6 +78,12 @@ export default function ProfilePage() {
     e.preventDefault();
     if (!profile) return;
 
+    // Prevent spam
+    if (isRateLimited) {
+      setMessage(`Vänligen vänta ${countdown} sekunder innan du sparar igen.`);
+      return;
+    }
+
     if (!gdprAccepted) {
       setMessage("Du måste godkänna villkoren för att spara.");
       return;
@@ -94,11 +104,26 @@ export default function ProfilePage() {
       const result = await res.json();
 
       if (!res.ok) throw new Error(result.error || "Något gick fel.");
-      setMessage("Din profil har uppdaterats!");
+      setMessage("Din profil har uppdaterats! CV analyseras nu...");
 
       if (result.newCvUrl) {
         setProfile(prev => (prev ? { ...prev, cv_file_url: result.newCvUrl } : prev));
       }
+
+      // START RATE LIMITER
+      setIsRateLimited(true);
+      setCountdown(10);
+      const timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setIsRateLimited(false);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
     } catch (err: any) {
       setMessage(`Fel: ${err.message}`);
     } finally {
@@ -237,8 +262,8 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            <Button type="submit" disabled={loading || !gdprAccepted} className="w-full">
-              {loading ? "Sparar..." : "Spara ändringar"}
+            <Button type="submit" disabled={loading || !gdprAccepted || isRateLimited} className="w-full">
+              {loading ? "Sparar..." : isRateLimited ? `Vänta innan du sparar igen (${countdown}s)` : "Spara ändringar"}
             </Button>
             {message && <p className="text-sm text-center text-green-600 mt-4">{message}</p>}
           </form>
