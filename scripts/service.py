@@ -13,10 +13,11 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 
 # Import logic from your existing scripts
-# We will ensure these scripts are import-friendly in the next steps
+# (Ensure these scripts are present and cleaned up as per step 3 below)
 from update_jobs import fetch_new_jobs, upsert_jobs
 from enrich_jobs import enrich_job_vectors
-from geocode_jobs import geocode_new_jobs  # <--- IMPORT THIS
+from geocode_jobs import geocode_new_jobs
+from generate_candidate_vector import enrich_candidates  # We will adapt this script next
 
 load_dotenv()
 
@@ -39,42 +40,51 @@ def normalize_vector(vector: list[float]) -> list[float]:
         return [0.0] * len(vector)
     return [x / magnitude for x in vector]
 
-# --- Background Scheduler ---
+# --- Background Tasks ---
+
 def run_job_pipeline():
-    """The task that runs every 6 hours"""
+    """Runs every 6 hours: Fetch -> Upsert -> Vectorize Jobs -> Geocode"""
     print(f"🚀 [CRON] Starting job update pipeline: {time.ctime()}")
     try:
-        # 1. Fetch & Upsert new jobs from JobTech
-        # You might want to track the last run timestamp in a file or DB, 
-        # but for now we fetch recent/stream
+        # 1. Fetch & Upsert new jobs
         jobs = fetch_new_jobs(None) 
         if jobs:
             upsert_jobs(jobs)
         
-        # 2. Vectorize newly added jobs
-        # enrich_job_vectors is async, so we run it in a new event loop for this thread
+        # 2. Vectorize newly added jobs (Async wrapper)
         asyncio.run(enrich_job_vectors())
 
-        # 3. Geocode (Async) - NEW STEP
+        # 3. Geocode new jobs (Async wrapper)
         asyncio.run(geocode_new_jobs())
         
         print("✅ [CRON] Pipeline finished successfully")
     except Exception as e:
         print(f"❌ [CRON] Pipeline failed: {e}")
 
+def run_quick_tasks():
+    """Runs frequently (e.g. every 10s): Vectorize Candidates"""
+    # This handles the "User saved profile" scenario immediately
+    try:
+        asyncio.run(enrich_candidates())
+    except Exception as e:
+        print(f"❌ [QUICK] Candidate enrichment failed: {e}")
+
 def run_scheduler():
     """Runs in a separate thread to keep the API alive"""
-    print("⏰ Scheduler started. Running job updates every 6 hours.")
+    print("⏰ Scheduler started.")
     
-    # Schedule the job
+    # Heavy jobs every 6 hours
     schedule.every(6).hours.do(run_job_pipeline)
     
-    # Run once on startup (optional, good for ensuring data is fresh)
+    # Quick checks every 10 seconds (for new CVs)
+    schedule.every(10).seconds.do(run_quick_tasks)
+    
+    # Run once on startup to catch up
     # Thread(target=run_job_pipeline).start() 
 
     while True:
         schedule.run_pending()
-        time.sleep(10)
+        time.sleep(1)
 
 # --- FastAPI App ---
 @asynccontextmanager
@@ -87,7 +97,7 @@ async def lifespan(app: FastAPI):
     scheduler_thread.start()
     
     yield
-    # Shutdown event (if needed)
+    # Shutdown event
 
 app = FastAPI(lifespan=lifespan)
 
