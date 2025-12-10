@@ -1,6 +1,19 @@
 FROM python:3.11-slim
+
 WORKDIR /app
+
+# Copy dependency file
 COPY scripts/requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["python", "scripts/worker.py"]
+
+# Install dependencies (adding fastapi, uvicorn, schedule which might be missing from requirements.txt)
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir fastapi uvicorn schedule httpx
+
+# Copy the scripts folder
+COPY scripts/ ./scripts/
+
+# Expose the port the API runs on
+EXPOSE 8000
+
+# Start the unified service
+CMD ["uvicorn", "scripts.service:app", "--host", "0.0.0.0", "--port", "8000"]

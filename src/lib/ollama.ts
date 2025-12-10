@@ -1,69 +1,23 @@
 // src/lib/ollama.ts
-import { spawn } from 'child_process';
-
 export const DIMS = 1024;
+// In Docker, this connects to the service we just made
 const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://localhost:8000";
-
-/**
- * Executes the Python embedding script securely, passing text via stdin.
- * THIS IS A SERVER-ONLY UTILITY.
- * @param text The text to embed.
- * @returns A promise that resolves to a 768-dimension vector.
- */
-function generateEmbedding(text: string): Promise<number[]> {
-  return new Promise((resolve, reject) => {
-    // Ensure the python executable is named correctly for your environment ('python' or 'python3')
-    const pythonProcess = spawn('python', ['scripts/generate_embedding.py']);
-
-    let output = '';
-    let errorOutput = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    pythonProcess.on('close', (code) => {
-      if (code !== 0) {
-        console.error(`Python script exited with code ${code}:`, errorOutput);
-        try {
-          const err = JSON.parse(errorOutput);
-          return reject(new Error(err.details || 'Python script failed.'));
-        } catch {
-          return reject(new Error(errorOutput || 'An unknown error occurred in the Python script.'));
-        }
-      }
-      try {
-        const embedding = JSON.parse(output);
-        resolve(embedding);
-      } catch (e) {
-        reject(new Error('Failed to parse embedding output from Python script.'));
-      }
-    });
-    
-    // Write the text to the script's stdin and close it.
-    pythonProcess.stdin.write(text);
-    pythonProcess.stdin.end();
-  });
-}
 
 export async function embedText(text: string): Promise<number[]> {
   try {
+    // Only use the HTTP fetch method
     const res = await fetch(`${WORKER_URL}/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
     
-    if (!res.ok) throw new Error("Worker failed");
+    if (!res.ok) throw new Error(`Worker failed: ${res.statusText}`);
     const data = await res.json();
     return data.vector;
   } catch (e) {
     console.error("Embedding error:", e);
-    return [];
+    return []; // Handle empty vector gracefully upstream
   }
 }
 

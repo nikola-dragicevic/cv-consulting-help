@@ -1,0 +1,128 @@
+# scripts/service.py
+import os
+import asyncio
+import schedule
+import time
+import httpx
+import math
+from contextlib import asynccontextmanager
+from threading import Thread
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# Import logic from your existing scripts
+# We will ensure these scripts are import-friendly in the next steps
+from update_jobs import fetch_new_jobs, upsert_jobs
+from enrich_jobs import enrich_job_vectors
+
+load_dotenv()
+
+# --- Configuration ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+# Use the internal docker hostname 'ollama' by default
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "snowflake-arctic-embed2")
+DIMS = 1024
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+# --- Helper: Normalization ---
+def normalize_vector(vector: list[float]) -> list[float]:
+    if not vector:
+        return []
+    magnitude = math.sqrt(sum(x**2 for x in vector))
+    if magnitude == 0:
+        return [0.0] * len(vector)
+    return [x / magnitude for x in vector]
+
+# --- Background Scheduler ---
+def run_job_pipeline():
+    """The task that runs every 6 hours"""
+    print(f"🚀 [CRON] Starting job update pipeline: {time.ctime()}")
+    try:
+        # 1. Fetch & Upsert new jobs from JobTech
+        # You might want to track the last run timestamp in a file or DB, 
+        # but for now we fetch recent/stream
+        jobs = fetch_new_jobs(None) 
+        if jobs:
+            upsert_jobs(jobs)
+        
+        # 2. Vectorize newly added jobs
+        # enrich_job_vectors is async, so we run it in a new event loop for this thread
+        asyncio.run(enrich_job_vectors())
+        
+        print("✅ [CRON] Pipeline finished successfully")
+    except Exception as e:
+        print(f"❌ [CRON] Pipeline failed: {e}")
+
+def run_scheduler():
+    """Runs in a separate thread to keep the API alive"""
+    print("⏰ Scheduler started. Running job updates every 6 hours.")
+    
+    # Schedule the job
+    schedule.every(6).hours.do(run_job_pipeline)
+    
+    # Run once on startup (optional, good for ensuring data is fresh)
+    # Thread(target=run_job_pipeline).start() 
+
+    while True:
+        schedule.run_pending()
+        time.sleep(10)
+
+# --- FastAPI App ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup event
+    print(f"⚡ Unified Service Starting... Model: {EMBEDDING_MODEL} ({DIMS} dims)")
+    
+    # Start Scheduler in a background thread
+    scheduler_thread = Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    
+    yield
+    # Shutdown event (if needed)
+
+app = FastAPI(lifespan=lifespan)
+
+class EmbedRequest(BaseModel):
+    text: str
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "model": EMBEDDING_MODEL, "dims": DIMS}
+
+@app.post("/embed")
+async def generate_embedding(req: EmbedRequest):
+    """
+    Endpoint for Next.js to request embeddings.
+    Strictly enforces 1024 dimensions and normalization.
+    """
+    if not req.text.strip():
+        raise HTTPException(400, "Text cannot be empty")
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            response = await client.post(
+                OLLAMA_URL,
+                json={"model": EMBEDDING_MODEL, "prompt": req.text}
+            )
+            response.raise_for_status()
+            data = response.json()
+            embedding = data.get("embedding")
+            
+            if not embedding or len(embedding) != DIMS:
+                error_msg = f"Ollama returned invalid dims. Expected {DIMS}, got {len(embedding) if embedding else 0}"
+                print(f"❌ {error_msg}")
+                raise HTTPException(500, error_msg)
+                
+            return {"vector": normalize_vector(embedding)}
+            
+        except httpx.RequestError as e:
+            print(f"❌ Connection error to Ollama: {e}")
+            raise HTTPException(503, "Embedding service unavailable")
+        except Exception as e:
+            print(f"❌ Embedding Error: {e}")
+            raise HTTPException(500, str(e))
