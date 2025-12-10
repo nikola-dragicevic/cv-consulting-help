@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 # We will ensure these scripts are import-friendly in the next steps
 from update_jobs import fetch_new_jobs, upsert_jobs
 from enrich_jobs import enrich_job_vectors
+from geocode_jobs import geocode_new_jobs  # <--- IMPORT THIS
 
 load_dotenv()
 
@@ -53,6 +54,9 @@ def run_job_pipeline():
         # 2. Vectorize newly added jobs
         # enrich_job_vectors is async, so we run it in a new event loop for this thread
         asyncio.run(enrich_job_vectors())
+
+        # 3. Geocode (Async) - NEW STEP
+        asyncio.run(geocode_new_jobs())
         
         print("✅ [CRON] Pipeline finished successfully")
     except Exception as e:

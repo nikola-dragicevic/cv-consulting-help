@@ -1,27 +1,38 @@
 // src/lib/ollama.ts
+
 export const DIMS = 1024;
-// In Docker, this connects to the service we just made
+
+// Connects to the 'worker' service in Docker
 const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://localhost:8000";
 
+/**
+ * Sends text to the Python Worker for embedding.
+ * This replaces the local python script execution.
+ */
 export async function embedText(text: string): Promise<number[]> {
   try {
-    // Only use the HTTP fetch method
+    // ONLY use fetch. Never spawn processes.
     const res = await fetch(`${WORKER_URL}/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
     
-    if (!res.ok) throw new Error(`Worker failed: ${res.statusText}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Worker Error (${res.status}): ${errText}`);
+    }
+    
     const data = await res.json();
-    return data.vector;
+    return data.vector; // This is already normalized and 1024-dim
   } catch (e) {
-    console.error("Embedding error:", e);
-    return []; // Handle empty vector gracefully upstream
+    console.error("Embedding failed:", e);
+    // Return empty array to prevent UI crashes, let upstream handle 0 matches
+    return []; 
   }
 }
 
-// Keep the specific embedders for profiles and wishes for structured prompting
+// Helpers for specific contexts
 export async function embedProfile(cvText: string): Promise<number[]> {
   const prompt = `Candidate CV Summary:\n${cvText}`;
   return embedText(prompt);
