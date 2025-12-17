@@ -26,15 +26,12 @@ DIMS = 1024
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-# ----------------------------
-# Embedding helpers
-# ----------------------------
+# --- Helpers ---
+
 def normalize_vector(vector: List[float]) -> List[float]:
-    if not vector:
-        return []
+    if not vector: return []
     magnitude = math.sqrt(sum(x**2 for x in vector))
-    if magnitude == 0:
-        return [0.0] * len(vector)
+    if magnitude == 0: return [0.0] * len(vector)
     return [x / magnitude for x in vector]
 
 async def get_local_embedding(text: str) -> List[float]:
@@ -44,170 +41,93 @@ async def get_local_embedding(text: str) -> List[float]:
             json={"model": EMBEDDING_MODEL, "prompt": text},
         )
         resp.raise_for_status()
-        data = resp.json()
-        emb = data.get("embedding")
-
+        emb = resp.json().get("embedding")
         if not emb or len(emb) != DIMS:
-            raise ValueError(f"Invalid dimensions: {len(emb) if emb else 'None'}. Expected {DIMS}.")
-
+            raise ValueError(f"Invalid dims: {len(emb)}")
         return normalize_vector(emb)
 
-# ----------------------------
-# Text building (NO keyword ranking)
-# ----------------------------
-_BOILERPLATE_PATTERNS = [
-    r"Öppen för alla.*",                     # common footer
-    r"Vi fokuserar på din kompetens.*",
-    r"Urval och intervjuer sker löpande.*",
-    r"Skicka in din ansökan.*",
-    r"Välkommen med din ansökan.*",
-    r"Please apply.*",
-    r"We do not accept.*",
-]
-
 def clean_text(s: str) -> str:
-    if not s:
-        return ""
-    s = s.replace("\r", "\n")
-    s = re.sub(r"\s+", " ", s).strip()
-
-    # Remove boilerplate chunks (best-effort)
-    for pat in _BOILERPLATE_PATTERNS:
+    if not s: return ""
+    # Ta bort vanliga footer-fraser som förstör matchningen
+    patterns = [
+        r"Öppen för alla.*", r"Vi fokuserar på din kompetens.*",
+        r"Var ligger arbetsplatsen.*", r"Postadress.*"
+    ]
+    s = s.replace("\r", " ").replace("\n", " ")
+    for pat in patterns:
         s = re.sub(pat, "", s, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", s).strip()
 
-    # Final whitespace normalize
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-def pick_description(desc: str, max_chars: int = 700) -> str:
-    """No keyword extraction: just clean + take a compact slice."""
-    desc = clean_text(desc)
-    if len(desc) <= max_chars:
-        return desc
-    return desc[:max_chars].rstrip() + "…"
-
-def join_labels(items: Any, label_key: str = "label", max_items: int = 12) -> str:
-    if not items or not isinstance(items, list):
-        return ""
-    labels = []
-    for it in items[:max_items]:
-        if isinstance(it, dict) and it.get(label_key):
-            labels.append(str(it[label_key]))
-        elif isinstance(it, str):
-            labels.append(it)
-    # uniq preserve order
-    seen = set()
-    out = []
-    for x in labels:
-        if x not in seen:
-            seen.add(x)
-            out.append(x)
-    return ", ".join(out)
-
-def safe_get(d: Dict[str, Any], path: List[str]) -> Optional[Any]:
-    cur: Any = d
-    for k in path:
-        if not isinstance(cur, dict) or k not in cur:
-            return None
-        cur = cur[k]
-    return cur
+def extract_skills_from_snapshot(snap: dict) -> str:
+    """Extraherar explicita skills från Arbetsförmedlingens struktur"""
+    if not snap: return ""
+    
+    must = snap.get("must_have", {}).get("skills", [])
+    nice = snap.get("nice_to_have", {}).get("skills", [])
+    
+    # Plocka ut label från listan av objekt
+    must_labels = [s.get("label") for s in must if s.get("label")]
+    nice_labels = [s.get("label") for s in nice if s.get("label")]
+    
+    skill_text = ""
+    if must_labels:
+        skill_text += f"Krav: {', '.join(must_labels)}. "
+    if nice_labels:
+        skill_text += f"Meriterande: {', '.join(nice_labels)}."
+        
+    return skill_text
 
 def build_job_embedding_text(row: Dict[str, Any]) -> str:
-    """
-    Prefer source_snapshot (raw Platsbanken JSON) if available.
-    Otherwise fall back to flattened columns.
-    """
+    # 1. Hämta rådata (Snapshot)
     snap = row.get("source_snapshot")
     if isinstance(snap, str):
-        try:
-            snap = json.loads(snap)
-        except:
-            snap = None
-    if not isinstance(snap, dict):
-        snap = {}
-
-    # Headline
-    headline = snap.get("headline") or row.get("headline") or ""
-
-    # Taxonomy labels
-    occupation = safe_get(snap, ["occupation", "label"]) or row.get("job_category") or ""
-    occ_group = safe_get(snap, ["occupation_group", "label"]) or ""
-    occ_field = safe_get(snap, ["occupation_field", "label"]) or ""
-
-    # Employer
-    employer_name = safe_get(snap, ["employer", "name"]) or row.get("company") or ""
-    workplace = safe_get(snap, ["employer", "workplace"]) or ""
-
-    # Location
-    municipality = safe_get(snap, ["workplace_address", "municipality"]) or row.get("city") or row.get("location") or ""
-    region = safe_get(snap, ["workplace_address", "region"]) or ""
-    city = safe_get(snap, ["workplace_address", "city"]) or ""
-
-    # Employment details
-    employment_type = safe_get(snap, ["employment_type", "label"]) or ""
-    working_hours = safe_get(snap, ["working_hours_type", "label"]) or ""
-    duration = safe_get(snap, ["duration", "label"]) or ""
-
-    # Requirements (structured)
-    must_lang = join_labels(safe_get(snap, ["must_have", "languages"]) or [])
-    must_skills = join_labels(safe_get(snap, ["must_have", "skills"]) or [])
-    must_exp = join_labels(safe_get(snap, ["must_have", "work_experiences"]) or [])
-    must_edu = join_labels(safe_get(snap, ["must_have", "education"]) or [])
-
-    nice_skills = join_labels(safe_get(snap, ["nice_to_have", "skills"]) or [])
-
-    # Description
-    desc = safe_get(snap, ["description", "text"]) or row.get("description_text") or ""
-    desc = pick_description(desc, max_chars=800)
-
+        try: snap = json.loads(snap)
+        except: snap = {}
+    
+    # 2. Bygg datan
+    headline = row.get("headline") or ""
+    category = row.get("job_category") or ""
+    
+    # 3. Hämta de viktigaste nyckelorden (Skills)
+    # Detta är den viktigaste ändringen för att höja score!
+    skills_block = extract_skills_from_snapshot(snap)
+    
+    # 4. Hämta beskrivning men kapa den smart
+    desc = row.get("description_text") or ""
+    cleaned_desc = clean_text(desc)
+    
+    # Prioriteringsordning för prompten:
+    # 1. Titel (Viktigast)
+    # 2. Specifika krav/skills (Superviktigt för matchning)
+    # 3. Kategori
+    # 4. Beskrivning (För kontext)
+    
     parts = [
-        f"Job Title: {clean_text(str(headline))}",
-        f"Occupation: {clean_text(str(occupation))}",
+        f"Jobbtitel: {headline}",
+        f"Kategori: {category}",
     ]
+    
+    if skills_block:
+        parts.append(f"Kompetenser: {skills_block}")
+        
+    # Lägg till beskrivning, men låt inte den putta ut kompetenserna
+    # Vi siktar på max 1500 tecken totalt
+    current_len = sum(len(p) for p in parts)
+    remaining = 1500 - current_len
+    
+    if remaining > 100:
+        parts.append(f"Beskrivning: {cleaned_desc[:remaining]}")
 
-    if occ_group:
-        parts.append(f"Occupation Group: {clean_text(str(occ_group))}")
-    if occ_field:
-        parts.append(f"Occupation Field: {clean_text(str(occ_field))}")
-
-    if employer_name or workplace:
-        parts.append(f"Employer: {clean_text(str(employer_name))} ({clean_text(str(workplace))})")
-
-    loc_bits = ", ".join([x for x in [clean_text(str(municipality)), clean_text(str(region)), clean_text(str(city))] if x])
-    if loc_bits:
-        parts.append(f"Location: {loc_bits}")
-
-    emp_bits = ", ".join([x for x in [clean_text(str(employment_type)), clean_text(str(working_hours)), clean_text(str(duration))] if x])
-    if emp_bits:
-        parts.append(f"Employment: {emp_bits}")
-
-    req_lines = []
-    if must_lang: req_lines.append(f"Must-have languages: {must_lang}")
-    if must_skills: req_lines.append(f"Must-have skills: {must_skills}")
-    if must_exp: req_lines.append(f"Must-have experience: {must_exp}")
-    if must_edu: req_lines.append(f"Must-have education: {must_edu}")
-    if nice_skills: req_lines.append(f"Nice-to-have skills: {nice_skills}")
-    if req_lines:
-        parts.append("Requirements: " + " | ".join(req_lines))
-
-    if desc:
-        parts.append(f"Description: {desc}")
-
-    text = "\n".join(parts).strip()
-
-    # Keep embedding text in a safe band (~800–1500 chars usually)
-    return text[:1500]
+    return "\n".join(parts)
 
 async def enrich_job_vectors():
-    os.makedirs("logs", exist_ok=True)
-    failed_path = "logs/enrich_failed_jobs.jsonl"
-
-    print(f"📦 Enriching Jobs... Model: {EMBEDDING_MODEL} ({DIMS} dims)")
+    print(f"📦 Enriching Jobs... Model: {EMBEDDING_MODEL}")
 
     while True:
+        # Hämta jobb som saknar embedding
         response = (
             supabase.table("job_ads")
-            .select("id, headline, description_text, city, location, job_category, company, source_snapshot")
+            .select("*") # Hämta allt så vi får source_snapshot
             .is_("embedding", "null")
             .limit(50)
             .execute()
@@ -215,34 +135,30 @@ async def enrich_job_vectors():
 
         jobs = response.data
         if not jobs:
-            print("✅ No jobs pending vectorization.")
+            print("✅ Inga fler jobb att vektorisera.")
             break
 
-        print(f"🔄 Processing batch of {len(jobs)} jobs...")
+        print(f"🔄 Bearbetar {len(jobs)} jobb...")
 
         for row in jobs:
             job_id = row["id"]
             try:
+                # Skapa texten
                 text = build_job_embedding_text(row)
-                if not text.strip():
-                    raise ValueError("Empty embedding text after processing")
-
+                
+                # Skapa vektor
                 vector = await get_local_embedding(text)
 
-                supabase.table("job_ads").update(
-                    {
-                        "embedding": vector,
-                        # Optional but VERY useful for debugging:
-                        "embedding_text": text,
-                    }
-                ).eq("id", job_id).execute()
+                # Spara BÅDE vektor och texten vi använde (för debugging)
+                supabase.table("job_ads").update({
+                    "embedding": vector,
+                    "embedding_text": text 
+                }).eq("id", job_id).execute()
 
-                print(f"✅ Vectorized job {job_id} ({len(text)} chars)")
+                print(f"   ✅ Klar: {row.get('headline')} (Text len: {len(text)})")
 
             except Exception as e:
-                print(f"   ❌ Failed {job_id}: {e}")
-                with open(failed_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"id": job_id, "error": str(e)}) + "\n")
+                print(f"   ❌ Fel på {job_id}: {e}")
 
 if __name__ == "__main__":
     asyncio.run(enrich_job_vectors())
