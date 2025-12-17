@@ -18,13 +18,18 @@ def extract_text_from_pdf(file_path: str) -> str:
 
 def summarize_cv_text(cv_text: str) -> Optional[str]:
     """
-    Use rules or AI later to summarize the CV.
-    For now, return the first 1500 characters of cleaned text.
+    Cleans the CV text but preserves structure (newlines).
+    Returns the FULL text to ensure no skills or experiences are lost.
     """
-    cleaned = " ".join(cv_text.split())  # Remove newlines, tabs
-    if not cleaned:
+    if not cv_text:
         return None
-    return cleaned[:1500]  # Limiting to keep input light for embedding
+    
+    # Behåll radbrytningar men ta bort onödiga mellanslag
+    # Detta gör att punktlistor förblir läsbara för AI:n
+    lines = [line.strip() for line in cv_text.splitlines()]
+    cleaned = "\n".join([line for line in lines if line])
+    
+    return cleaned
 
 
 if __name__ == "__main__":

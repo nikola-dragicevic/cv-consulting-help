@@ -3,10 +3,12 @@ import os
 import sys
 import requests
 import time
+import traceback
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
+# Tvinga utskrift direkt till loggen (viktigt för Docker)
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -23,21 +25,22 @@ JOBTECH_API_KEY = os.getenv("JOBTECH_API_KEY")
 API_BASE_URL = "https://jobsearch.api.jobtechdev.se"
 SEARCH_ENDPOINT = f"{API_BASE_URL}/search"
 
-# Settings
+# --- INSTÄLLNINGAR FÖR ATT ÅTERUPPTA ---
+# Om den kraschade på 2025-08-19, sätt startdatumet strax innan.
+# 120 dagar bakåt från idag (dec) är ca aug.
+# Sätt denna till 0 för att börja från IDAG och gå bakåt.
+# Sätt till t.ex. 0 om du vill köra allt, eller justera om du vet exakt dag.
+START_DAY_OFFSET = 0 
 DAYS_TO_FETCH = 120
 BATCH_SIZE = 100
-REQUEST_DELAY = 0.2
-
-if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-    print("❌ Saknar Supabase miljövariabler. Avbryter.")
-    exit()
+REQUEST_DELAY = 0.5 # Lite långsammare för att vara snäll mot API
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
+def log(msg):
+    print(msg, flush=True)
+
 def fetch_jobs_for_time_range(pub_after, pub_before):
-    """
-    Hämtar jobb för ett specifikt tidsintervall.
-    """
     hits_for_chunk = []
     offset = 0
     
@@ -52,10 +55,10 @@ def fetch_jobs_for_time_range(pub_after, pub_before):
         }
 
         try:
-            response = requests.get(SEARCH_ENDPOINT, params=params, headers=headers)
+            response = requests.get(SEARCH_ENDPOINT, params=params, headers=headers, timeout=30)
             if response.status_code == 429:
-                print(" ⏳ Rate limit! Väntar 5s...")
-                time.sleep(5)
+                log(" ⏳ Rate limit! Väntar 10s...")
+                time.sleep(10)
                 continue
             
             response.raise_for_status()
@@ -72,25 +75,20 @@ def fetch_jobs_for_time_range(pub_after, pub_before):
                 break
                 
             if offset >= 2000:
-                print(f" (⚠️ Max offset nådd för intervall {pub_after})", end="")
+                log(f" (⚠️ Max offset nådd för intervall {pub_after})")
                 break
 
             time.sleep(REQUEST_DELAY)
 
         except Exception as e:
-            print(f" ❌ API Fel: {e}")
+            log(f" ❌ API Fel vid hämtning: {e}")
             break
             
     return hits_for_chunk
 
 def fetch_jobs_for_date(date_string):
-    """
-    Delar upp dagen i 4-timmarsblock för att komma runt 2000-gränsen.
-    """
     all_hits = []
-    
-    # 6 tidsblock per dag (00-04, 04-08, 08-12, 12-16, 16-20, 20-24)
-    # Detta ger oss kapacitet för 12 000 jobb per dag.
+    # 6 tidsblock per dag för att hantera API-gränser
     time_chunks = [
         ("00:00:00", "03:59:59"),
         ("04:00:00", "07:59:59"),
@@ -100,24 +98,26 @@ def fetch_jobs_for_date(date_string):
         ("20:00:00", "23:59:59")
     ]
 
-    print(f"   📅 Bearbetar {date_string} ", end="", flush=True)
+    log(f"   📅 Bearbetar {date_string} ...")
     
     for start_time, end_time in time_chunks:
         pub_after = f"{date_string}T{start_time}"
         pub_before = f"{date_string}T{end_time}"
         
-        chunk_hits = fetch_jobs_for_time_range(pub_after, pub_before)
-        all_hits.extend(chunk_hits)
-        print(".", end="", flush=True) # Progress dots for chunks
+        try:
+            chunk_hits = fetch_jobs_for_time_range(pub_after, pub_before)
+            all_hits.extend(chunk_hits)
+        except Exception as e:
+            log(f"CRASH in time chunk {start_time}: {e}")
+            traceback.print_exc()
 
-    print(f" -> {len(all_hits)} jobb.")
     return all_hits
 
 def upsert_jobs(jobs):
     if not jobs:
         return 0
 
-    batch_size = 100
+    batch_size = 50 # Mindre batch för att undvika minneskrasch
     upserted_count = 0
     
     for i in range(0, len(jobs), batch_size):
@@ -125,51 +125,83 @@ def upsert_jobs(jobs):
         job_data_batch = []
 
         for job in batch:
-            workplace = job.get("workplace_address") or {}
-            occupation = job.get("occupation") or {}
-            description = job.get("description") or {}
+            try:
+                workplace = job.get("workplace_address") or {}
+                occupation = job.get("occupation") or {}
+                description = job.get("description") or {}
 
-            job_data = {
-                "id": str(job.get("id")),
-                "headline": job.get("headline") or "",
-                "description_text": description.get("text") or "",
-                "city": workplace.get("municipality"),
-                "location": workplace.get("municipality"),
-                "published_date": job.get("publication_date"),
-                "webpage_url": job.get("webpage_url"),
-                "job_category": occupation.get("label"),
-                "requires_dl_b": job.get("driving_license_required", False),
-                "embedding": None, 
-                "location_lat": None,
-                "location_lon": None
-            }
-            job_data_batch.append(job_data)
+                # --- SMART WAY: Hämta koordinater ---
+                lat = None
+                lon = None
+                coords = workplace.get("coordinates")
+                if coords and isinstance(coords, list) and len(coords) == 2:
+                    lon = coords[0] 
+                    lat = coords[1]
+                # ------------------------------------
 
-        try:
-            supabase.table("job_ads").upsert(job_data_batch, on_conflict='id').execute()
-            upserted_count += len(job_data_batch)
-        except Exception as e:
-            print(f"      ❌ DB Fel: {e}")
+                job_data = {
+                    "id": str(job.get("id")),
+                    "headline": job.get("headline") or "",
+                    "description_text": description.get("text") or "",
+                    "city": workplace.get("municipality"),
+                    "location": workplace.get("municipality"),
+                    "published_date": job.get("publication_date"),
+                    "webpage_url": job.get("webpage_url"),
+                    "job_category": occupation.get("label"),
+                    "requires_dl_b": job.get("driving_license_required", False),
+                    # VIKTIGT: Vi rör INTE embedding! Den får vara kvar som den är.
+                    # "embedding": None, 
+                    "location_lat": lat,
+                    "location_lon": lon
+                }
+                job_data_batch.append(job_data)
+            except Exception as e:
+                log(f"⚠️ Skippar ett jobb pga datafel: {e}")
 
+        if job_data_batch:
+            try:
+                # ignore_duplicates=False betyder att vi UPPDATERAR befintliga rader
+                supabase.table("job_ads").upsert(job_data_batch, on_conflict='id').execute()
+                upserted_count += len(job_data_batch)
+                print(".", end="", flush=True) # Progress dot
+            except Exception as e:
+                log(f"\n      ❌ DB Upsert Fel: {e}")
+                # Försök skriva ut detaljer om felet
+                traceback.print_exc()
+
+    print(" ", end="", flush=True) # Ny rad efter punkter
     return upserted_count
 
 def run_full_load():
-    print(f"🚀 Startar SÄKER hämtning (Sista {DAYS_TO_FETCH} dagarna uppdelat i tidsblock)")
+    log(f"🚀 Startar SÄKER hämtning & Geokodning")
+    log(f"   Period: {DAYS_TO_FETCH} dagar bakåt.")
     
     total_jobs = 0
-    start_date = datetime.now() - timedelta(days=DAYS_TO_FETCH)
+    # Börja från idag och gå bakåt
+    start_date = datetime.now() - timedelta(days=START_DAY_OFFSET)
     
     for i in range(DAYS_TO_FETCH + 1):
-        current_date = start_date + timedelta(days=i)
-        date_str = current_date.strftime("%Y-%m-%d")
-        
-        daily_jobs = fetch_jobs_for_date(date_str)
-        
-        if daily_jobs:
-            count = upsert_jobs(daily_jobs)
-            total_jobs += count
+        try:
+            current_date = start_date - timedelta(days=i)
+            date_str = current_date.strftime("%Y-%m-%d")
             
-    print(f"\n✅ KLAR! Totalt sparade jobb: {total_jobs}")
+            daily_jobs = fetch_jobs_for_date(date_str)
+            
+            if daily_jobs:
+                log(f"      Hittade {len(daily_jobs)} jobb. Sparar...")
+                count = upsert_jobs(daily_jobs)
+                total_jobs += count
+                log(f"✅ Klar med {date_str}. (+{count})")
+            else:
+                log(f"      Inga jobb {date_str}.")
+                
+        except Exception as e:
+            log(f"❌ KRITISKT FEL PÅ DATUM {date_str}: {e}")
+            traceback.print_exc()
+            # Vi fortsätter till nästa dag istället för att dö helt
+            continue
+            
+    log(f"\n✅✅ HELT KLAR! Totalt bearbetade jobb: {total_jobs}")
 
 if __name__ == "__main__":
     run_full_load()
