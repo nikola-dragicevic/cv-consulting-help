@@ -18,7 +18,6 @@ if sys.platform == "win32":
 load_dotenv()
 
 # --- Configuration ---
-# Allow these to be overridden by the importing script (service.py) if needed
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/embeddings")
@@ -72,12 +71,20 @@ async def enrich_job_vectors():
 
         for job in jobs:
             job_id = job["id"]
-            text = f"Job Title: {job.get('headline', '')}\n\nJob Description: {job.get('description_text', '')}"
             
+            # --- OPTIMIZATION: Truncate to 2000 chars ---
+            # This speeds up the AI model by ~400% by ignoring huge footers
+            headline = job.get('headline', '') or ""
+            desc = job.get('description_text', '') or ""
+            
+            # We combine them and slice strictly to 2000 characters
+            text = f"Job Title: {headline}\n\nJob Description: {desc}"[:2000]
+
             try:
                 vector = await get_local_embedding(text)
+                # Removed 'await' here because supabase-py .execute() is synchronous
                 supabase.table("job_ads").update({"embedding": vector}).eq("id", job_id).execute()
-                # print(f"   ✅ Saved {job_id}") # Optional: comment out to reduce noise in logs
+                
             except Exception as e:
                 print(f"   ❌ Failed {job_id}: {e}")
                 with open(failed_path, "a", encoding="utf-8") as f:

@@ -14,10 +14,10 @@ from dotenv import load_dotenv
 
 # Import logic from your existing scripts
 # (Ensure these scripts are present and cleaned up as per step 3 below)
-from update_jobs import fetch_new_jobs, upsert_jobs
-from enrich_jobs import enrich_job_vectors
-from geocode_jobs import geocode_new_jobs
-from generate_candidate_vector import enrich_candidates  # We will adapt this script next
+from scripts.update_jobs import fetch_new_jobs, upsert_jobs
+from scripts.enrich_jobs import enrich_job_vectors
+from scripts.geocode_jobs import geocode_new_jobs
+from scripts.generate_candidate_vector import enrich_candidates
 
 load_dotenv()
 

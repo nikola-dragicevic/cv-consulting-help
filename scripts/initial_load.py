@@ -1,14 +1,12 @@
 # scripts/initial_load.py
-# Hämtar jobbannonser från JobTechDev Search API med batchning och pagination
-
 import os
 import sys
 import requests
 import time
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Fix Windows console encoding
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -17,109 +15,116 @@ if sys.platform == "win32":
 
 load_dotenv()
 
-# --- Konfiguration ---
+# --- Configuration ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
-JOBTECH_API_KEY = os.getenv("JOBTECH_API_KEY")  # Registrera på apirequest.jobtechdev.se
+JOBTECH_API_KEY = os.getenv("JOBTECH_API_KEY") 
 
-# JobTechDev Search API (2025)
 API_BASE_URL = "https://jobsearch.api.jobtechdev.se"
 SEARCH_ENDPOINT = f"{API_BASE_URL}/search"
 
-# Pagination settings
-BATCH_SIZE = 100  # Max per request
-MAX_OFFSET = 2000  # API limit
-REQUEST_DELAY = 0.5  # Seconds between requests (be nice to the API)
+# Settings
+DAYS_TO_FETCH = 120
+BATCH_SIZE = 100
+REQUEST_DELAY = 0.2
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     print("❌ Saknar Supabase miljövariabler. Avbryter.")
     exit()
 
-if not JOBTECH_API_KEY:
-    print("⚠️  JOBTECH_API_KEY saknas. API kan begränsa requests.")
-    print("   Registrera en nyckel på: https://apirequest.jobtechdev.se")
-
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-def fetch_batch(offset=0, limit=BATCH_SIZE):
-    """Hämtar en batch jobb från API:et"""
-    headers = {}
-    if JOBTECH_API_KEY:
-        headers["api-key"] = JOBTECH_API_KEY
-
-    params = {
-        "limit": limit,
-        "offset": offset,
-        "published-after": "2024-01-01",  # Endast senaste jobben
-        "sort": "pubdate-desc"
-    }
-
-    try:
-        response = requests.get(SEARCH_ENDPOINT, params=params, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-
-        total = data.get("total", {}).get("value", 0)
-        hits = data.get("hits", [])
-
-        return hits, total
-
-    except requests.exceptions.RequestException as e:
-        print(f"❌ API-fel vid offset {offset}: {e}")
-        return [], 0
-
-def fetch_and_process_jobs():
-    """Hämtar alla jobb med pagination"""
-    print(f"📥 Hämtar jobbannonser från JobTechDev Search API...")
-    print(f"   Endpoint: {SEARCH_ENDPOINT}")
-
-    all_jobs = []
+def fetch_jobs_for_time_range(pub_after, pub_before):
+    """
+    Hämtar jobb för ett specifikt tidsintervall.
+    """
+    hits_for_chunk = []
     offset = 0
-    total_available = None
+    
+    while True:
+        headers = {"api-key": JOBTECH_API_KEY} if JOBTECH_API_KEY else {}
+        params = {
+            "published-after": pub_after,
+            "published-before": pub_before,
+            "limit": BATCH_SIZE,
+            "offset": offset,
+            "sort": "pubdate-desc"
+        }
 
-    while offset <= MAX_OFFSET:
-        print(f"   📦 Hämtar batch: offset={offset}, limit={BATCH_SIZE}")
+        try:
+            response = requests.get(SEARCH_ENDPOINT, params=params, headers=headers)
+            if response.status_code == 429:
+                print(" ⏳ Rate limit! Väntar 5s...")
+                time.sleep(5)
+                continue
+            
+            response.raise_for_status()
+            data = response.json()
+            hits = data.get("hits", [])
+            
+            if not hits:
+                break
+                
+            hits_for_chunk.extend(hits)
+            offset += BATCH_SIZE
+            
+            if len(hits) < BATCH_SIZE:
+                break
+                
+            if offset >= 2000:
+                print(f" (⚠️ Max offset nådd för intervall {pub_after})", end="")
+                break
 
-        hits, total = fetch_batch(offset, BATCH_SIZE)
+            time.sleep(REQUEST_DELAY)
 
-        if total_available is None:
-            total_available = min(total, (MAX_OFFSET + BATCH_SIZE))
-            print(f"   📊 Totalt {total} jobb tillgängliga, hämtar max {total_available}")
-
-        if not hits:
-            print(f"   ✅ Inga fler jobb att hämta vid offset {offset}")
+        except Exception as e:
+            print(f" ❌ API Fel: {e}")
             break
+            
+    return hits_for_chunk
 
-        all_jobs.extend(hits)
-        print(f"   ✓ Hämtade {len(hits)} jobb (totalt: {len(all_jobs)})")
+def fetch_jobs_for_date(date_string):
+    """
+    Delar upp dagen i 4-timmarsblock för att komma runt 2000-gränsen.
+    """
+    all_hits = []
+    
+    # 6 tidsblock per dag (00-04, 04-08, 08-12, 12-16, 16-20, 20-24)
+    # Detta ger oss kapacitet för 12 000 jobb per dag.
+    time_chunks = [
+        ("00:00:00", "03:59:59"),
+        ("04:00:00", "07:59:59"),
+        ("08:00:00", "11:59:59"),
+        ("12:00:00", "15:59:59"),
+        ("16:00:00", "19:59:59"),
+        ("20:00:00", "23:59:59")
+    ]
 
-        offset += BATCH_SIZE
+    print(f"   📅 Bearbetar {date_string} ", end="", flush=True)
+    
+    for start_time, end_time in time_chunks:
+        pub_after = f"{date_string}T{start_time}"
+        pub_before = f"{date_string}T{end_time}"
+        
+        chunk_hits = fetch_jobs_for_time_range(pub_after, pub_before)
+        all_hits.extend(chunk_hits)
+        print(".", end="", flush=True) # Progress dots for chunks
 
-        # Check if we've reached the end
-        if len(hits) < BATCH_SIZE or len(all_jobs) >= total_available:
-            break
-
-        # Rate limiting
-        time.sleep(REQUEST_DELAY)
-
-    print(f"✅ Totalt hämtade {len(all_jobs)} jobbannonser")
-    return all_jobs
+    print(f" -> {len(all_hits)} jobb.")
+    return all_hits
 
 def upsert_jobs(jobs):
-    """Laddar upp jobb till Supabase i batcher"""
     if not jobs:
-        print("Inga jobb att ladda in.")
-        return
-
-    print(f"🛠  Laddar upp {len(jobs)} jobb till Supabase i batcher...")
+        return 0
 
     batch_size = 100
+    upserted_count = 0
+    
     for i in range(0, len(jobs), batch_size):
         batch = jobs[i:i + batch_size]
         job_data_batch = []
 
         for job in batch:
-            # Extract fields safely from JobTechDev Search API response
             workplace = job.get("workplace_address") or {}
             occupation = job.get("occupation") or {}
             description = job.get("description") or {}
@@ -128,36 +133,43 @@ def upsert_jobs(jobs):
                 "id": str(job.get("id")),
                 "headline": job.get("headline") or "",
                 "description_text": description.get("text") or "",
-                "city": workplace.get("municipality"),  # Note: API uses 'municipality' not 'city'
+                "city": workplace.get("municipality"),
                 "location": workplace.get("municipality"),
                 "published_date": job.get("publication_date"),
                 "webpage_url": job.get("webpage_url"),
                 "job_category": occupation.get("label"),
                 "requires_dl_b": job.get("driving_license_required", False),
-                
-                # --- CHANGE APPLIED HERE ---
-                # This is the "invalidation" step.
-                # By setting these to None, we flag them for re-processing
-                # by the enrich_jobs.py and geocode-jobs.ts scripts.
-                # This fixes the "stale data" problem.
-                "embedding": None,
+                "embedding": None, 
                 "location_lat": None,
                 "location_lon": None
-                # --- END OF CHANGE ---
             }
             job_data_batch.append(job_data)
 
         try:
             supabase.table("job_ads").upsert(job_data_batch, on_conflict='id').execute()
-            batch_num = i // batch_size + 1
-            total_batches = ((len(jobs) - 1) // batch_size) + 1
-            print(f"  ✓ Batch {batch_num}/{total_batches} klar ({len(job_data_batch)} jobb)")
+            upserted_count += len(job_data_batch)
         except Exception as e:
-            print(f"  ❌ Fel vid uppladdning av batch {i // batch_size + 1}: {e}")
+            print(f"      ❌ DB Fel: {e}")
 
-    print("✅ Uppladdning till Supabase klar.")
+    return upserted_count
+
+def run_full_load():
+    print(f"🚀 Startar SÄKER hämtning (Sista {DAYS_TO_FETCH} dagarna uppdelat i tidsblock)")
+    
+    total_jobs = 0
+    start_date = datetime.now() - timedelta(days=DAYS_TO_FETCH)
+    
+    for i in range(DAYS_TO_FETCH + 1):
+        current_date = start_date + timedelta(days=i)
+        date_str = current_date.strftime("%Y-%m-%d")
+        
+        daily_jobs = fetch_jobs_for_date(date_str)
+        
+        if daily_jobs:
+            count = upsert_jobs(daily_jobs)
+            total_jobs += count
+            
+    print(f"\n✅ KLAR! Totalt sparade jobb: {total_jobs}")
 
 if __name__ == "__main__":
-    jobs_to_load = fetch_and_process_jobs()
-    if jobs_to_load:
-        upsert_jobs(jobs_to_load)
+    run_full_load()

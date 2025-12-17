@@ -73,8 +73,7 @@ async def geocode_new_jobs():
                 else:
                     print(f"   ❌ Failed {job_id}. Marking 0,0.")
                     update_data = {"location_lat": 0, "location_lon": 0, "location": city}
-
-                await supabase.table("job_ads").update(update_data).eq("id", job_id).execute()
+                    supabase.table("job_ads").update(update_data).eq("id", job_id).execute()
 
 if __name__ == "__main__":
     asyncio.run(geocode_new_jobs())

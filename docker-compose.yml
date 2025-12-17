@@ -1,9 +1,12 @@
 version: '3.8'
 
 services:
-  # 1. The Next.js Frontend & API
   web:
-    build: .
+    build: 
+      context: .
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     ports:
       - "3000:3000"
     environment:
@@ -11,16 +14,20 @@ services:
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_KEY}
       - PYTHON_WORKER_URL=http://worker:8000
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - CONTACT_EMAIL=${CONTACT_EMAIL}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
     depends_on:
       - worker
     restart: always
 
-  # 2. The Python Worker (Heavy Lifting & Cron)
   worker:
     build: 
       context: .
       dockerfile: Dockerfile.python
-    command: python scripts/worker.py
     environment:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
@@ -33,24 +40,13 @@ services:
       - ollama
     restart: always
 
-  # 3. Ollama (AI Model Host)
   ollama:
     image: ollama/ollama:latest
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-    # Command to pull the model on startup if missing
-    entrypoint: /bin/sh
-    command: "-c 'ollama serve & sleep 5 && ollama pull snowflake-arctic-embed2 && wait'"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # REMOVED entrypoint, command, and deploy sections
     restart: always
-
 volumes:
   ollama_data:
