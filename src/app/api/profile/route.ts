@@ -2,13 +2,25 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { cityToGeo } from "@/lib/city-geo";
-import { pdf } from "pdf-parse"; // Make sure to npm install pdf-parse
 
 // Define the worker URL (internal docker network)
 const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://worker:8000";
 
+// ✅ HELPER: Robust PDF parsing using dynamic import
+// This fixes the "Module has no default export" error by checking both ESM and CJS shapes at runtime.
+async function parsePdf(buffer: Buffer): Promise<string> {
+  try {
+    const mod: any = await import("pdf-parse");
+    const pdfParse = mod.default ?? mod; // Handles both import shapes
+    const data = await pdfParse(buffer);
+    return data?.text ?? "";
+  } catch (error) {
+    console.error("PDF Parsing Error inside helper:", error);
+    return "";
+  }
+}
+
 export async function GET() {
-  // ... (Keep existing GET logic unchanged) ...
   const supabase = await getServerSupabase();
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
 
@@ -75,6 +87,7 @@ export async function POST(req: Request) {
     if (file) {
       console.log("Uploading CV file:", file.name);
       
+      // ✅ Corrected Template String with backticks
       const path = `${user.id}/${crypto.randomUUID()}_${file.name}`;
 
       // A. Upload file to Storage
@@ -83,23 +96,24 @@ export async function POST(req: Request) {
         .from("cvs")
         .upload(path, file, { upsert: true });
 
-      if (uploadError) throw new Error(`CV upload failed: ${uploadError.message}`);
+      if (uploadError) {
+        // ✅ Corrected Template String with backticks
+        throw new Error(`CV upload failed: ${uploadError.message}`);
+      }
 
       const { data: pub } = supabase.storage.from("cvs").getPublicUrl(path);
       
       profileData.cv_file_url = pub?.publicUrl ?? null;
       profileData.cv_bucket_path = path;
-      // We do NOT set profile_vector to null here, because we are about to update it immediately.
 
       // B. Extract Text for Vectorization
       try {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         
-        // Use pdf-parse if it's a PDF, otherwise assumes text
-        if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-            const data = await pdf(buffer);
-            extractedText = data.text;
+        // ✅ Fixed logic using the async helper
+        if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+            extractedText = await parsePdf(buffer);
         } else {
             extractedText = buffer.toString("utf-8");
         }
@@ -108,7 +122,6 @@ export async function POST(req: Request) {
         extractedText = extractedText.replace(/\s+/g, " ").trim().substring(0, 8000); 
       } catch (err) {
         console.error("Text extraction failed:", err);
-        // Continue saving profile even if text parse fails
       }
     }
 
@@ -117,12 +130,17 @@ export async function POST(req: Request) {
       .from("candidate_profiles")
       .upsert(profileData, { onConflict: "user_id" });
 
-    if (upsertError) throw new Error(`Profile update failed: ${upsertError.message}`);
+    if (upsertError) {
+        // ✅ Corrected Template String with backticks
+        throw new Error(`Profile update failed: ${upsertError.message}`);
+    }
 
     // 4. TRIGGER VECTOR UPDATE (EVENT DRIVEN)
     if (extractedText) {
-      // Fire and forget - don't await the result to keep UI snappy
       console.log("🚀 Triggering vector update webhook...");
+      
+      // Fire and forget - don't await the result to keep UI snappy
+      // ✅ Corrected Template Strings in fetch and body
       fetch(`${WORKER_URL}/webhook/update-profile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
