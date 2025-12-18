@@ -1,12 +1,9 @@
-
-// =============================
-// File: components/CareerWishlistForm.tsx
-// The popup content extracted into a clean component
-// =============================
+// src/components/ui/CareerWishlistForm.tsx
 "use client"
 import React from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea" // Make sure this component exists
 import TagInput from "@/components/ui/TagInput"
 
 export type CompanySize = "small" | "medium" | "large" | null
@@ -16,6 +13,7 @@ export type Structure = "flat" | "corporate" | null
 export type Collaboration = "collaborative" | "independent" | null
 
 export type Wish = {
+  freeText?: string // ✅ NEW: Free text field
   titles: string[]
   use_skills: string[]
   learn_skills: string[]
@@ -37,6 +35,9 @@ export interface CareerWishlistFormProps {
 }
 
 export default function CareerWishlistForm({ initial, onCancel, onSubmit }: CareerWishlistFormProps) {
+  // ✅ NEW: State for free text
+  const [freeText, setFreeText] = React.useState<string>(initial.freeText || "")
+  
   const [titles, setTitles] = React.useState<string[]>(initial.titles || [])
   const [industries, setIndustries] = React.useState<string[]>(initial.industries || [])
   const [useSkills, setUseSkills] = React.useState<string[]>(initial.use_skills || [])
@@ -49,10 +50,24 @@ export default function CareerWishlistForm({ initial, onCancel, onSubmit }: Care
   const [includeNearbyMetro, setIncludeNearbyMetro] = React.useState<boolean>(initial.includeNearbyMetro ?? true)
 
   return (
-    <div className="w-full max-w-3xl rounded-xl bg-white p-6 shadow-2xl">
+    <div className="w-full max-w-3xl rounded-xl bg-white p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-xl font-semibold">Career Wishlist</h3>
+        <h3 className="text-xl font-semibold">Förfina dina önskemål</h3>
         <button className="text-slate-500 hover:text-slate-800" onClick={onCancel}>✕</button>
+      </div>
+
+      {/* ✅ NEW: Free Text Section - The most important part */}
+      <div className="mb-6 space-y-2">
+        <Label className="text-base font-medium">Beskriv din drömroll (Fritext)</Label>
+        <p className="text-sm text-slate-500">
+          Berätta vad du verkligen vill göra. T.ex: "Jag vill jobba som backend-utvecklare med Java och Spring Boot. Gärna inom fintech, men absolut inte med legacy-system eller support."
+        </p>
+        <Textarea 
+          value={freeText} 
+          onChange={(e) => setFreeText(e.target.value)} 
+          placeholder="Skriv fritt här..."
+          className="min-h-[100px]"
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -94,6 +109,7 @@ export default function CareerWishlistForm({ initial, onCancel, onSubmit }: Care
           </div>
         </div>
 
+        {/* Keeping other filters but they are secondary now */}
         <div>
           <Label>Takt</Label>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -114,17 +130,7 @@ export default function CareerWishlistForm({ initial, onCancel, onSubmit }: Care
             ))}
           </div>
         </div>
-        <div>
-          <Label>Samarbete</Label>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {["collaborative", "independent"].map((opt) => (
-              <button key={opt} type="button" onClick={() => setCollab(opt as Collaboration)} className={`rounded-full border px-3 py-1 text-sm ${collab === opt ? "border-blue-600 bg-blue-50 text-blue-700" : "hover:bg-slate-50"}`}>
-                {opt}
-              </button>
-            ))}
-          </div>
-        </div>
-
+        
         <div className="md:col-span-2">
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" className="accent-blue-600" checked={includeNearbyMetro} onChange={(e) => setIncludeNearbyMetro(e.target.checked)} />
@@ -136,6 +142,7 @@ export default function CareerWishlistForm({ initial, onCancel, onSubmit }: Care
       <div className="mt-6 flex items-center justify-end gap-3">
         <Button variant="outline" onClick={onCancel}>Avbryt</Button>
         <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => onSubmit({
+          freeText, // ✅ Send this to backend
           titles,
           industries,
           use_skills: useSkills,

@@ -1,5 +1,4 @@
 // src/app/admin/page.tsx
-
 "use client"
 
 import { useEffect, useState } from "react"
@@ -16,93 +15,150 @@ export default function AdminDashboard() {
   const router = useRouter()
   const [candidates, setCandidates] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
-  const [cvUrl, setCvUrl] = useState<string | null>(null)
+  
+  // New state to prevent the dashboard from showing before we check auth
+  const [isAuthorized, setIsAuthorized] = useState(false)
 
-  // 🔐 Simple auth check
+  // 🔐 1. Check Auth on Load
   useEffect(() => {
     const auth = sessionStorage.getItem("admin-auth")
     if (auth !== "true") {
       router.push("/admin/login")
-    }
-  }, [])
-
-  // 📥 Fetch candidates from Supabase
-  useEffect(() => {
-    const fetchCandidates = async () => {
-      setLoading(true)
-      const { data, error } = await supabase
-        .from("candidate_profiles")
-        .select("*")
-        .order("created_at", { ascending: false })
-      if (data) setCandidates(data)
-      setLoading(false)
-    }
-
-    fetchCandidates()
-  }, [])
-
-  // 🔗 Generate signed URL for private CV view
-  const viewCv = async (cvPath: string) => {
-    const filename = cvPath.split("cvs/")[1]
-    const res = await fetch("/api/admin/view-cv", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename }),
-    })
-    const json = await res.json()
-    if (json.signedUrl) {
-      setCvUrl(json.signedUrl)
-      window.open(json.signedUrl, "_blank")
     } else {
-      alert("Kunde inte hämta fil.")
+      setIsAuthorized(true) // User is allowed, show dashboard
+      fetchCandidates()     // Start fetching data
+    }
+  }, [router])
+
+  // 📥 2. Fetch candidates from Supabase
+  const fetchCandidates = async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from("candidate_profiles")
+      .select("*")
+      .order("created_at", { ascending: false })
+    
+    if (error) {
+      console.error("Error fetching:", error)
+    } else if (data) {
+      setCandidates(data)
+    }
+    setLoading(false)
+  }
+
+  // 🔗 3. Generate signed URL for private CV view via API
+  const viewCv = async (cvPath: string) => {
+    try {
+      if (!cvPath) return alert("Ingen sökväg till filen.")
+        
+      // Extract filename if needed, or send the whole path depending on your API logic
+      // Assuming your DB saves "cvs/filename.pdf"
+      const filename = cvPath.split("cvs/")[1] 
+      
+      if (!filename) return alert("Felaktigt filformat")
+
+      const res = await fetch("/api/admin/view-cv", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      })
+      
+      const json = await res.json()
+      
+      if (json.signedUrl) {
+        window.open(json.signedUrl, "_blank")
+      } else {
+        alert("Kunde inte hämta filen (Ogiltig URL).")
+      }
+    } catch (err) {
+      console.error(err)
+      alert("Ett fel uppstod vid öppning av CV.")
     }
   }
 
+  const handleLogout = () => {
+    sessionStorage.removeItem("admin-auth")
+    router.push("/admin/login")
+  }
+
+  // Prevent flash of unstyled content if not authorized yet
+  if (!isAuthorized) {
+    return null // Or a generic loading spinner
+  }
+
   return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold mb-6">🛠 Admin – Inskickade Kandidater</h1>
-      {loading && <p>Laddar...</p>}
-      {!loading && candidates.length === 0 && <p>Inga inskickade kandidater ännu.</p>}
+    <div className="min-h-screen bg-slate-50 p-8">
+      <div className="max-w-5xl mx-auto">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold text-slate-900">🛠 Admin – Kandidater</h1>
+          <Button variant="outline" onClick={handleLogout}>Logga ut</Button>
+        </div>
 
-      <div className="space-y-6">
-        {candidates.map((c) => (
-          <div key={c.id} className="border rounded-lg p-4 shadow-sm bg-white">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="font-semibold">📛 {c.full_name}</p>
-                <p className="text-sm text-slate-600">📧 {c.email}</p>
-                <p className="text-sm text-slate-600">📍 {c.city} – {c.street}</p>
-                <p className="text-sm text-slate-600">📅 {new Date(c.created_at).toLocaleString()}</p>
-              </div>
-              <div className="flex gap-2">
-                {c.cv_file_url ? (
-                  <Button onClick={() => viewCv(c.cv_file_url)} size="sm">Visa CV</Button>
-                ) : (
-                  <span className="text-xs text-gray-500 italic">Ingen CV uppladdad</span>
-                )}
-              </div>
-            </div>
-
-            {c.quiz_answers && (
-              <div className="mt-4 text-sm">
-                <p className="font-medium mb-1">🎯 Quiz-svar:</p>
-                <pre className="bg-slate-50 p-2 rounded-md border text-xs whitespace-pre-wrap">
-                  {JSON.stringify(c.quiz_answers, null, 2)}
-                </pre>
-              </div>
-            )}
-
-            {c.additional_info && (
-              <div className="mt-4 text-sm">
-                <p className="font-medium mb-1">📝 Extra information från kandidaten:</p>
-                <p className="bg-slate-50 p-2 rounded-md border text-xs whitespace-pre-wrap">
-                  {c.additional_info}
-                </p>
-              </div>
-            )}
+        {loading && <p className="text-slate-500">Laddar kandidater...</p>}
+        
+        {!loading && candidates.length === 0 && (
+          <div className="bg-white p-6 rounded-lg shadow-sm border text-center text-slate-500">
+            Inga inskickade kandidater ännu.
           </div>
-        ))}
+        )}
+
+        <div className="space-y-6">
+          {candidates.map((c) => (
+            <div key={c.id} className="border rounded-xl p-6 shadow-sm bg-white transition-all hover:shadow-md">
+              <div className="flex flex-col md:flex-row justify-between items-start gap-4">
+                
+                {/* Info Column */}
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xl font-bold text-slate-900">{c.full_name}</span>
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                      Ny
+                    </span>
+                  </div>
+                  <p className="text-slate-600 mb-1">📧 <a href={`mailto:${c.email}`} className="hover:underline">{c.email}</a></p>
+                  <p className="text-sm text-slate-500">📍 {c.city} • {c.street}</p>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Inskickad: {new Date(c.created_at).toLocaleString('sv-SE')}
+                  </p>
+                </div>
+
+                {/* Action Column */}
+                <div className="shrink-0">
+                  {c.cv_file_url ? (
+                    <Button onClick={() => viewCv(c.cv_file_url)}>
+                      📄 Öppna CV
+                    </Button>
+                  ) : (
+                    <span className="text-sm text-slate-400 italic bg-slate-100 px-3 py-2 rounded-md">
+                      Inget CV
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Quiz Answers Section */}
+              {c.quiz_answers && (
+                <div className="mt-6 pt-4 border-t">
+                  <p className="text-sm font-semibold text-slate-700 mb-2">🎯 Quiz-svar:</p>
+                  <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-700 whitespace-pre-wrap font-mono border">
+                    {JSON.stringify(c.quiz_answers, null, 2)}
+                  </div>
+                </div>
+              )}
+
+              {/* Additional Info Section */}
+              {c.additional_info && (
+                <div className="mt-4">
+                  <p className="text-sm font-semibold text-slate-700 mb-1">📝 Meddelande:</p>
+                  <p className="text-sm text-slate-600 bg-amber-50 p-3 rounded-md border border-amber-100">
+                    {c.additional_info}
+                  </p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
-} 
+}

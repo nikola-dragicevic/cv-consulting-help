@@ -1,3 +1,4 @@
+# scripts/generate_candidate_vector.py
 import os
 import asyncio
 import httpx
@@ -5,7 +6,7 @@ import math
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Import PDF parser
+# Import PDF parser handling both module and script execution
 try:
     from scripts.parse_cv_pdf import extract_text_from_pdf, summarize_cv_text
 except ImportError:
@@ -110,8 +111,6 @@ async def enrich_candidates():
         # 3. Validation: Don't embed if we have no CV text
         if not parse_success:
             print(f"   ⏭️ Skipping {email}: Could not extract text from CV.")
-            # Optionally mark as failed in DB to prevent retry-loop, 
-            # or just leave NULL so user can try uploading again.
             continue 
 
         # 4. Create Prompt and Embed
@@ -130,8 +129,12 @@ async def enrich_candidates():
                 print(f"   ⚠️ Generated vector is empty. Skipping DB update.")
                 continue
 
+            # ✅ UPPDATERING: Spara både vektor OCH texten
             supabase.table("candidate_profiles")\
-                .update({"profile_vector": vec})\
+                .update({
+                    "profile_vector": vec,
+                    "candidate_text_vector": prompt_text
+                })\
                 .eq("id", c["id"])\
                 .execute()
                 
