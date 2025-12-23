@@ -2,19 +2,19 @@
 -- Date: 2025-12-23
 -- Reason: Switching from snowflake-arctic-embed2 (1024d) to nomic-embed-text (768d)
 
--- Drop existing vector index (will be recreated with new dimensions)
+-- CRITICAL: Must NULL existing vectors BEFORE changing column type!
+-- You cannot convert vector(1024) to vector(768) - they're incompatible
+
+-- Step 1: Drop existing vector index (will be recreated with new dimensions)
 DROP INDEX IF EXISTS job_ads_embedding_idx;
 
--- Update job_ads table to 768 dimensions
-ALTER TABLE job_ads ALTER COLUMN embedding TYPE vector(768);
-
--- Update candidate_profiles table to 768 dimensions
--- Note: profile_vector is the new column name (used to be 'vector')
-ALTER TABLE candidate_profiles ALTER COLUMN profile_vector TYPE vector(768);
-
--- Reset all embeddings since dimensions changed
-UPDATE job_ads SET embedding = NULL, embedding_text = NULL WHERE embedding IS NOT NULL;
+-- Step 2: NULL all existing vectors (required before type change)
+UPDATE job_ads SET embedding = NULL WHERE embedding IS NOT NULL;
 UPDATE candidate_profiles SET profile_vector = NULL WHERE profile_vector IS NOT NULL;
+
+-- Step 3: Now we can safely change the column types
+ALTER TABLE job_ads ALTER COLUMN embedding TYPE vector(768);
+ALTER TABLE candidate_profiles ALTER COLUMN profile_vector TYPE vector(768);
 
 -- Recreate vector index with new dimensions
 CREATE INDEX CONCURRENTLY IF NOT EXISTS job_ads_embedding_idx
