@@ -1,9 +1,10 @@
+// src/app/api/checkout/route.ts
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getServerSupabase } from '@/lib/supabaseServer';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-06-30.basil',
+  apiVersion: '2025-06-30.basil', // Updated API version, older is fine too
 });
 
 export async function POST(req: Request) {
@@ -15,35 +16,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // ✅ HÄMTA BOKNINGSDATA
-    const { priceId, bookingDate, bookingTime } = await req.json();
+    const { packageName, amount, bookingDate, bookingTime } = await req.json();
 
-    if (!priceId || !bookingDate || !bookingTime) {
-        return NextResponse.json({ error: 'Missing booking details' }, { status: 400 });
+    if (!amount || !bookingDate || !bookingTime) {
+        return NextResponse.json({ error: 'Missing booking details (Date, Time or Amount)' }, { status: 400 });
     }
 
+    // Create Stripe Session with Dynamic Price Data
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
         {
-          price: priceId,
+          price_data: {
+            currency: 'sek',
+            product_data: {
+              name: packageName || 'Konsultation',
+              description: `Bokning: ${bookingDate} kl ${bookingTime}`,
+            },
+            unit_amount: amount * 100, // Stripe expects Öre (cents)
+          },
           quantity: 1,
         },
       ],
       mode: 'payment',
-      success_url: `${process.env.NEXT_PUBLIC_BASE_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_BASE_URL}/?canceled=true`,
+      success_url: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://jobbnu.se'}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://jobbnu.se'}/?canceled=true`,
       customer_email: user.email,
       
-      // ✅ HÄR SPARAR VI DATAN I STRIPE TILLS BETALNINGEN ÄR KLAR
+      // Save metadata for the Webhook to read later
       metadata: {
         user_id: user.id,
-        booking_date: bookingDate, // Format: YYYY-MM-DD
-        booking_time: bookingTime, // Format: HH:MM
+        booking_date: bookingDate,
+        booking_time: bookingTime,
       },
     });
 
-    return NextResponse.json({ sessionId: session.id });
+    return NextResponse.json({ url: session.url });
   } catch (err: any) {
     console.error('Stripe error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });

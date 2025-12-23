@@ -5,6 +5,8 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@supabase/supabase-js"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -15,35 +17,59 @@ export default function AdminDashboard() {
   const router = useRouter()
   const [candidates, setCandidates] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
-  
-  // New state to prevent the dashboard from showing before we check auth
   const [isAuthorized, setIsAuthorized] = useState(false)
+  
+  // Admin Calendar State
+  const [blockDate, setBlockDate] = useState("")
+  const [blockTime, setBlockTime] = useState("")
+  const [blocks, setBlocks] = useState<any[]>([])
 
-  // 🔐 1. Check Auth on Load
   useEffect(() => {
     const auth = sessionStorage.getItem("admin-auth")
     if (auth !== "true") {
       router.push("/admin/login")
     } else {
-      setIsAuthorized(true) // User is allowed, show dashboard
-      fetchCandidates()     // Start fetching data
+      setIsAuthorized(true)
+      fetchCandidates()
+      fetchBlocks() // Fetch blocked times
     }
   }, [router])
 
-  // 📥 2. Fetch candidates from Supabase
   const fetchCandidates = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from("candidate_profiles")
-      .select("*")
-      .order("created_at", { ascending: false })
-    
-    if (error) {
-      console.error("Error fetching:", error)
-    } else if (data) {
-      setCandidates(data)
-    }
+    const { data } = await supabase.from("candidate_profiles").select("*").order("created_at", { ascending: false })
+    if (data) setCandidates(data)
     setLoading(false)
+  }
+  
+  const fetchBlocks = async () => {
+    const { data } = await supabase.from("availability_blocks").select("*").order("block_date", { ascending: true })
+    if (data) setBlocks(data)
+  }
+
+  const handleBlockTime = async () => {
+    if (!blockDate) return alert("Välj datum")
+    
+    // If no time is selected, block entire day logic could be implemented, 
+    // but here we simply insert what we have.
+    // Assuming "HELA_DAGEN" logic is handled if blockTime is empty string in your calendar component,
+    // or you can enforce specific times.
+    
+    const { error } = await supabase.from("availability_blocks").insert({
+        block_date: blockDate,
+        start_time: blockTime ? `${blockTime}:00` : null // null = hela dagen check
+    })
+
+    if (error) alert("Fel vid blockering: " + error.message)
+    else {
+        alert("Tid blockerad!")
+        fetchBlocks()
+    }
+  }
+
+  const handleDeleteBlock = async (id: number) => {
+      await supabase.from("availability_blocks").delete().eq("id", id)
+      fetchBlocks()
   }
 
   // 🔗 3. Generate signed URL for private CV view via API
@@ -81,82 +107,59 @@ export default function AdminDashboard() {
     router.push("/admin/login")
   }
 
-  // Prevent flash of unstyled content if not authorized yet
-  if (!isAuthorized) {
-    return null // Or a generic loading spinner
-  }
+  if (!isAuthorized) return null
 
   return (
     <div className="min-h-screen bg-slate-50 p-8">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-900">🛠 Admin – Kandidater</h1>
+          <h1 className="text-3xl font-bold text-slate-900">🛠 Admin Dashboard</h1>
           <Button variant="outline" onClick={handleLogout}>Logga ut</Button>
         </div>
 
-        {loading && <p className="text-slate-500">Laddar kandidater...</p>}
-        
-        {!loading && candidates.length === 0 && (
-          <div className="bg-white p-6 rounded-lg shadow-sm border text-center text-slate-500">
-            Inga inskickade kandidater ännu.
-          </div>
-        )}
-
-        <div className="space-y-6">
-          {candidates.map((c) => (
-            <div key={c.id} className="border rounded-xl p-6 shadow-sm bg-white transition-all hover:shadow-md">
-              <div className="flex flex-col md:flex-row justify-between items-start gap-4">
-                
-                {/* Info Column */}
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xl font-bold text-slate-900">{c.full_name}</span>
-                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
-                      Ny
-                    </span>
-                  </div>
-                  <p className="text-slate-600 mb-1">📧 <a href={`mailto:${c.email}`} className="hover:underline">{c.email}</a></p>
-                  <p className="text-sm text-slate-500">📍 {c.city} • {c.street}</p>
-                  <p className="text-xs text-slate-400 mt-2">
-                    Inskickad: {new Date(c.created_at).toLocaleString('sv-SE')}
-                  </p>
+        <div className="grid md:grid-cols-2 gap-8">
+            {/* Left: Candidates */}
+            <div>
+                <h2 className="text-xl font-semibold mb-4">Inskickade Kandidater</h2>
+                <div className="space-y-4 max-h-[80vh] overflow-y-auto">
+                    {candidates.map((c) => (
+                        <div key={c.id} className="border rounded-lg p-4 bg-white shadow-sm">
+                            <p className="font-bold">{c.full_name}</p>
+                            <p className="text-sm text-gray-600">{c.email}</p>
+                            {c.cv_file_url && <Button size="sm" variant="link" onClick={() => viewCv(c.cv_file_url)}>Visa CV</Button>}
+                        </div>
+                    ))}
                 </div>
-
-                {/* Action Column */}
-                <div className="shrink-0">
-                  {c.cv_file_url ? (
-                    <Button onClick={() => viewCv(c.cv_file_url)}>
-                      📄 Öppna CV
-                    </Button>
-                  ) : (
-                    <span className="text-sm text-slate-400 italic bg-slate-100 px-3 py-2 rounded-md">
-                      Inget CV
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Quiz Answers Section */}
-              {c.quiz_answers && (
-                <div className="mt-6 pt-4 border-t">
-                  <p className="text-sm font-semibold text-slate-700 mb-2">🎯 Quiz-svar:</p>
-                  <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-700 whitespace-pre-wrap font-mono border">
-                    {JSON.stringify(c.quiz_answers, null, 2)}
-                  </div>
-                </div>
-              )}
-
-              {/* Additional Info Section */}
-              {c.additional_info && (
-                <div className="mt-4">
-                  <p className="text-sm font-semibold text-slate-700 mb-1">📝 Meddelande:</p>
-                  <p className="text-sm text-slate-600 bg-amber-50 p-3 rounded-md border border-amber-100">
-                    {c.additional_info}
-                  </p>
-                </div>
-              )}
             </div>
-          ))}
+
+            {/* Right: Calendar Management */}
+            <div>
+                <h2 className="text-xl font-semibold mb-4">📅 Hantera Tillgänglighet</h2>
+                <div className="bg-white p-6 rounded-lg shadow-sm border mb-6">
+                    <div className="grid gap-4">
+                        <div>
+                            <Label>Datum att blockera</Label>
+                            <Input type="date" value={blockDate} onChange={e => setBlockDate(e.target.value)} />
+                        </div>
+                        <div>
+                            <Label>Tid (Lämna tomt för hela dagen)</Label>
+                            <Input type="time" value={blockTime} onChange={e => setBlockTime(e.target.value)} />
+                        </div>
+                        <Button onClick={handleBlockTime}>Blockera Tid</Button>
+                    </div>
+                </div>
+
+                <h3 className="font-medium mb-2">Blockerade tider:</h3>
+                <div className="bg-white rounded-lg border overflow-hidden">
+                    {blocks.map(b => (
+                        <div key={b.id} className="flex justify-between items-center p-3 border-b last:border-0">
+                            <span>{b.block_date} {b.start_time ? `kl ${b.start_time}` : "(Hela dagen)"}</span>
+                            <Button variant="destructive" size="sm" onClick={() => handleDeleteBlock(b.id)}>Ta bort</Button>
+                        </div>
+                    ))}
+                    {blocks.length === 0 && <p className="p-4 text-gray-500 text-sm">Inga blockeringar.</p>}
+                </div>
+            </div>
         </div>
       </div>
     </div>

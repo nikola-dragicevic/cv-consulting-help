@@ -7,6 +7,7 @@ import { getBrowserSupabase } from "@/lib/supabaseBrowser"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import Image from "next/image"
 import ContactForm from "@/components/ui/ContactForm"
+import BookingCalendar from "@/components/ui/BokningsCalendar"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -18,6 +19,7 @@ import { Badge } from "@/components/ui/badge"
 import { Mail, Phone, FileText, Users, Award, Wand2, MapPin, Upload, X, Eye, Lock, Star, Check, LogIn, User, BrainCircuit, MessageSquareText } from "lucide-react"
 
 import InteractiveJobMap from "@/components/ui/InteractiveJobMap"
+import { format } from "date-fns"
 
 /* ============================================================
    Types
@@ -217,7 +219,6 @@ export default function UnifiedLandingPage() {
 
   // Supabase session
   const [user, setUser] = useState<SupabaseUser | null>(null)
-  // FIXED: Use shared browser client to ensure session sync with Header
   const supabase = getBrowserSupabase()
 
   useEffect(() => {
@@ -250,6 +251,10 @@ export default function UnifiedLandingPage() {
   const [showWishlist, setShowWishlist] = useState(false)
   const [lastInitPayload, setLastInitPayload] = useState<any>(null)
   const [lastRefinePayload, setLastRefinePayload] = useState<any>(null)
+
+  // Booking State
+  const [selectedPackage, setSelectedPackage] = useState<{name: string, amount: number, description: string} | null>(null)
+  const [showCalendarModal, setShowCalendarModal] = useState(false)
 
   // Freemium
   const jobLimit = user ? 50 : 10
@@ -349,7 +354,6 @@ export default function UnifiedLandingPage() {
   }
 
   async function handleRefineSubmit(wish: Wish) {
-    // CLOSE MODAL IMMEDIATELY
     setShowWishlist(false)
 
     const payload = { candidate_id: user?.id || "demo-local", wish: { ...wish, remoteBoost } }
@@ -416,50 +420,50 @@ export default function UnifiedLandingPage() {
     if (user || cvText.trim()) onFindMatches()
   }
 
-  // ===== Packages / Stripe =====
-  // FIXED: Updated to send proper JSON body
-  async function handleChoosePackage(plan: "premium" | "standard" | "basic") {
+  // ===== BOOKING FLOW =====
+  const initiateBooking = (pkg: { name: string, amount: number, description: string }) => {
     if (!user) {
-      const proceed = confirm("Du behöver vara inloggad för att köpa ett paket. Vill du logga in/registrera dig nu?")
+      const proceed = confirm("Du behöver vara inloggad för att boka. Vill du logga in nu?")
       if (proceed) router.push("/login")
       return
     }
-    try {
-      // Define package details mapping
-      const packages = {
-        premium: { amount: 1300, packageName: "CV + Personligt Brev + Konsultation", description: "Fullständigt paket med coaching" },
-        standard: { amount: 1000, packageName: "CV + Personligt Brev", description: "CV och brev matchat mot tjänst" },
-        basic: { amount: 750, packageName: "CV", description: "Professionellt CV" }
-      }
+    setSelectedPackage(pkg)
+    setShowCalendarModal(true)
+  }
 
-      const details = packages[plan]
-      
-      // Sending proper JSON body with headers
+  const handleSlotSelected = async (date: Date, time: string) => {
+    if (!selectedPackage) return
+    
+    const dateStr = format(date, 'yyyy-MM-dd')
+    
+    await processPayment(selectedPackage, dateStr, time)
+  }
+
+  async function processPayment(pkg: { name: string, amount: number }, dateStr: string, timeStr: string) {
+    try {
       const res = await fetch("/api/checkout", { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...details,
-          // Assuming we want to send user details if available, or backend handles it from session/DB?
-          // Based on your backend code, it expects email, phone etc in body.
-          // For now, sending minimal required by your backend code:
-          email: user.email, 
-          firstName: "", // You might want to fetch this from profile if needed
-          lastName: "",
-          phone: ""
+          packageName: pkg.name,
+          amount: pkg.amount,
+          bookingDate: dateStr,
+          bookingTime: timeStr,
+          email: user?.email
         })
       })
 
       const json = await res.json()
+      
       if (json?.url) {
         window.location.href = json.url
       } else {
         console.error("Checkout error:", json)
-        alert("Kunde inte starta betalning just nu. Försök igen.")
+        alert("Kunde inte starta betalning: " + (json.error || "Okänt fel"))
       }
     } catch (e) {
       console.error(e)
-      alert("Ett fel uppstod. Försök igen senare.")
+      alert("Ett anslutningsfel uppstod.")
     }
   }
 
@@ -520,11 +524,11 @@ export default function UnifiedLandingPage() {
         <div className="container mx-auto px-4">
           <div className="text-center space-y-4 mb-16">
             <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Välj ditt paket</h2>
-            <p className="text-lg text-slate-600 max-w-2xl mx-auto">Välj det paket som passar dina behov. Konsultation rekommenderas för bästa resultat.</p>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">Välj paket och boka din tid direkt i kalendern.</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {/* Cards ... */}
+            {/* Premium */}
             <Card className="relative border-2 border-blue-600 shadow-xl">
               <div className="absolute -top-4 left-1/2 -translate-x-1/2">
                 <Badge className="bg-blue-600 text-white px-4 py-1"><Star className="h-3 w-3 mr-1 inline" /> Rekommenderas</Badge>
@@ -532,18 +536,22 @@ export default function UnifiedLandingPage() {
               <CardHeader className="text-center pt-8">
                 <CardTitle className="text-2xl">CV + Personligt Brev + Konsultation</CardTitle>
                 <div className="mt-4"><span className="text-4xl font-bold">1300 kr</span></div>
-                <CardDescription className="mt-2">Fullständig hjälp där jag coachar dig, ger strategier och bygger din ansökan tillsammans med dig</CardDescription>
+                <CardDescription className="mt-2">Fullständigt paket med personlig coaching</CardDescription>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-3">
+                <ul className="space-y-3 mb-6">
                   {["Professionellt CV","Personligt brev","45 min personlig konsultation","Jobbsökningsstrategier","Intervjuförberedelse","Personlig coaching","Leverans inom 7-10 dagar"].map((item) => (
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
-                <Button className="w-full mt-6 bg-blue-600 hover:bg-blue-700" size="lg" onClick={() => handleChoosePackage("premium")}>Välj paket</Button>
+                <Button className="w-full bg-blue-600 hover:bg-blue-700" size="lg" 
+                  onClick={() => initiateBooking({ name: "CV + Personligt Brev + Konsultation", amount: 1300, description: "Fullständigt paket med coaching" })}>
+                  Välj & Boka
+                </Button>
               </CardContent>
             </Card>
 
+            {/* Standard */}
             <Card className="border-2">
               <CardHeader className="text-center">
                 <CardTitle className="text-2xl">CV + Personligt Brev</CardTitle>
@@ -551,15 +559,19 @@ export default function UnifiedLandingPage() {
                 <CardDescription className="mt-2">Ett paket med CV och skräddarsytt personligt brev</CardDescription>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-3">
+                <ul className="space-y-3 mb-6">
                   {["Professionellt CV","Skräddarsytt personligt brev","Matchat till specifik tjänst","Leverans inom 5-7 dagar"].map((item) => (
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
-                <Button className="w-full mt-6" variant="outline" size="lg" onClick={() => handleChoosePackage("standard")}>Välj paket</Button>
+                <Button className="w-full" variant="outline" size="lg" 
+                  onClick={() => initiateBooking({ name: "CV + Personligt Brev", amount: 1000, description: "CV och brev matchat mot tjänst" })}>
+                  Välj & Boka
+                </Button>
               </CardContent>
             </Card>
 
+            {/* Basic */}
             <Card className="border-2">
               <CardHeader className="text-center">
                 <CardTitle className="text-2xl">CV</CardTitle>
@@ -567,17 +579,19 @@ export default function UnifiedLandingPage() {
                 <CardDescription className="mt-2">Professionellt skrivet CV</CardDescription>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-3">
+                <ul className="space-y-3 mb-6">
                   {["Skräddarsytt CV","Professionell layout","ATS-optimerat","Leverans inom 3-5 dagar"].map((item) => (
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
-                <Button className="w-full mt-6" variant="outline" size="lg" onClick={() => handleChoosePackage("basic")}>Välj paket</Button>
+                <Button className="w-full" variant="outline" size="lg" 
+                  onClick={() => initiateBooking({ name: "CV", amount: 750, description: "Professionellt CV" })}>
+                  Välj & Boka
+                </Button>
               </CardContent>
             </Card>
           </div>
 
-          {/* Only show if user is NOT logged in */}
           {!user && (
             <p className="mt-6 text-center text-sm text-slate-600">Inte registrerad än? <Link href="/login" className="text-blue-700 hover:underline inline-flex items-center gap-1"><LogIn className="h-4 w-4" /> Skapa konto eller logga in</Link> för att slutföra köp.</p>
           )}
@@ -696,8 +710,7 @@ export default function UnifiedLandingPage() {
         </div>
       </section>
 
-      {/* === RESULTS & FOOTER & ETC === */}
-      {/* (Rest of the file remains the same, just ensuring component structure is complete) */}
+      {/* === RESULTS === */}
       <section className="container mx-auto px-4 pb-10">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-2xl font-semibold">Dina matchningar</h3>
@@ -879,6 +892,28 @@ export default function UnifiedLandingPage() {
         </div>
       </footer>
 
+      {/* === MODAL: BOOKING CALENDAR === */}
+      {showCalendarModal && selectedPackage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto my-8">
+            <button 
+              onClick={() => setShowCalendarModal(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 z-10"
+            >
+              <X className="h-6 w-6" />
+            </button>
+            
+            <div className="mb-6 pr-8">
+              <h2 className="text-2xl font-bold text-slate-900">Boka tid för {selectedPackage.name}</h2>
+              <p className="text-slate-600">Välj en tid som passar dig. Betalning sker i nästa steg.</p>
+            </div>
+
+            <BookingCalendar onSelectSlot={handleSlotSelected} />
+          </div>
+        </div>
+      )}
+
+      {/* === MODAL: WISHLIST === */}
       {showWishlist && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
           <CareerWishlistForm
