@@ -76,7 +76,7 @@ export async function POST(req: Request) {
         return jsonError("Kunde inte hitta din profil. Har du laddat upp ett CV på din profilsida?", 404);
       }
       if (!profile.profile_vector) {
-        return jsonError("Din profil analyseras fortfarande. Försök igen om en liten stund.", 400);
+        return jsonError("Din profil har uppdaterats och analyseras nu. Vänligen vänta 10-30 sekunder och försök igen.", 400);
       }
 
       v_profile = profile.profile_vector;

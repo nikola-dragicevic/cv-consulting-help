@@ -70,6 +70,8 @@ export async function POST(req: Request) {
       phone: phone,
       city: city,
       street: street,
+      // ✅ IMPORTANT: Reset vector to NULL so it gets regenerated with improved algorithm
+      profile_vector: null,
     };
 
     // 1. HANDLE GEOLOCATION
@@ -118,8 +120,8 @@ export async function POST(req: Request) {
             extractedText = buffer.toString("utf-8");
         }
         
-        // Clean up text slightly to save bandwidth
-        extractedText = extractedText.replace(/\s+/g, " ").trim().substring(0, 8000); 
+        // Clean up whitespace (but DON'T truncate - nomic-embed-text supports 8192 tokens!)
+        extractedText = extractedText.replace(/\s+/g, " ").trim(); 
       } catch (err) {
         console.error("Text extraction failed:", err);
       }
@@ -136,17 +138,20 @@ export async function POST(req: Request) {
     }
 
     // 4. TRIGGER VECTOR UPDATE (EVENT DRIVEN)
-    if (extractedText) {
+    // Always trigger webhook when we have a CV file, not just when uploading new one
+    if (extractedText || profileData.cv_bucket_path) {
       console.log("🚀 Triggering vector update webhook...");
-      
+
+      // If we just extracted text, use it. Otherwise, worker will download from bucket
+      const cvText = extractedText || "";
+
       // Fire and forget - don't await the result to keep UI snappy
-      // ✅ Corrected Template Strings in fetch and body
       fetch(`${WORKER_URL}/webhook/update-profile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           user_id: user.id,
-          cv_text: `Kandidat: ${fullName}\nCV: ${extractedText}`
+          cv_text: cvText ? `Kandidat: ${fullName}\nCV: ${cvText}` : ""
         })
       }).catch(err => console.error("Webhook trigger failed:", err));
     }

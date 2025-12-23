@@ -52,7 +52,94 @@ async def get_local_embedding(text: str) -> list[float]:
             print(f"   ❌ Embedding Connection Error: {e}")
             raise e
 
+def extract_education(cv_text: str) -> str:
+    """Extract education section from CV text."""
+    import re
+    education_markers = [
+        r"(?i)(utbildning|education|skola|universitet|högskola|academy|degree)",
+        r"(?i)(systemutvecklare|civilingenjör|master|bachelor|kandidat)",
+    ]
+
+    lines = cv_text.split('\n')
+    education_section = []
+    in_education = False
+
+    for line in lines:
+        if any(re.search(marker, line) for marker in education_markers):
+            in_education = True
+            education_section.append(line)
+        elif in_education:
+            if re.search(r"(?i)(arbetslivserfarenhet|experience|skills|referenser)", line):
+                break
+            education_section.append(line)
+
+    return '\n'.join(education_section[:15])
+
+def extract_skills(cv_text: str) -> str:
+    """Extract technical skills from CV text."""
+    import re
+    skills_markers = [
+        r"(?i)(skills|kompetens|färdigheter|tekniker|verktyg|programming)",
+    ]
+
+    lines = cv_text.split('\n')
+    skills_section = []
+    in_skills = False
+
+    for line in lines:
+        if any(re.search(marker, line) for marker in skills_markers):
+            in_skills = True
+            skills_section.append(line)
+        elif in_skills:
+            if re.search(r"(?i)(arbetslivserfarenhet|experience|utbildning|education)", line):
+                break
+            skills_section.append(line)
+
+    return '\n'.join(skills_section[:20])
+
+def build_prioritized_prompt(c: dict, cv_text: str) -> str:
+    """
+    Build a prompt that prioritizes:
+    1. Skills and competencies (HIGHEST WEIGHT)
+    2. Education and certifications
+    3. Career goals/desired roles
+    4. Recent experience (LIMITED)
+    """
+    education_text = extract_education(cv_text)
+    skills_text = extract_skills(cv_text)
+
+    parts = []
+
+    # 1. SKILLS (Highest Priority) - Repeat 2x for emphasis (matching job format)
+    if skills_text:
+        parts.append("=== KOMPETENSER OCH FÄRDIGHETER (VIKTIGAST) ===")
+        parts.append(skills_text)
+        parts.append("\n=== NYCKELKOMPETENSER (REPETITION FÖR VIKT) ===")
+        parts.append(skills_text)
+
+    # 2. EDUCATION (High Priority) - Once is enough
+    if education_text:
+        parts.append("\n=== UTBILDNING OCH CERTIFIERINGAR ===")
+        parts.append(education_text)
+
+    # 3. CAREER GOALS
+    if c.get("additional_info"):
+        parts.append("\n=== KARRIÄRMÅL OCH ÖNSKEMÅL ===")
+        parts.append(c["additional_info"])
+
+    # 4. LIMITED WORK EXPERIENCE (Lower Priority)
+    work_experience = cv_text[:500]
+    parts.append("\n=== SENASTE ERFARENHET (BEGRÄNSAD) ===")
+    parts.append(work_experience)
+
+    # 5. CANDIDATE METADATA
+    parts.append(f"\n=== KANDIDAT ===")
+    parts.append(f"Namn: {c.get('full_name', '')}")
+
+    return "\n".join(parts)
+
 async def enrich_candidates():
+    print("📋 Improved Candidate Vector Generation (Skills > Education > Experience)")
     print("📋 Checking for candidates with missing 'profile_vector'...")
     
     # 1. Select only where profile_vector is NULL
@@ -113,14 +200,9 @@ async def enrich_candidates():
             print(f"   ⏭️ Skipping {email}: Could not extract text from CV.")
             continue 
 
-        # 4. Create Prompt and Embed
-        info_parts = [f"Candidate: {c.get('full_name', '')}"]
-        info_parts.append(f"CV Content: {cv_text}")
-        
-        if c.get("additional_info"):
-            info_parts.append(f"Additional Info: {c['additional_info']}")
-            
-        prompt_text = "\n".join(info_parts)
+        # 4. Create Prompt and Embed - IMPROVED VERSION
+        # Prioritize: Skills > Education > Goals > Work Experience
+        prompt_text = build_prioritized_prompt(c, cv_text)
         
         try:
             vec = await get_local_embedding(prompt_text)

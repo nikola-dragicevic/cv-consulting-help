@@ -104,7 +104,7 @@ export default function ProfilePage() {
       const result = await res.json();
 
       if (!res.ok) throw new Error(result.error || "Något gick fel.");
-      setMessage("Din profil har uppdaterats! CV analyseras nu...");
+      setMessage("✅ Din profil har sparats! Din matchningsprofil kommer att regenereras vid nästa sökning.");
 
       if (result.newCvUrl) {
         setProfile(prev => (prev ? { ...prev, cv_file_url: result.newCvUrl } : prev));
@@ -235,7 +235,7 @@ export default function ProfilePage() {
               </div>
               {cvViewError && <p className="text-xs text-red-600">{cvViewError}</p>}
               <p className="text-xs text-slate-500">
-                Om du laddar upp en ny fil kommer den att ersätta din gamla. Detta triggar en ny matchningsanalys.
+                När du sparar ändringar kommer din matchningsprofil att regenereras automatiskt. Detta tar några sekunder och sker vid nästa sökning.
               </p>
             </div>
 

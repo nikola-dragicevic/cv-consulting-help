@@ -83,41 +83,45 @@ def build_job_embedding_text(row: Dict[str, Any]) -> str:
     if isinstance(snap, str):
         try: snap = json.loads(snap)
         except: snap = {}
-    
+
     # 2. Bygg datan
     headline = row.get("headline") or ""
     category = row.get("job_category") or ""
-    
+
     # 3. Hämta de viktigaste nyckelorden (Skills)
-    # Detta är den viktigaste ändringen för att höja score!
     skills_block = extract_skills_from_snapshot(snap)
-    
-    # 4. Hämta beskrivning men kapa den smart
+
+    # 4. Hämta beskrivning
     desc = row.get("description_text") or ""
     cleaned_desc = clean_text(desc)
-    
-    # Prioriteringsordning för prompten:
-    # 1. Titel (Viktigast)
-    # 2. Specifika krav/skills (Superviktigt för matchning)
-    # 3. Kategori
-    # 4. Beskrivning (För kontext)
-    
-    parts = [
-        f"Jobbtitel: {headline}",
-        f"Kategori: {category}",
-    ]
-    
-    if skills_block:
-        parts.append(f"Kompetenser: {skills_block}")
-        
-    # Lägg till beskrivning, men låt inte den putta ut kompetenserna
-    # Vi siktar på max 1500 tecken totalt
-    current_len = sum(len(p) for p in parts)
-    remaining = 1500 - current_len
-    
-    if remaining > 100:
-        parts.append(f"Beskrivning: {cleaned_desc[:remaining]}")
 
+    # NEW APPROACH: Use semantic tags + repetition like we do for candidates
+    # Research shows: LLMs sensitive to formatting (76 point difference!)
+    # Prioritize: Skills > Title > Category > Description
+
+    parts = []
+
+    # HIGHEST PRIORITY: Skills (repeated 2x for emphasis)
+    if skills_block:
+        parts.append("=== KRAV OCH KOMPETENSER (VIKTIGAST) ===")
+        parts.append(skills_block)
+        parts.append("\n=== NYCKELKOMPETENSER (REPETITION FÖR VIKT) ===")
+        parts.append(skills_block)
+
+    # HIGH PRIORITY: Title + Category
+    parts.append(f"\n=== JOBBTITEL ===")
+    parts.append(headline)
+    if category:
+        parts.append(f"\n=== KATEGORI ===")
+        parts.append(category)
+
+    # MEDIUM PRIORITY: Description (limited to first 1200 chars to fit in context)
+    # Focus on requirements section which is usually at the beginning
+    if cleaned_desc:
+        parts.append(f"\n=== BESKRIVNING ===")
+        parts.append(cleaned_desc[:1200])
+
+    # Target: ~2500 chars (fits easily in nomic-embed-text's 8192 token context)
     return "\n".join(parts)
 
 async def enrich_job_vectors():

@@ -25,14 +25,14 @@ services:
     restart: always
 
   worker:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile.python
     environment:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - OLLAMA_URL=http://ollama:11434/api/embeddings
-      - EMBEDDING_MODEL=snowflake-arctic-embed2
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
     volumes:
       - ./logs:/app/logs
       - ./downloads:/app/downloads

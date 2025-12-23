@@ -37,7 +37,7 @@ export async function POST(req: Request) {
         }
 
         if (!profile.profile_vector) {
-            return NextResponse.json({ error: 'Ditt CV analyseras fortfarande. Försök igen om en liten stund.' }, { status: 400 });
+            return NextResponse.json({ error: 'Din profil har uppdaterats och analyseras nu. Vänligen vänta 10-30 sekunder och försök igen.' }, { status: 400 });
         }
         
         if (!profile.location_lat || !profile.location_lon) {
