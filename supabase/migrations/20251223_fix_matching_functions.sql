@@ -5,8 +5,10 @@
 -- ============================================================================
 -- DROP OLD FUNCTIONS
 -- ============================================================================
-DROP FUNCTION IF EXISTS match_jobs_initial(vector, float, float, float, int);
-DROP FUNCTION IF EXISTS match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int);
+DROP FUNCTION IF EXISTS match_jobs_initial(vector(1024), float, float, float, int);
+DROP FUNCTION IF EXISTS match_jobs_initial(vector(768), float, float, float, int);
+DROP FUNCTION IF EXISTS match_jobs_profile_wish(vector(1024), vector(1024), float, float, float, text, text, boolean, int);
+DROP FUNCTION IF EXISTS match_jobs_profile_wish(vector(768), vector(768), float, float, float, text, text, boolean, int);
 
 -- ============================================================================
 -- FIX 1: Re-create Initial Matching Function with Proper Location Filtering
@@ -15,7 +17,7 @@ DROP FUNCTION IF EXISTS match_jobs_profile_wish(vector, vector, float, float, fl
 -- This ensures the WHERE clause is applied before the index-accelerated ORDER BY
 
 CREATE OR REPLACE FUNCTION match_jobs_initial(
-    v_profile vector(1024),
+    v_profile vector(768),
     u_lat float,
     u_lon float,
     radius_km float,
@@ -90,8 +92,8 @@ $$;
 -- FIX 2: Re-create Refined Matching Function with Same Fix
 -- ============================================================================
 CREATE OR REPLACE FUNCTION match_jobs_profile_wish(
-    v_profile vector(1024),
-    v_wish vector(1024),
+    v_profile vector(768),
+    v_wish vector(768),
     u_lat float,
     u_lon float,
     radius_km float,
@@ -173,7 +175,7 @@ $$;
 -- You can test the new function with:
 --
 -- SELECT * FROM match_jobs_initial(
---   ARRAY[...]::vector(1024),  -- Your profile vector
+--   ARRAY[...]::vector(768),  -- Your profile vector
 --   59.3293,                    -- Stockholm latitude
 --   18.0686,                    -- Stockholm longitude
 --   40,                         -- 40km radius
