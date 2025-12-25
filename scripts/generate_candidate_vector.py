@@ -17,7 +17,7 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "snowflake-arctic-embed2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 DIMS = 768  # nomic-embed-text uses 768 dimensions
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:

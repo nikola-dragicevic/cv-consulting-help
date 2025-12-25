@@ -55,12 +55,19 @@ export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const file = formData.get("cv") as File | null;
-    
+
     // Extract form data
     const city = String(formData.get("city") ?? "").trim();
     const fullName = String(formData.get("fullName") ?? "");
     const phone = String(formData.get("phone") ?? "");
     const street = String(formData.get("street") ?? "");
+
+    // ✅ FETCH EXISTING PROFILE to check for existing CV
+    const { data: existingProfile } = await supabase
+      .from("candidate_profiles")
+      .select("cv_bucket_path")
+      .eq("user_id", user.id)
+      .single();
 
     // Prepare profile data object
     const profileData: Record<string, any> = {
@@ -138,9 +145,13 @@ export async function POST(req: Request) {
     }
 
     // 4. TRIGGER VECTOR UPDATE (EVENT DRIVEN)
-    // Always trigger webhook when we have a CV file, not just when uploading new one
-    if (extractedText || profileData.cv_bucket_path) {
-      console.log("🚀 Triggering vector update webhook...");
+    // ✅ FIX: Trigger webhook when:
+    // - New CV uploaded (extractedText exists), OR
+    // - Profile updated and has existing CV (cv_bucket_path in profileData or existingProfile)
+    const hasCv = extractedText || profileData.cv_bucket_path || existingProfile?.cv_bucket_path;
+
+    if (hasCv) {
+      console.log("🚀 Triggering vector update webhook for user:", user.id);
 
       // If we just extracted text, use it. Otherwise, worker will download from bucket
       const cvText = extractedText || "";

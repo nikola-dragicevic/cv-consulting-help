@@ -24,7 +24,7 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "snowflake-arctic-embed2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 DIMS = 768  # nomic-embed-text uses 768 dimensions
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -130,7 +130,15 @@ def health():
 async def generate_embedding(req: EmbedRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
-    return await fetch_embedding(req.text)
+
+    # ✅ Truncate to safe length for CPU batch size
+    text = req.text
+    MAX_CHARS = 1500
+    if len(text) > MAX_CHARS:
+        print(f"⚠️  [EMBED] Truncating text from {len(text)} to {MAX_CHARS} chars")
+        text = text[:MAX_CHARS]
+
+    return await fetch_embedding(text)
 
 @app.post("/webhook/update-profile")
 async def webhook_update_profile(req: ProfileUpdateWebhook):
@@ -188,6 +196,13 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
 
         # Use improved prioritization logic (Skills > Education > Experience)
         prioritized_prompt = build_prioritized_prompt(profile, cv_text)
+
+        # ✅ CRITICAL: Truncate to safe length for CPU batch size (512)
+        # nomic-embed-text with batch_size 512 can handle ~1500 chars (~300 tokens) safely on CPU
+        MAX_CHARS = 1500
+        if len(prioritized_prompt) > MAX_CHARS:
+            print(f"⚠️ [WEBHOOK] Truncating prompt from {len(prioritized_prompt)} to {MAX_CHARS} chars")
+            prioritized_prompt = prioritized_prompt[:MAX_CHARS]
 
         print(f"🎯 [WEBHOOK] Using prioritized prompt ({len(prioritized_prompt)} chars)")
 

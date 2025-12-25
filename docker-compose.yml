@@ -44,7 +44,19 @@ services:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
-    # REMOVED entrypoint, command, and deploy sections
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_FLASH_ATTENTION=0
+      - OLLAMA_MAX_QUEUE=128
+    # Uncomment the deploy section below on GPU machine
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     restart: always
 volumes:
   ollama_data:
