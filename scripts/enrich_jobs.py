@@ -22,7 +22,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-DIMS = 768  # nomic-embed-text uses 768 dimensions
+DIMS = 768
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
@@ -35,20 +35,29 @@ def normalize_vector(vector: List[float]) -> List[float]:
     return [x / magnitude for x in vector]
 
 async def get_local_embedding(text: str) -> List[float]:
+    # ✅ SAFETY: Prevent empty or too short text from hitting Ollama
+    if not text or len(text) < 5: return [0.0] * DIMS
+    
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            OLLAMA_URL,
-            json={"model": EMBEDDING_MODEL, "prompt": text},
-        )
-        resp.raise_for_status()
-        emb = resp.json().get("embedding")
-        if not emb or len(emb) != DIMS:
-            raise ValueError(f"Invalid dims: {len(emb)}")
-        return normalize_vector(emb)
+        try:
+            resp = await client.post(
+                OLLAMA_URL,
+                json={"model": EMBEDDING_MODEL, "prompt": text},
+            )
+            resp.raise_for_status()
+            emb = resp.json().get("embedding")
+            if not emb or len(emb) != DIMS:
+                # Log warning but return zero vector instead of crashing
+                print(f"⚠️ Invalid dims: {len(emb) if emb else 0}")
+                return [0.0] * DIMS
+            return normalize_vector(emb)
+        except Exception as e:
+            print(f"⚠️ Ollama Error: {e}")
+            raise e
 
 def clean_text(s: str) -> str:
     if not s: return ""
-    # Ta bort vanliga footer-fraser som förstör matchningen
+    # Remove footer phrases
     patterns = [
         r"Öppen för alla.*", r"Vi fokuserar på din kompetens.*",
         r"Var ligger arbetsplatsen.*", r"Postadress.*"
@@ -65,7 +74,6 @@ def extract_skills_from_snapshot(snap: dict) -> str:
     must = snap.get("must_have", {}).get("skills", [])
     nice = snap.get("nice_to_have", {}).get("skills", [])
     
-    # Plocka ut label från listan av objekt
     must_labels = [s.get("label") for s in must if s.get("label")]
     nice_labels = [s.get("label") for s in nice if s.get("label")]
     
@@ -84,54 +92,53 @@ def build_job_embedding_text(row: Dict[str, Any]) -> str:
         try: snap = json.loads(snap)
         except: snap = {}
 
-    # 2. Bygg datan
+    # 2. Data points
     headline = row.get("headline") or ""
     category = row.get("job_category") or ""
-
-    # 3. Hämta de viktigaste nyckelorden (Skills)
     skills_block = extract_skills_from_snapshot(snap)
-
-    # 4. Hämta beskrivning
     desc = row.get("description_text") or ""
+    
+    # 3. Clean Description
     cleaned_desc = clean_text(desc)
-
-    # NEW APPROACH: Use semantic tags + repetition like we do for candidates
-    # Research shows: LLMs sensitive to formatting (76 point difference!)
-    # Prioritize: Skills > Title > Category > Description
+    # Sanitization for CPU stability (remove weird chars)
+    cleaned_desc = cleaned_desc.encode("ascii", errors="ignore").decode()
+    cleaned_desc = cleaned_desc.replace('\x00', '')
 
     parts = []
 
     # HIGHEST PRIORITY: Skills (repeated 2x for emphasis)
     if skills_block:
-        parts.append("=== KRAV OCH KOMPETENSER (VIKTIGAST) ===")
+        parts.append("=== KRAV (VIKTIGAST) ===")
         parts.append(skills_block)
-        parts.append("\n=== NYCKELKOMPETENSER (REPETITION FÖR VIKT) ===")
+        parts.append("=== KOMPETENS (VIKTIGAST) ===") # Shortened header
         parts.append(skills_block)
 
     # HIGH PRIORITY: Title + Category
-    parts.append(f"\n=== JOBBTITEL ===")
-    parts.append(headline)
+    parts.append(f"Jobb: {headline}")
     if category:
-        parts.append(f"\n=== KATEGORI ===")
-        parts.append(category)
+        parts.append(f"Kategori: {category}")
 
-    # MEDIUM PRIORITY: Description (limited to first 1200 chars to fit in context)
-    # Focus on requirements section which is usually at the beginning
+    # MEDIUM PRIORITY: Description (Truncated)
+    # We reduce this to 800 to ensure we have room for the important skills above
     if cleaned_desc:
-        parts.append(f"\n=== BESKRIVNING ===")
-        parts.append(cleaned_desc[:1200])
+        parts.append(f"Beskrivning: {cleaned_desc[:800]}")
 
-    # Target: ~2500 chars (fits easily in nomic-embed-text's 8192 token context)
-    return "\n".join(parts)
+    final_text = "\n".join(parts)
+
+    # ✅ FINAL SAFETY NET: Hard truncate to 2000 chars for CPU batch stability
+    if len(final_text) > 2000:
+        final_text = final_text[:2000]
+
+    return final_text
 
 async def enrich_job_vectors():
-    print(f"📦 Enriching Jobs... Model: {EMBEDDING_MODEL}")
+    print(f"📦 Safer Job Enrichment... Max 2000 chars. Model: {EMBEDDING_MODEL}")
 
     while True:
         # Hämta jobb som saknar embedding
         response = (
             supabase.table("job_ads")
-            .select("*") # Hämta allt så vi får source_snapshot
+            .select("*")
             .is_("embedding", "null")
             .limit(50)
             .execute()
@@ -152,14 +159,18 @@ async def enrich_job_vectors():
                 
                 # Skapa vektor
                 vector = await get_local_embedding(text)
+                
+                if vector == [0.0] * DIMS:
+                    print(f"   ⚠️ Tom vektor genererad för {job_id}, hoppar över.")
+                    continue
 
-                # Spara BÅDE vektor och texten vi använde (för debugging)
+                # Spara
                 supabase.table("job_ads").update({
                     "embedding": vector,
                     "embedding_text": text 
                 }).eq("id", job_id).execute()
 
-                print(f"   ✅ Klar: {row.get('headline')} (Text len: {len(text)})")
+                print(f"   ✅ Klar: {row.get('headline')[:30]}... ({len(text)} chars)")
 
             except Exception as e:
                 print(f"   ❌ Fel på {job_id}: {e}")
