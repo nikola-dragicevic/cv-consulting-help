@@ -148,29 +148,54 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
 
         # If cv_text is empty, download from storage
         if (not cv_text or not cv_text.strip()) and profile.get("cv_bucket_path"):
-            print(f"📥 [WEBHOOK] CV text empty, downloading from storage: {profile['cv_bucket_path']}")
+            path = profile["cv_bucket_path"]
+            print(f"📥 [WEBHOOK] CV text empty, downloading from storage: {path}")
             try:
-                from scripts.parse_cv_pdf import extract_text_from_pdf, summarize_cv_text
+                # ✅ Import docx parser too
+                from scripts.parse_cv_pdf import (
+                    extract_text_from_pdf,
+                    extract_text_from_docx,
+                    summarize_cv_text,
+                )
 
-                data = supabase.storage.from_("cvs").download(profile["cv_bucket_path"])
+                # Download CV from storage
+                data = supabase.storage.from_("cvs").download(path)
 
-                is_pdf = profile["cv_bucket_path"].lower().endswith(".pdf")
-                local_ext = ".pdf" if is_pdf else ".txt"
+                # ✅ Determine file type correctly
+                is_pdf = path.lower().endswith(".pdf")
+                is_docx = path.lower().endswith(".docx")
+
+                if is_pdf:
+                    local_ext = ".pdf"
+                elif is_docx:
+                    local_ext = ".docx"
+                else:
+                    local_ext = ".txt"
+
                 local_path = f"/tmp/temp_{req.user_id}{local_ext}"
 
+                # Write to temp file
                 with open(local_path, "wb") as f:
                     f.write(data)
 
+                # ✅ Use correct parser
                 if is_pdf:
                     raw, has_img_bool = extract_text_from_pdf(local_path)
                     has_picture = bool(has_img_bool)
                     cv_text = summarize_cv_text(raw)
+
+                elif is_docx:
+                    raw = extract_text_from_docx(local_path)
+                    cv_text = summarize_cv_text(raw)
+                    has_picture = False  # docx images not detected (by design)
+
                 else:
                     with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
                         raw = f.read()
                     cv_text = summarize_cv_text(raw)
                     has_picture = False
 
+                # Clean up
                 if os.path.exists(local_path):
                     os.remove(local_path)
 
@@ -192,7 +217,7 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
             except Exception as db_e:
                 print(f"⚠️  [WEBHOOK] Failed to update has_picture: {db_e}")
 
-            print("❌ [WEBHOOK] No text found. PDF might be a scan/image-only PDF.")
+            print("❌ [WEBHOOK] No text found. File might be image-only PDF or empty.")
             raise HTTPException(400, "No CV text available (File might be an image-only PDF)")
 
         prioritized_prompt = build_prioritized_prompt(profile, cv_text)

@@ -11,3 +11,6 @@ PyMuPDF>=1.23.0
 
 # Environment variables
 python-dotenv>=1.0.0
+
+# Word Document parsing 
+python-docx>=0.8.11
