@@ -257,7 +257,7 @@ export default function UnifiedLandingPage() {
   const [showCalendarModal, setShowCalendarModal] = useState(false)
 
   // Freemium
-  const jobLimit = user ? 50 : 10
+  const jobLimit = user ? 50 : 20
   const [freeJobsShown, setFreeJobsShown] = useState(0)
 
   // Disable radius input if city is "Sverige"

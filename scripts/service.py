@@ -16,7 +16,9 @@ from dotenv import load_dotenv
 from scripts.update_jobs import run_job_update
 from scripts.enrich_jobs import enrich_job_vectors
 from scripts.geocode_jobs import geocode_new_jobs
-from scripts.generate_candidate_vector import build_prioritized_prompt
+
+# ✅ FIX: Import the correct new function
+from scripts.generate_candidate_vector import build_candidate_vector
 
 load_dotenv()
 
@@ -25,7 +27,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-DIMS = 768  # nomic-embed-text uses 768 dimensions
+DIMS = 768
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
@@ -38,9 +40,9 @@ def normalize_vector(vector: list[float]) -> list[float]:
         return [0.0] * len(vector)
     return [x / magnitude for x in vector]
 
-# --- Helper: Ollama Call ---
-async def fetch_embedding(text: str):
-    """Generates an embedding from Ollama"""
+# --- Helper: Simple Ollama Call (For /embed endpoint only) ---
+async def fetch_simple_embedding(text: str):
+    """Legacy helper for the simple /embed endpoint"""
     if not text or not text.strip():
         return {"vector": None}
 
@@ -55,9 +57,7 @@ async def fetch_embedding(text: str):
             embedding = data.get("embedding")
 
             if not embedding or len(embedding) != DIMS:
-                error_msg = f"Ollama returned invalid dims. Expected {DIMS}, got {len(embedding) if embedding else 0}"
-                print(f"❌ {error_msg}")
-                raise ValueError(error_msg)
+                return {"vector": None}
 
             return {"vector": normalize_vector(embedding)}
 
@@ -67,12 +67,6 @@ async def fetch_embedding(text: str):
 
 # --- Background Pipeline ---
 def run_daily_pipeline():
-    """
-    Runs daily at 04:00:
-    1. Fetch new jobs & Delete expired jobs (update_jobs.py)
-    2. Vectorize new jobs (enrich_jobs.py)
-    3. Geocode jobs missing coordinates (geocode_jobs.py)
-    """
     print(f"🚀 [CRON] Starting daily job pipeline: {time.ctime()}")
     try:
         run_job_update()
@@ -83,10 +77,8 @@ def run_daily_pipeline():
         print(f"❌ [CRON] Pipeline failed: {e}")
 
 def run_scheduler():
-    """Runs in a separate thread to keep the API alive"""
     print("⏰ Scheduler started. Pipeline set for 04:00 daily.")
     schedule.every().day.at("04:00").do(run_daily_pipeline)
-
     while True:
         schedule.run_pending()
         time.sleep(10)
@@ -94,7 +86,7 @@ def run_scheduler():
 # --- FastAPI App ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"⚡ Unified Service Starting... Model: {EMBEDDING_MODEL} ({DIMS} dims)")
+    print(f"⚡ Unified Service Starting... Model: {EMBEDDING_MODEL}")
     scheduler_thread = Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     yield
@@ -110,26 +102,20 @@ class ProfileUpdateWebhook(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": EMBEDDING_MODEL, "dims": DIMS}
+    return {"status": "ok", "model": EMBEDDING_MODEL}
 
 @app.post("/embed")
 async def generate_embedding(req: EmbedRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
-
-    # ✅ Truncate to safe length for CPU batch size
-    text = req.text
-    MAX_CHARS = 1500
-    if len(text) > MAX_CHARS:
-        print(f"⚠️  [EMBED] Truncating text from {len(text)} to {MAX_CHARS} chars")
-        text = text[:MAX_CHARS]
-
-    return await fetch_embedding(text)
+    text = req.text[:1500] 
+    return await fetch_simple_embedding(text)
 
 @app.post("/webhook/update-profile")
 async def webhook_update_profile(req: ProfileUpdateWebhook):
     print(f"📥 [WEBHOOK] Generating vector for user: {req.user_id}")
     try:
+        # 1. Fetch Profile
         profile_res = (
             supabase.table("candidate_profiles")
             .select("*")
@@ -142,109 +128,89 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
             raise HTTPException(404, "Profile not found")
 
         profile = profile_res.data
-
         cv_text = req.cv_text
-        has_picture: bool = False  # boolean default
+        has_picture: bool = False
 
-        # If cv_text is empty, download from storage
+        # 2. Download CV if text is missing
         if (not cv_text or not cv_text.strip()) and profile.get("cv_bucket_path"):
             path = profile["cv_bucket_path"]
-            print(f"📥 [WEBHOOK] CV text empty, downloading from storage: {path}")
+            print(f"📥 [WEBHOOK] CV text empty, downloading: {path}")
             try:
-                # ✅ Import docx parser too
                 from scripts.parse_cv_pdf import (
                     extract_text_from_pdf,
                     extract_text_from_docx,
                     summarize_cv_text,
                 )
 
-                # Download CV from storage
                 data = supabase.storage.from_("cvs").download(path)
-
-                # ✅ Determine file type correctly
+                
                 is_pdf = path.lower().endswith(".pdf")
                 is_docx = path.lower().endswith(".docx")
-
-                if is_pdf:
-                    local_ext = ".pdf"
-                elif is_docx:
-                    local_ext = ".docx"
-                else:
-                    local_ext = ".txt"
-
+                local_ext = ".pdf" if is_pdf else (".docx" if is_docx else ".txt")
                 local_path = f"/tmp/temp_{req.user_id}{local_ext}"
 
-                # Write to temp file
                 with open(local_path, "wb") as f:
                     f.write(data)
 
-                # ✅ Use correct parser
+                # Parse
                 if is_pdf:
                     raw, has_img_bool = extract_text_from_pdf(local_path)
                     has_picture = bool(has_img_bool)
                     cv_text = summarize_cv_text(raw)
-
                 elif is_docx:
                     raw = extract_text_from_docx(local_path)
                     cv_text = summarize_cv_text(raw)
-                    has_picture = False  # docx images not detected (by design)
-
+                    has_picture = False
                 else:
                     with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
                         raw = f.read()
                     cv_text = summarize_cv_text(raw)
                     has_picture = False
 
-                # Clean up
                 if os.path.exists(local_path):
                     os.remove(local_path)
 
-                print(
-                    f"✅ [WEBHOOK] Extracted {len(cv_text) if cv_text else 0} chars. "
-                    f"Has Picture: {has_picture}"
-                )
+                print(f"✅ Extracted {len(cv_text) if cv_text else 0} chars.")
 
             except Exception as e:
-                print(f"⚠️  [WEBHOOK] Failed to download CV from storage: {e}")
+                print(f"⚠️ [WEBHOOK] Storage download failed: {e}")
                 raise HTTPException(500, f"Failed to download CV: {str(e)}")
 
-        # If no text exists, still save has_picture and exit gracefully
+        # 3. Handle Empty CV
         if not cv_text or not cv_text.strip():
-            try:
-                supabase.table("candidate_profiles").update({
-                    "has_picture": has_picture
-                }).eq("user_id", req.user_id).execute()
-            except Exception as db_e:
-                print(f"⚠️  [WEBHOOK] Failed to update has_picture: {db_e}")
+            supabase.table("candidate_profiles").update({
+                "has_picture": has_picture
+            }).eq("user_id", req.user_id).execute()
+            
+            print("❌ [WEBHOOK] No text available.")
+            raise HTTPException(400, "No CV text available")
 
-            print("❌ [WEBHOOK] No text found. File might be image-only PDF or empty.")
-            raise HTTPException(400, "No CV text available (File might be an image-only PDF)")
+        # 4. Generate Vector (Chunked)
+        print(f"🎯 [WEBHOOK] Generating Chunked Vector...")
+        
+        # ✅ FIX: Calls the new function that handles chunking internally
+        vector = await build_candidate_vector(profile, cv_text)
 
-        prioritized_prompt = build_prioritized_prompt(profile, cv_text)
-
-        MAX_CHARS = 1500
-        if len(prioritized_prompt) > MAX_CHARS:
-            print(f"⚠️ [WEBHOOK] Truncating prompt from {len(prioritized_prompt)} to {MAX_CHARS} chars")
-            prioritized_prompt = prioritized_prompt[:MAX_CHARS]
-
-        print(f"🎯 [WEBHOOK] Using prioritized prompt ({len(prioritized_prompt)} chars)")
-
-        result = await fetch_embedding(prioritized_prompt)
-        vector = result.get("vector")
         if not vector:
+            print("❌ [WEBHOOK] Vector generation failed (too short or empty?)")
             raise HTTPException(500, "Failed to generate vector")
 
+        # Create a preview string for debugging
+        debug_preview = (cv_text or "").replace("\x00", "")[:2000]
+        debug_text = f"search_document: Candidate: {profile.get('full_name')}\nCV Preview:\n{debug_preview}"
+
+        # 5. Save to DB
         supabase.table("candidate_profiles").update({
             "profile_vector": vector,
-            "candidate_text_vector": prioritized_prompt,
+            "candidate_text_vector": debug_text,
             "has_picture": has_picture
         }).eq("user_id", req.user_id).execute()
 
-        print(f"✅ [WEBHOOK] Vector updated for {req.user_id}")
+        print(f"✅ [WEBHOOK] Success for {req.user_id}")
         return {"status": "success", "user_id": req.user_id}
 
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ [WEBHOOK] Failed: {e}")
+        print(f"❌ [WEBHOOK] Critical Error: {e}")
         raise HTTPException(500, str(e))
