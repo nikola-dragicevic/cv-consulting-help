@@ -2,131 +2,270 @@
 """
 scripts/enrich_jobs_GPU.py
 
-Run job vector enrichment locally (GPU) without SSH/server.
+GPU/local job vector enrichment without SSH/server.
 - Pulls jobs from Supabase that are missing embeddings
-- Creates embeddings via local Ollama (GPU)
-- Writes embeddings back to Supabase job_ads.embedding
+- Builds a clean, prefix-aligned "search_document:" text
+- Chunks + embeds via Ollama /api/embed (batch)
+- Mean-pools chunk vectors + final L2 normalize
+- Writes embeddings back to Supabase: job_ads.embedding (+ embedding_text)
 
-Usage examples:
+Usage:
   python scripts/enrich_jobs_GPU.py
   python scripts/enrich_jobs_GPU.py --limit 2000 --batch 25
   python scripts/enrich_jobs_GPU.py --only-active true
-  python scripts/enrich_jobs_GPU.py --where "embedding.is.null,eq.true"   (optional advanced)
 """
 
 import os
+import re
+import json
 import math
 import time
 import argparse
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# --------- Defaults ----------
+# ---------------- Defaults / Env ----------------
 DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 DEFAULT_DIMS = int(os.getenv("DIMS", "768"))
-DEFAULT_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/embeddings")
 
-# Safe text length (your server uses 1500 chars; keep same for consistency)
-MAX_CHARS = int(os.getenv("MAX_CHARS", "1500"))
+# ✅ Prefer /api/embed for batch + normalized vectors
+DEFAULT_OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://localhost:11434/api/embed")
 
-# ---------- Helpers ----------
-def normalize_vector(vector: List[float]) -> List[float]:
-    if not vector:
+# Chunking (char-based heuristic)
+CHUNK_CHARS = int(os.getenv("JOB_CHUNK_CHARS", "1800"))
+OVERLAP_CHARS = int(os.getenv("JOB_OVERLAP_CHARS", "250"))
+MAX_CHUNKS = int(os.getenv("JOB_MAX_CHUNKS", "10"))
+
+# Optional cap for what you store in embedding_text (debug)
+DEBUG_TEXT_MAX_CHARS = int(os.getenv("JOB_EMBEDDING_TEXT_MAX_CHARS", "2500"))
+
+# Pull fields from job_ads
+SELECT_FIELDS = (
+    "id, headline, description_text, employer_name, company_name, location, city, "
+    "job_category, is_active, source_snapshot"
+)
+
+# ---------------- Vector helpers ----------------
+def l2_normalize(vec: List[float]) -> List[float]:
+    if not vec:
         return []
-    mag = math.sqrt(sum(x * x for x in vector))
+    mag = math.sqrt(sum(x * x for x in vec))
     if mag == 0:
-        return [0.0] * len(vector)
-    return [x / mag for x in vector]
+        return [0.0] * len(vec)
+    return [x / mag for x in vec]
 
-def build_job_text(row: Dict[str, Any]) -> str:
+def mean_pool(vectors: List[List[float]]) -> List[float]:
+    if not vectors:
+        return []
+    n = len(vectors)
+    out = [0.0] * len(vectors[0])
+    for v in vectors:
+        for i, x in enumerate(v):
+            out[i] += x
+    out = [x / n for x in out]
+    return out
+
+# ---------------- Text cleaning & building ----------------
+BOILERPLATE_PATTERNS = [
+    r"Öppen för alla.*",
+    r"Vi fokuserar på din kompetens.*",
+    r"Var ligger arbetsplatsen.*",
+    r"Postadress.*",
+    r"Ansök.*",
+    r"Sök jobbet.*",
+    r"Arbetsgivaren har tagit bort annonsen.*",
+]
+
+def clean_text(s: str) -> str:
     """
-    Adjust these fields to match your schema.
-    Typical job_ads fields: headline, description_text, company_name, location, occupation, etc.
+    Keep Unicode. Remove null bytes + common boilerplate + normalize whitespace.
     """
-    headline = (row.get("headline") or "").strip()
-    desc = (row.get("description_text") or "").strip()
-    company = (row.get("employer_name") or row.get("company_name") or "").strip()
-    location = (row.get("location") or row.get("city") or "").strip()
-    category = (row.get("job_category") or "").strip()
+    if not s:
+        return ""
+
+    s = s.replace("\x00", "")  # Postgres killer
+    s = s.replace("\r", "\n")
+
+    # Strip lines, remove empty
+    lines = [ln.strip() for ln in s.splitlines()]
+    lines = [ln for ln in lines if ln]
+
+    # Remove boilerplate lines
+    out_lines = []
+    for ln in lines:
+        drop = False
+        for pat in BOILERPLATE_PATTERNS:
+            if re.search(pat, ln, flags=re.IGNORECASE):
+                drop = True
+                break
+        if not drop:
+            out_lines.append(ln)
+
+    s = "\n".join(out_lines).strip()
+
+    # Collapse repeated spaces (keep newlines)
+    s = re.sub(r"[ \t]+", " ", s)
+    return s.strip()
+
+def extract_skills_from_snapshot(snapshot: Any) -> str:
+    """
+    Extract explicit skills from Arbetsförmedlingen snapshot structure if present.
+    Uses same idea as your server script: must/nice skills.
+    """
+    snap = snapshot
+    if isinstance(snap, str):
+        try:
+            snap = json.loads(snap)
+        except Exception:
+            snap = {}
+
+    if not isinstance(snap, dict):
+        return ""
+
+    must = snap.get("must_have", {}).get("skills", []) or []
+    nice = snap.get("nice_to_have", {}).get("skills", []) or []
+
+    must_labels = [x.get("label") for x in must if isinstance(x, dict) and x.get("label")]
+    nice_labels = [x.get("label") for x in nice if isinstance(x, dict) and x.get("label")]
 
     parts = []
+    if must_labels:
+        parts.append(f"Krav: {', '.join(must_labels)}.")
+    if nice_labels:
+        parts.append(f"Meriterande: {', '.join(nice_labels)}.")
+    return " ".join(parts).strip()
+
+def build_job_document_text(row: Dict[str, Any]) -> str:
+    """
+    Build the base job "document" string (single text), aligned with candidate vectors:
+    - MUST start with 'search_document:'
+    - Skills first, then headline/category/company/location, then description.
+    """
+    headline = (row.get("headline") or "").strip()
+    category = (row.get("job_category") or "").strip()
+    company = (row.get("employer_name") or row.get("company_name") or "").strip()
+    location = (row.get("location") or row.get("city") or "").strip()
+
+    desc_raw = row.get("description_text") or ""
+    desc = clean_text(desc_raw)
+
+    skills_block = extract_skills_from_snapshot(row.get("source_snapshot"))
+
+    parts: List[str] = []
+    parts.append("search_document:")
+
     if headline:
-        parts.append(f"Headline: {headline}")
-    if company:
-        parts.append(f"Company: {company}")
-    if location:
-        parts.append(f"Location: {location}")
+        parts.append(f"Jobb: {headline}")
     if category:
-        parts.append(f"Category: {category}")
+        parts.append(f"Kategori: {category}")
+    if company:
+        parts.append(f"Företag: {company}")
+    if location:
+        parts.append(f"Plats: {location}")
+
+    if skills_block:
+        parts.append("Krav & kompetens:")
+        parts.append(skills_block)
+
     if desc:
-        parts.append(f"Description:\n{desc}")
+        parts.append("Beskrivning:")
+        parts.append(desc)
 
     text = "\n".join(parts).strip()
-
-    # Remove null bytes (Postgres killer)
-    text = text.replace("\x00", "")
-
-    # Truncate to keep embedding stable + fast
-    if len(text) > MAX_CHARS:
-        text = text[:MAX_CHARS]
-
     return text
 
-async def fetch_embedding(
-    client: httpx.AsyncClient,
-    ollama_url: str,
+def chunk_text(text: str, chunk_chars: int, overlap_chars: int, max_chunks: int) -> List[str]:
+    text = text.strip()
+    if not text:
+        return []
+    chunks = []
+    start = 0
+    L = len(text)
+
+    while start < L and len(chunks) < max_chunks:
+        end = min(start + chunk_chars, L)
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= L:
+            break
+        start = max(0, end - overlap_chars)
+
+    return chunks
+
+def build_chunk_inputs(job_text: str, chunks: List[str]) -> List[str]:
+    """
+    Each chunk is still a search_document (doc-doc similarity space).
+    Keep prefix in each chunk to be safe/consistent.
+    """
+    inputs = []
+    for i, ch in enumerate(chunks, start=1):
+        inputs.append(f"{job_text.splitlines()[0]}\nChunk {i}/{len(chunks)}:\n{ch}")
+    return inputs
+
+# ---------------- Ollama embed (batch) ----------------
+async def ollama_embed_batch(
+    http_client: httpx.AsyncClient,
+    embed_url: str,
     model: str,
     dims: int,
-    text: str
-) -> Optional[List[float]]:
-    if not text or not text.strip():
-        return None
+    inputs: List[str],
+) -> List[List[float]]:
+    """
+    Calls Ollama /api/embed with batch input.
+    Expected: {"embeddings": [[...], ...]}
+    """
+    if not inputs:
+        return []
 
-    resp = await client.post(ollama_url, json={"model": model, "prompt": text})
+    resp = await http_client.post(embed_url, json={"model": model, "input": inputs})
     resp.raise_for_status()
     data = resp.json()
-    emb = data.get("embedding")
 
-    if not emb or len(emb) != dims:
-        got = len(emb) if emb else 0
-        raise ValueError(f"Ollama returned invalid dims. Expected {dims}, got {got}")
+    embs = data.get("embeddings")
+    if embs is None:
+        # Fallback support
+        single = data.get("embedding")
+        if single is not None:
+            embs = [single]
+        else:
+            raise ValueError(f"Unexpected Ollama response keys: {list(data.keys())}")
 
-    return normalize_vector(emb)
+    out = []
+    for e in embs:
+        if not e or len(e) != dims:
+            got = len(e) if e else 0
+            raise ValueError(f"Invalid embedding dims. Expected {dims}, got {got}")
+        out.append(e)
+    return out
 
+# ---------------- Supabase I/O ----------------
 def parse_bool(s: str) -> bool:
     return str(s).lower() in ("1", "true", "yes", "y", "on")
 
-# ---------- Supabase fetch/update ----------
 def fetch_jobs_to_enrich(
     supabase: Client,
     limit: int,
     only_active: Optional[bool] = None,
-    min_chars: int = 50,
+    min_chars: int = 80,
 ) -> List[Dict[str, Any]]:
-    """
-    Fetch jobs missing embeddings. Adjust filters to your schema.
-    """
-    q = supabase.table("job_ads").select(
-        "id, headline, description_text, employer_name, company_name, location, city, job_category, is_active"
-    ).is_("embedding", "null")
+    q = supabase.table("job_ads").select(SELECT_FIELDS).is_("embedding", "null")
 
     if only_active is True:
         q = q.eq("is_active", True)
     elif only_active is False:
         q = q.eq("is_active", False)
 
-    # If you want to avoid ultra-short descriptions, do it client-side.
-    # (PostgREST doesn't have great text length filters.)
     res = q.limit(limit).execute()
     rows = res.data or []
 
     filtered = []
     for r in rows:
-        text = build_job_text(r)
-        if len(text) >= min_chars:
+        base = build_job_document_text(r)
+        if len(base) >= min_chars:
             filtered.append(r)
     return filtered
 
@@ -134,15 +273,15 @@ def update_job_embedding(
     supabase: Client,
     job_id: Any,
     embedding: List[float],
+    embedding_text: str,
 ) -> None:
-    # You may have "embedding_updated_at" or similar; add if exists
     payload = {
         "embedding": embedding,
-        # "embedding_updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "embedding_text": embedding_text[:DEBUG_TEXT_MAX_CHARS],
     }
     supabase.table("job_ads").update(payload).eq("id", job_id).execute()
 
-# ---------- Main ----------
+# ---------------- Main ----------------
 async def main():
     load_dotenv()
 
@@ -151,14 +290,14 @@ async def main():
     if not supabase_url or not supabase_key:
         raise SystemExit("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in environment/.env")
 
-    parser = argparse.ArgumentParser(description="Enrich job embeddings locally via Ollama GPU.")
+    parser = argparse.ArgumentParser(description="Enrich job embeddings locally via Ollama GPU (/api/embed + chunk pooling).")
     parser.add_argument("--limit", type=int, default=1000, help="Max jobs to process this run.")
-    parser.add_argument("--batch", type=int, default=20, help="Batch size per round-trip.")
+    parser.add_argument("--batch", type=int, default=20, help="How many jobs to fetch per round-trip.")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Ollama embedding model.")
     parser.add_argument("--dims", type=int, default=DEFAULT_DIMS, help="Expected embedding dims.")
-    parser.add_argument("--ollama-url", type=str, default=DEFAULT_OLLAMA_URL, help="Ollama embeddings endpoint.")
+    parser.add_argument("--embed-url", type=str, default=DEFAULT_OLLAMA_EMBED_URL, help="Ollama /api/embed endpoint.")
     parser.add_argument("--only-active", type=str, default="true", help="true/false/empty to not filter.")
-    parser.add_argument("--min-chars", type=int, default=50, help="Skip jobs whose built text is shorter than this.")
+    parser.add_argument("--min-chars", type=int, default=80, help="Skip jobs whose built text is shorter than this.")
     parser.add_argument("--sleep", type=float, default=0.0, help="Sleep seconds between batches (throttle).")
     args = parser.parse_args()
 
@@ -170,16 +309,16 @@ async def main():
 
     supabase: Client = create_client(supabase_url, supabase_key)
 
-    # Quick health check for Ollama
-    print(f"🔧 Using Ollama: {args.ollama_url}")
-    print(f"🧠 Model: {args.model} | dims={args.dims} | MAX_CHARS={MAX_CHARS}")
+    print(f"🔧 Using Ollama embed: {args.embed_url}")
+    print(f"🧠 Model: {args.model} | dims={args.dims}")
     print(f"📦 Supabase: {supabase_url}")
+    print(f"🧩 Chunking: CHUNK_CHARS={CHUNK_CHARS} OVERLAP_CHARS={OVERLAP_CHARS} MAX_CHUNKS={MAX_CHUNKS}")
 
     processed = 0
     failures = 0
     start_time = time.time()
 
-    async with httpx.AsyncClient(timeout=120.0) as http_client:
+    async with httpx.AsyncClient(timeout=180.0) as http_client:
         while processed < args.limit:
             remaining = args.limit - processed
             fetch_n = min(args.batch, remaining)
@@ -188,7 +327,7 @@ async def main():
                 supabase,
                 limit=fetch_n,
                 only_active=only_active,
-                min_chars=args.min_chars
+                min_chars=args.min_chars,
             )
 
             if not rows:
@@ -200,15 +339,37 @@ async def main():
             for r in rows:
                 job_id = r.get("id")
                 try:
-                    text = build_job_text(r)
-                    emb = await fetch_embedding(http_client, args.ollama_url, args.model, args.dims, text)
-                    if not emb:
-                        print(f"⚠️  Skip (empty text): {job_id}")
+                    base_text = build_job_document_text(r)
+
+                    # Chunk + embed + pool
+                    chunks = chunk_text(base_text, CHUNK_CHARS, OVERLAP_CHARS, MAX_CHUNKS)
+                    if not chunks:
+                        print(f"⚠️  Skip (no chunks): {job_id}")
                         failures += 1
                         continue
 
-                    update_job_embedding(supabase, job_id, emb)
+                    # Each chunk becomes an input
+                    inputs = build_chunk_inputs(base_text, chunks)
+
+                    chunk_vectors = await ollama_embed_batch(
+                        http_client,
+                        embed_url=args.embed_url,
+                        model=args.model,
+                        dims=args.dims,
+                        inputs=inputs,
+                    )
+
+                    pooled = mean_pool(chunk_vectors)
+                    pooled = l2_normalize(pooled)
+
+                    if not pooled or len(pooled) != args.dims:
+                        print(f"⚠️  Skip (bad pooled vector): {job_id}")
+                        failures += 1
+                        continue
+
+                    update_job_embedding(supabase, job_id, pooled, base_text)
                     processed += 1
+
                     if processed % 25 == 0:
                         elapsed = time.time() - start_time
                         rate = processed / elapsed if elapsed > 0 else 0
