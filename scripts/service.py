@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from scripts.update_jobs import run_job_update
 from scripts.enrich_jobs import enrich_job_vectors
 from scripts.geocode_jobs import geocode_new_jobs
+from scripts.sync_active_jobs import clean_stale_jobs  # <--- Add this
 
 # ✅ FIX: Import the correct new function
 from scripts.generate_candidate_vector import build_candidate_vector
@@ -69,9 +70,18 @@ async def fetch_simple_embedding(text: str):
 def run_daily_pipeline():
     print(f"🚀 [CRON] Starting daily job pipeline: {time.ctime()}")
     try:
+        # 1. Sync Active IDs (Removes stale jobs FIRST)
+        clean_stale_jobs()
+        
+        # 2. Fetch new jobs (Adds new jobs)
         run_job_update()
+        
+        # 3. Enrich new jobs
         asyncio.run(enrich_job_vectors())
+        
+        # 4. Geocode
         asyncio.run(geocode_new_jobs())
+        
         print("✅ [CRON] Pipeline finished successfully")
     except Exception as e:
         print(f"❌ [CRON] Pipeline failed: {e}")
