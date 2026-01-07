@@ -2,53 +2,54 @@
 """
 scripts/enrich_jobs_GPU.py
 
-GPU/local job vector enrichment without SSH/server.
-- Pulls jobs from Supabase that are missing embeddings
-- Builds a clean, prefix-aligned "search_document:" text
-- Chunks + embeds via Ollama /api/embed (batch)
-- Mean-pools chunk vectors + final L2 normalize
-- Writes embeddings back to Supabase: job_ads.embedding (+ embedding_text)
-
-Usage:
-  python scripts/enrich_jobs_GPU.py
-  python scripts/enrich_jobs_GPU.py --limit 2000 --batch 25
-  python scripts/enrich_jobs_GPU.py --only-active true
+High-quality GPU enrichment (manual local run).
+- Fetch jobs marked for GPU upgrade (embedding_needs_gpu = true)
+- Build high-signal extraction (snapshot-first, section-aware, noise removal)
+- Chunked pooling via Ollama /api/embed (batch input)
+- Overwrite embedding only when GPU succeeds
+- Mark embedding_quality='gpu_final' and embedding_needs_gpu=false on success
 """
 
 import os
-import re
+import sys
 import json
 import math
 import time
 import argparse
-from typing import Any, Dict, List, Optional
+import asyncio
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# ---------------- Defaults / Env ----------------
+
+# ------------------- Env / Defaults -------------------
+load_dotenv()
+
 DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 DEFAULT_DIMS = int(os.getenv("DIMS", "768"))
 
-# ✅ Prefer /api/embed for batch + normalized vectors
+# Local GPU Ollama
 DEFAULT_OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://localhost:11434/api/embed")
 
-# Chunking (char-based heuristic)
-CHUNK_CHARS = int(os.getenv("JOB_CHUNK_CHARS", "1800"))
-OVERLAP_CHARS = int(os.getenv("JOB_OVERLAP_CHARS", "250"))
-MAX_CHUNKS = int(os.getenv("JOB_MAX_CHUNKS", "10"))
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
-# Optional cap for what you store in embedding_text (debug)
-DEBUG_TEXT_MAX_CHARS = int(os.getenv("JOB_EMBEDDING_TEXT_MAX_CHARS", "2500"))
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+    raise SystemExit("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in environment/.env")
 
-# Pull fields from job_ads
-SELECT_FIELDS = (
-    "id, headline, description_text, employer_name, company_name, location, city, "
-    "job_category, is_active, source_snapshot"
-)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-# ---------------- Vector helpers ----------------
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+
+# ------------------- Vector helpers -------------------
 def l2_normalize(vec: List[float]) -> List[float]:
     if not vec:
         return []
@@ -57,79 +58,87 @@ def l2_normalize(vec: List[float]) -> List[float]:
         return [0.0] * len(vec)
     return [x / mag for x in vec]
 
-def mean_pool(vectors: List[List[float]]) -> List[float]:
+
+def mean_pool(vectors: List[List[float]], dims: int) -> List[float]:
     if not vectors:
-        return []
+        return [0.0] * dims
+    out = [0.0] * dims
     n = len(vectors)
-    out = [0.0] * len(vectors[0])
     for v in vectors:
         for i, x in enumerate(v):
             out[i] += x
-    out = [x / n for x in out]
+    return [x / n for x in out]
+
+
+async def ollama_embed_batch(
+    client: httpx.AsyncClient,
+    ollama_embed_url: str,
+    model: str,
+    dims: int,
+    inputs: List[str],
+) -> List[List[float]]:
+    """
+    Ollama /api/embed batch.
+    Expect: {"embeddings": [[...],[...]]}
+    """
+    if not inputs:
+        return []
+
+    resp = await client.post(
+        ollama_embed_url,
+        json={"model": model, "input": inputs},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    embs = data.get("embeddings")
+    if embs is None:
+        single = data.get("embedding")
+        if single is not None:
+            embs = [single]
+        else:
+            raise ValueError(f"Unexpected /api/embed response keys: {list(data.keys())}")
+
+    out: List[List[float]] = []
+    for e in embs:
+        if not e or len(e) != dims:
+            got = len(e) if e else 0
+            raise ValueError(f"Invalid embedding dims. Expected {dims}, got {got}")
+        out.append(e)
+
     return out
 
-# ---------------- Text cleaning & building ----------------
-BOILERPLATE_PATTERNS = [
-    r"Öppen för alla.*",
-    r"Vi fokuserar på din kompetens.*",
-    r"Var ligger arbetsplatsen.*",
-    r"Postadress.*",
-    r"Ansök.*",
-    r"Sök jobbet.*",
-    r"Arbetsgivaren har tagit bort annonsen.*",
-]
 
-def clean_text(s: str) -> str:
-    """
-    Keep Unicode. Remove null bytes + common boilerplate + normalize whitespace.
-    """
-    if not s:
-        return ""
-
-    s = s.replace("\x00", "")  # Postgres killer
-    s = s.replace("\r", "\n")
-
-    # Strip lines, remove empty
-    lines = [ln.strip() for ln in s.splitlines()]
-    lines = [ln for ln in lines if ln]
-
-    # Remove boilerplate lines
-    out_lines = []
-    for ln in lines:
-        drop = False
-        for pat in BOILERPLATE_PATTERNS:
-            if re.search(pat, ln, flags=re.IGNORECASE):
-                drop = True
-                break
-        if not drop:
-            out_lines.append(ln)
-
-    s = "\n".join(out_lines).strip()
-
-    # Collapse repeated spaces (keep newlines)
-    s = re.sub(r"[ \t]+", " ", s)
-    return s.strip()
-
-def extract_skills_from_snapshot(snapshot: Any) -> str:
-    """
-    Extract explicit skills from Arbetsförmedlingen snapshot structure if present.
-    Uses same idea as your server script: must/nice skills.
-    """
-    snap = snapshot
-    if isinstance(snap, str):
+# ------------------- Snapshot helpers -------------------
+def safe_json_loads(maybe_json: Any) -> dict:
+    if isinstance(maybe_json, dict):
+        return maybe_json
+    if isinstance(maybe_json, str) and maybe_json.strip():
         try:
-            snap = json.loads(snap)
+            return json.loads(maybe_json)
         except Exception:
-            snap = {}
+            return {}
+    return {}
 
-    if not isinstance(snap, dict):
-        return ""
 
-    must = snap.get("must_have", {}).get("skills", []) or []
-    nice = snap.get("nice_to_have", {}).get("skills", []) or []
+def extract_desc_from_snapshot(snap: dict, fallback_desc: str) -> Tuple[str, str]:
+    desc_obj = snap.get("description") or {}
+    if isinstance(desc_obj, dict):
+        tf = desc_obj.get("text_formatted")
+        if isinstance(tf, str) and tf.strip():
+            return tf, "snapshot.description.text_formatted"
+        t = desc_obj.get("text")
+        if isinstance(t, str) and t.strip():
+            return t, "snapshot.description.text"
+    return (fallback_desc or ""), "row.description_text"
 
-    must_labels = [x.get("label") for x in must if isinstance(x, dict) and x.get("label")]
-    nice_labels = [x.get("label") for x in nice if isinstance(x, dict) and x.get("label")]
+
+def extract_skills_from_snapshot(snap: dict) -> str:
+    must = snap.get("must_have", {}).get("skills", []) if isinstance(snap.get("must_have"), dict) else []
+    nice = snap.get("nice_to_have", {}).get("skills", []) if isinstance(snap.get("nice_to_have"), dict) else []
+
+    must_labels = [s.get("label") for s in must if isinstance(s, dict) and s.get("label")]
+    nice_labels = [s.get("label") for s in nice if isinstance(s, dict) and s.get("label")]
 
     parts = []
     if must_labels:
@@ -138,257 +147,383 @@ def extract_skills_from_snapshot(snapshot: Any) -> str:
         parts.append(f"Meriterande: {', '.join(nice_labels)}.")
     return " ".join(parts).strip()
 
-def build_job_document_text(row: Dict[str, Any]) -> str:
-    """
-    Build the base job "document" string (single text), aligned with candidate vectors:
-    - MUST start with 'search_document:'
-    - Skills first, then headline/category/company/location, then description.
-    """
+
+# ------------------- Cleaning + Sectionizing -------------------
+NOISE_LINE_PATTERNS = [
+    r"Öppen för alla",
+    r"Vi fokuserar på din kompetens",
+    r"Var ligger arbetsplatsen",
+    r"Postadress",
+    r"Ansök",
+    r"Sök jobbet",
+    r"Arbetsgivaren har tagit bort annonsen",
+    r"Kontakt(uppgifter)?",
+    r"Facklig(a)?",
+    r"Intervjuer sker löpande",
+    r"Urval sker löpande",
+    r"Välkommen med din ansökan",
+    r"GDPR",
+    r"Rekryteringsprocess",
+    r"Vi undanber oss",
+    r"Vi undanber oss kontakt från",
+    r"Samtycke",
+    r"Personuppgifter",
+]
+
+KEEP_SECTION_PATTERNS = [
+    (r"^arbetsuppgifter\b", "arbetsuppgifter"),
+    (r"^dina arbetsuppgifter\b", "arbetsuppgifter"),
+    (r"^arbetsbeskrivning\b", "arbetsuppgifter"),
+    (r"^huvudsakliga arbetsuppgifter\b", "arbetsuppgifter"),
+    (r"^kvalifikationer\b", "kvalifikationer"),
+    (r"^krav\b", "krav"),
+    (r"^kravprofil\b", "krav"),
+    (r"^vi söker\b", "krav"),
+    (r"^meriterande\b", "meriterande"),
+    (r"^kompetens\b", "kompetens"),
+    (r"^profil\b", "profil"),
+    (r"^personliga egenskaper\b", "profil"),
+    (r"^om tjänsten\b", "om_tjänsten"),
+    (r"^om rollen\b", "om_tjänsten"),
+    (r"^villkor\b", "villkor"),
+    (r"^anställningsform\b", "villkor"),
+    (r"^om arbetsplatsen\b", "om_arbetsplatsen"),
+    (r"^om företaget\b", "om_arbetsplatsen"),
+    (r"^vi erbjuder\b", "erbjudande"),
+    (r"^erbjuder vi\b", "erbjudande"),
+]
+
+DROP_SECTION_PATTERNS = [
+    r"^ansökan\b",
+    r"^ansök( idag)?\b",
+    r"^så här ansöker du\b",
+    r"^kontakt\b",
+    r"^kontaktuppgifter\b",
+    r"^facklig(a)?\b",
+    r"^övrigt\b",
+    r"^rekryteringsprocess\b",
+]
+
+
+def clean_text_preserve_newlines(s: str) -> Tuple[str, int]:
+    if not s:
+        return "", 0
+    s = s.replace("\x00", "").replace("\r", "\n")
+
+    removed = 0
+    out_lines: List[str] = []
+    for line in s.splitlines():
+        ln = line.strip()
+        if not ln:
+            continue
+        if any(re.search(p, ln, flags=re.I) for p in NOISE_LINE_PATTERNS):
+            removed += 1
+            continue
+        out_lines.append(ln)
+
+    cleaned = "\n".join(out_lines).strip()
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    return cleaned, removed
+
+
+def sectionize_text(cleaned: str) -> Tuple[Dict[str, str], dict]:
+    if not cleaned:
+        return {}, {"had_headings": False, "kept_sections": []}
+
+    lines = cleaned.splitlines()
+    sections: Dict[str, List[str]] = {}
+    current_key: Optional[str] = None
+    had_heading = False
+
+    keep_compiled = [(re.compile(pat, re.I), key) for pat, key in KEEP_SECTION_PATTERNS]
+    drop_compiled = [re.compile(pat, re.I) for pat in DROP_SECTION_PATTERNS]
+
+    def detect_heading(line: str) -> Tuple[Optional[str], Optional[str]]:
+        for rx in drop_compiled:
+            if rx.search(line):
+                return "drop", None
+        for rx, key in keep_compiled:
+            if rx.search(line):
+                return "keep", key
+        return None, None
+
+    kept = set()
+
+    for ln in lines:
+        kind, key = detect_heading(ln)
+        if kind == "drop":
+            had_heading = True
+            current_key = None
+            continue
+        if kind == "keep" and key:
+            had_heading = True
+            current_key = key
+            kept.add(key)
+            sections.setdefault(key, [])
+            continue
+
+        if current_key:
+            sections[current_key].append(ln)
+
+    out: Dict[str, str] = {}
+    for k, vlines in sections.items():
+        txt = "\n".join(vlines).strip()
+        if txt:
+            out[k] = txt
+
+    return out, {"had_headings": had_heading, "kept_sections": sorted(list(kept))}
+
+
+def build_job_document(
+    row: Dict[str, Any],
+    desc_chars: int,
+    max_total_chars: int,
+) -> Tuple[str, dict]:
+    snap = safe_json_loads(row.get("source_snapshot"))
+
     headline = (row.get("headline") or "").strip()
     category = (row.get("job_category") or "").strip()
-    company = (row.get("employer_name") or row.get("company_name") or "").strip()
-    location = (row.get("location") or row.get("city") or "").strip()
+    city = (row.get("city") or row.get("location") or "").strip()
+    company = (row.get("company") or "").strip()
 
-    desc_raw = row.get("description_text") or ""
-    desc = clean_text(desc_raw)
+    fallback_desc = row.get("description_text") or ""
+    desc_raw, desc_source = extract_desc_from_snapshot(snap, fallback_desc)
 
-    skills_block = extract_skills_from_snapshot(row.get("source_snapshot"))
+    cleaned_desc, removed_lines = clean_text_preserve_newlines(desc_raw)
+    if cleaned_desc:
+        cleaned_desc = cleaned_desc[:desc_chars]
 
-    parts: List[str] = []
-    parts.append("search_document:")
+    skills_struct = extract_skills_from_snapshot(snap)
+    sections, sec_debug = sectionize_text(cleaned_desc)
 
-    if headline:
-        parts.append(f"Jobb: {headline}")
+    parts: List[str] = ["search_document:"]
+    parts.append(f"Jobb: {headline}" if headline else "Jobb:")
+    if company:
+        parts.append(f"Arbetsgivare: {company}")
     if category:
         parts.append(f"Kategori: {category}")
-    if company:
-        parts.append(f"Företag: {company}")
-    if location:
-        parts.append(f"Plats: {location}")
+    if city:
+        parts.append(f"Plats: {city}")
 
-    if skills_block:
-        parts.append("Krav & kompetens:")
-        parts.append(skills_block)
+    if skills_struct:
+        parts.append("Kompetens:")
+        parts.append(skills_struct)
 
-    if desc:
-        parts.append("Beskrivning:")
-        parts.append(desc)
+    # Prefer structured sections
+    if sec_debug.get("had_headings") and sections:
+        for key, label in [
+            ("krav", "Krav:"),
+            ("kvalifikationer", "Kvalifikationer:"),
+            ("arbetsuppgifter", "Arbetsuppgifter:"),
+            ("meriterande", "Meriterande:"),
+            ("profil", "Profil:"),
+            ("villkor", "Villkor:"),
+            ("erbjudande", "Vi erbjuder:"),
+            ("om_tjänsten", "Om tjänsten:"),
+            ("om_arbetsplatsen", "Om arbetsplatsen:"),
+        ]:
+            txt = sections.get(key)
+            if txt:
+                parts.append(label)
+                parts.append(txt)
+    else:
+        if cleaned_desc:
+            parts.append("Beskrivning:")
+            parts.append(cleaned_desc)
 
-    text = "\n".join(parts).strip()
-    return text
+    final_text = "\n".join(parts).strip()
+    if len(final_text) > max_total_chars:
+        final_text = final_text[:max_total_chars]
+
+    debug = {
+        "desc_source": desc_source,
+        "noise_removed_lines": removed_lines,
+        **sec_debug,
+        "gpu_caps": {
+            "max_total_chars": max_total_chars,
+            "desc_chars": desc_chars,
+        },
+    }
+    return final_text, debug
+
 
 def chunk_text(text: str, chunk_chars: int, overlap_chars: int, max_chunks: int) -> List[str]:
-    text = text.strip()
+    text = (text or "").strip()
     if not text:
         return []
-    chunks = []
+    chunks: List[str] = []
     start = 0
     L = len(text)
-
     while start < L and len(chunks) < max_chunks:
         end = min(start + chunk_chars, L)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
+        ch = text[start:end].strip()
+        if ch:
+            chunks.append(ch)
         if end >= L:
             break
         start = max(0, end - overlap_chars)
-
     return chunks
 
-def build_chunk_inputs(job_text: str, chunks: List[str]) -> List[str]:
-    """
-    Each chunk is still a search_document (doc-doc similarity space).
-    Keep prefix in each chunk to be safe/consistent.
-    """
-    inputs = []
-    for i, ch in enumerate(chunks, start=1):
-        inputs.append(f"{job_text.splitlines()[0]}\nChunk {i}/{len(chunks)}:\n{ch}")
-    return inputs
 
-# ---------------- Ollama embed (batch) ----------------
-async def ollama_embed_batch(
-    http_client: httpx.AsyncClient,
-    embed_url: str,
-    model: str,
-    dims: int,
-    inputs: List[str],
-) -> List[List[float]]:
-    """
-    Calls Ollama /api/embed with batch input.
-    Expected: {"embeddings": [[...], ...]}
-    """
-    if not inputs:
-        return []
+def build_chunk_inputs(job_id: str, chunks: List[str]) -> List[str]:
+    return [f"search_document: JobID: {job_id}\nChunk {i}/{len(chunks)}:\n{ch}" for i, ch in enumerate(chunks, start=1)]
 
-    resp = await http_client.post(embed_url, json={"model": model, "input": inputs})
-    resp.raise_for_status()
-    data = resp.json()
 
-    embs = data.get("embeddings")
-    if embs is None:
-        # Fallback support
-        single = data.get("embedding")
-        if single is not None:
-            embs = [single]
-        else:
-            raise ValueError(f"Unexpected Ollama response keys: {list(data.keys())}")
+# ------------------- Column detection (safe) -------------------
+def table_has_column(table: str, col: str) -> bool:
+    try:
+        supabase.table(table).select(col).limit(1).execute()
+        return True
+    except Exception:
+        return False
 
-    out = []
-    for e in embs:
-        if not e or len(e) != dims:
-            got = len(e) if e else 0
-            raise ValueError(f"Invalid embedding dims. Expected {dims}, got {got}")
-        out.append(e)
-    return out
 
-# ---------------- Supabase I/O ----------------
-def parse_bool(s: str) -> bool:
-    return str(s).lower() in ("1", "true", "yes", "y", "on")
+HAS_QUALITY = table_has_column("job_ads", "embedding_quality")
+HAS_NEEDS_GPU = table_has_column("job_ads", "embedding_needs_gpu")
+HAS_MODEL = table_has_column("job_ads", "embedding_model")
+HAS_VERSION = table_has_column("job_ads", "embedding_version")
+HAS_PARSE_DEBUG = table_has_column("job_ads", "parse_debug")
+HAS_ERROR = table_has_column("job_ads", "embedding_error")
 
-def fetch_jobs_to_enrich(
-    supabase: Client,
-    limit: int,
-    only_active: Optional[bool] = None,
-    min_chars: int = 80,
-) -> List[Dict[str, Any]]:
-    q = supabase.table("job_ads").select(SELECT_FIELDS).is_("embedding", "null")
 
-    if only_active is True:
-        q = q.eq("is_active", True)
-    elif only_active is False:
-        q = q.eq("is_active", False)
+# ------------------- Supabase fetch/update -------------------
+def fetch_jobs_to_upgrade(supabase: Client, limit: int) -> List[Dict[str, Any]]:
+    q = supabase.table("job_ads").select("*")
+
+    if HAS_NEEDS_GPU:
+        q = q.eq("embedding_needs_gpu", True)
+    elif HAS_QUALITY:
+        q = q.neq("embedding_quality", "gpu_final")
+    else:
+        # Fallback: anything with embedding present or missing, your call — default: only those with embeddings
+        q = q.not_.is_("embedding", "null")
 
     res = q.limit(limit).execute()
-    rows = res.data or []
+    return res.data or []
 
-    filtered = []
-    for r in rows:
-        base = build_job_document_text(r)
-        if len(base) >= min_chars:
-            filtered.append(r)
-    return filtered
 
-def update_job_embedding(
-    supabase: Client,
+def update_job_gpu_success(
     job_id: Any,
     embedding: List[float],
     embedding_text: str,
+    debug: dict,
+    model: str,
 ) -> None:
-    payload = {
+    payload: Dict[str, Any] = {
         "embedding": embedding,
-        "embedding_text": embedding_text[:DEBUG_TEXT_MAX_CHARS],
+        "embedding_text": embedding_text,
     }
+
+    if HAS_QUALITY:
+        payload["embedding_quality"] = "gpu_final"
+    if HAS_NEEDS_GPU:
+        payload["embedding_needs_gpu"] = False
+    if HAS_MODEL:
+        payload["embedding_model"] = model
+    if HAS_VERSION:
+        payload["embedding_version"] = 2
+    if HAS_PARSE_DEBUG:
+        payload["parse_debug"] = debug
+    if HAS_ERROR:
+        payload["embedding_error"] = None
+
     supabase.table("job_ads").update(payload).eq("id", job_id).execute()
 
-# ---------------- Main ----------------
+
+def update_job_gpu_error(job_id: Any, msg: str) -> None:
+    if not HAS_ERROR:
+        return
+    supabase.table("job_ads").update({"embedding_error": msg[:800]}).eq("id", job_id).execute()
+
+
+# ------------------- Main -------------------
+def parse_bool(s: str) -> bool:
+    return str(s).lower() in ("1", "true", "yes", "y", "on")
+
+
 async def main():
-    load_dotenv()
-
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-    if not supabase_url or not supabase_key:
-        raise SystemExit("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in environment/.env")
-
-    parser = argparse.ArgumentParser(description="Enrich job embeddings locally via Ollama GPU (/api/embed + chunk pooling).")
-    parser.add_argument("--limit", type=int, default=1000, help="Max jobs to process this run.")
-    parser.add_argument("--batch", type=int, default=20, help="How many jobs to fetch per round-trip.")
+    parser = argparse.ArgumentParser(description="GPU job enrichment (upgrade CPU embeddings to gpu_final).")
+    parser.add_argument("--limit", type=int, default=2000, help="Max jobs to process this run.")
+    parser.add_argument("--batch", type=int, default=32, help="How many jobs to fetch per loop.")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Ollama embedding model.")
     parser.add_argument("--dims", type=int, default=DEFAULT_DIMS, help="Expected embedding dims.")
-    parser.add_argument("--embed-url", type=str, default=DEFAULT_OLLAMA_EMBED_URL, help="Ollama /api/embed endpoint.")
-    parser.add_argument("--only-active", type=str, default="true", help="true/false/empty to not filter.")
-    parser.add_argument("--min-chars", type=int, default=80, help="Skip jobs whose built text is shorter than this.")
-    parser.add_argument("--sleep", type=float, default=0.0, help="Sleep seconds between batches (throttle).")
+    parser.add_argument("--ollama-embed-url", type=str, default=DEFAULT_OLLAMA_EMBED_URL, help="Ollama /api/embed endpoint.")
+    parser.add_argument("--desc-chars", type=int, default=int(os.getenv("JOB_GPU_DESC_CHARS", "3500")), help="Description cap for GPU.")
+    parser.add_argument("--max-total-chars", type=int, default=int(os.getenv("JOB_GPU_MAX_TOTAL_CHARS", "8000")), help="Final doc cap.")
+    parser.add_argument("--chunk-chars", type=int, default=int(os.getenv("JOB_GPU_CHUNK_CHARS", "1400")), help="Chunk size.")
+    parser.add_argument("--overlap-chars", type=int, default=int(os.getenv("JOB_GPU_OVERLAP_CHARS", "200")), help="Overlap size.")
+    parser.add_argument("--max-chunks", type=int, default=int(os.getenv("JOB_GPU_MAX_CHUNKS", "10")), help="Max chunks pooled per job.")
+    parser.add_argument("--sleep", type=float, default=0.0, help="Sleep seconds between loops (throttle).")
     args = parser.parse_args()
 
-    only_active: Optional[bool]
-    if args.only_active.strip() == "":
-        only_active = None
-    else:
-        only_active = parse_bool(args.only_active)
-
-    supabase: Client = create_client(supabase_url, supabase_key)
-
-    print(f"🔧 Using Ollama embed: {args.embed_url}")
-    print(f"🧠 Model: {args.model} | dims={args.dims}")
-    print(f"📦 Supabase: {supabase_url}")
-    print(f"🧩 Chunking: CHUNK_CHARS={CHUNK_CHARS} OVERLAP_CHARS={OVERLAP_CHARS} MAX_CHUNKS={MAX_CHUNKS}")
+    print(f"🧠 GPU Enrich (manual)")
+    print(f"   Supabase: {SUPABASE_URL}")
+    print(f"   Ollama:   {args.ollama_embed_url}")
+    print(f"   Model:    {args.model} dims={args.dims}")
+    print(f"   Caps:     desc={args.desc_chars} doc={args.max_total_chars}")
+    print(f"   Chunks:   max={args.max_chunks} size={args.chunk_chars} overlap={args.overlap_chars}")
+    print(f"   Will overwrite embedding only on success.\n")
 
     processed = 0
     failures = 0
-    start_time = time.time()
+    started = time.time()
 
     async with httpx.AsyncClient(timeout=180.0) as http_client:
         while processed < args.limit:
             remaining = args.limit - processed
             fetch_n = min(args.batch, remaining)
 
-            rows = fetch_jobs_to_enrich(
-                supabase,
-                limit=fetch_n,
-                only_active=only_active,
-                min_chars=args.min_chars,
-            )
-
+            rows = fetch_jobs_to_upgrade(supabase, fetch_n)
             if not rows:
-                print("✅ No more jobs missing embeddings (or all remaining are too short).")
+                print("✅ No more jobs flagged for GPU upgrade.")
                 break
 
-            print(f"\n➡️  Processing batch: {len(rows)} jobs (processed={processed}/{args.limit})")
+            print(f"➡️  Processing batch: {len(rows)} jobs (done={processed}/{args.limit})")
 
-            for r in rows:
-                job_id = r.get("id")
+            for row in rows:
+                job_id = row.get("id")
+                headline = (row.get("headline") or "")[:60]
                 try:
-                    base_text = build_job_document_text(r)
+                    doc, debug = build_job_document(row, args.desc_chars, args.max_total_chars)
 
-                    # Chunk + embed + pool
-                    chunks = chunk_text(base_text, CHUNK_CHARS, OVERLAP_CHARS, MAX_CHUNKS)
+                    chunks = chunk_text(doc, args.chunk_chars, args.overlap_chars, args.max_chunks)
                     if not chunks:
-                        print(f"⚠️  Skip (no chunks): {job_id}")
-                        failures += 1
-                        continue
+                        raise ValueError("No chunks built from document")
 
-                    # Each chunk becomes an input
-                    inputs = build_chunk_inputs(base_text, chunks)
+                    inputs = build_chunk_inputs(str(job_id), chunks)
+                    vecs = await ollama_embed_batch(http_client, args.ollama_embed_url, args.model, args.dims, inputs)
 
-                    chunk_vectors = await ollama_embed_batch(
-                        http_client,
-                        embed_url=args.embed_url,
-                        model=args.model,
-                        dims=args.dims,
-                        inputs=inputs,
-                    )
-
-                    pooled = mean_pool(chunk_vectors)
+                    pooled = mean_pool(vecs, args.dims)
                     pooled = l2_normalize(pooled)
 
-                    if not pooled or len(pooled) != args.dims:
-                        print(f"⚠️  Skip (bad pooled vector): {job_id}")
-                        failures += 1
-                        continue
-
-                    update_job_embedding(supabase, job_id, pooled, base_text)
+                    update_job_gpu_success(job_id, pooled, doc, debug, args.model)
                     processed += 1
 
-                    if processed % 25 == 0:
-                        elapsed = time.time() - start_time
+                    if processed % 50 == 0:
+                        elapsed = time.time() - started
                         rate = processed / elapsed if elapsed > 0 else 0
                         print(f"📈 Progress: {processed} jobs | {rate:.2f} jobs/sec")
 
                 except Exception as e:
                     failures += 1
-                    print(f"❌ Failed job {job_id}: {e}")
+                    msg = str(e)
+                    print(f"❌ Failed {job_id} ({headline}): {msg}")
+                    try:
+                        update_job_gpu_error(job_id, msg)
+                    except Exception:
+                        pass
+                    # IMPORTANT: we do NOT delete/reset CPU embedding; job remains cpu_quick unless overwritten later.
 
             if args.sleep > 0:
                 time.sleep(args.sleep)
 
-    elapsed = time.time() - start_time
+    elapsed = time.time() - started
     rate = processed / elapsed if elapsed > 0 else 0
     print("\n--- DONE ---")
-    print(f"✅ Embedded: {processed}")
-    print(f"❌ Failures: {failures}")
-    print(f"⏱️  Time: {elapsed:.1f}s | Rate: {rate:.2f} jobs/sec")
+    print(f"✅ Upgraded to GPU: {processed}")
+    print(f"❌ Failures:       {failures}")
+    print(f"⏱️  Time:          {elapsed:.1f}s | Rate: {rate:.2f} jobs/sec")
+
 
 if __name__ == "__main__":
-    import asyncio as _asyncio
-    _asyncio.run(main())
+    asyncio.run(main())
