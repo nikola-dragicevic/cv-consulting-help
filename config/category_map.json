@@ -1,0 +1,62 @@
+{
+  "IT": {
+    "fields": ["Data/IT"],
+    "groups": [],
+    "roles_contains": ["Systemutvecklare", "Mjukvaruutvecklare", "Programmerare", "DevOps", "Testare", "IT-arkitekt"]
+  },
+  "Software Development": {
+    "fields": ["Data/IT"],
+    "groups": [],
+    "roles_contains": ["Systemutvecklare", "Backend", "Frontend", "Fullstack", "Software Engineer", "Developer"]
+  },
+  "Automation / Industrial": {
+    "fields": ["Tekniskt arbete", "Industriell tillverkning"],
+    "groups": [],
+    "roles_contains": ["Automation", "Drifttekniker", "Underhåll", "Mekaniker", "Elektriker", "Industr"]
+  },
+  "Technical Support": {
+    "fields": ["Data/IT", "Tekniskt arbete"],
+    "groups": [],
+    "roles_contains": ["Support", "Helpdesk", "Tekniker", "Fältsupport"]
+  },
+  "Logistics / Operations": {
+    "fields": ["Transport, logistik och inköp"],
+    "groups": [],
+    "roles_contains": ["Logistik", "Lager", "Terminal", "Warehouse", "Distribution"]
+  },
+  "Management": {
+    "fields": [],
+    "groups": [],
+    "roles_contains": ["Chef", "Manager", "Head", "Director", "Lead", "Teamleader"]
+  },
+  "HR": {
+    "fields": [],
+    "groups": [],
+    "roles_contains": ["HR", "Recruit", "Talent", "Employer Branding", "People"]
+  },
+  "Finance": {
+    "fields": [],
+    "groups": [],
+    "roles_contains": ["Finance", "Controller", "Ekonom", "CFO", "Accounting"]
+  },
+  "Legal": {
+    "fields": ["Administration, ekonomi, juridik"],
+    "groups": [],
+    "roles_contains": ["Legal", "Jurist", "Advokat", "Counsel"]
+  },
+  "Sales / Marketing": {
+    "fields": [],
+    "groups": [],
+    "roles_contains": ["Sales", "Sälj", "Marketing", "Content", "Account Manager"]
+  },
+  "Healthcare": {
+    "fields": ["Hälso- och sjukvård"],
+    "groups": [],
+    "roles_contains": ["Sjuk", "Nurse", "Läkare"]
+  },
+  "Education": {
+    "fields": ["Pedagogiskt arbete"],
+    "groups": [],
+    "roles_contains": ["Lärare", "Teacher", "Tutor", "Utbild"]
+  }
+}

@@ -268,7 +268,9 @@ def build_job_document(row: Dict[str, Any]) -> Tuple[str, dict]:
     snap = safe_json_loads(row.get("source_snapshot"))
 
     headline = (row.get("headline") or "").strip()
-    category = (row.get("job_category") or "").strip()
+    field = (row.get("occupation_field_label") or "").strip()
+    group = (row.get("occupation_group_label") or "").strip()
+    role  = (row.get("occupation_label") or row.get("job_category") or "").strip()
     city = (row.get("city") or row.get("location") or "").strip()
     company = (row.get("company") or "").strip()
 
@@ -286,8 +288,12 @@ def build_job_document(row: Dict[str, Any]) -> Tuple[str, dict]:
     parts.append(f"Jobb: {headline}" if headline else "Jobb:")
     if company:
         parts.append(f"Arbetsgivare: {company}")
-    if category:
-        parts.append(f"Kategori: {category}")
+    if field:
+        parts.append(f"Område: {field}")
+    if group:
+        parts.append(f"Inriktning: {group}")
+    if role:
+        parts.append(f"Roll: {role}")
     if city:
         parts.append(f"Plats: {city}")
 
