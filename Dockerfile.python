@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 # Copy the scripts folder
 COPY scripts/ ./scripts/
+COPY config/ ./config/
 
 # Expose the port the API runs on
 EXPOSE 8000
