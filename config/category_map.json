@@ -2,61 +2,96 @@
   "IT": {
     "fields": ["Data/IT"],
     "groups": [],
-    "roles_contains": ["Systemutvecklare", "Mjukvaruutvecklare", "Programmerare", "DevOps", "Testare", "IT-arkitekt"]
+    "roles_contains": ["Systemutvecklare", "Programmerare", "DevOps", "IT-arkitekt", "Supporttekniker", "Nätverkstekniker", "CIO", "CTO", "Scrum Master", "Product Owner"]
   },
   "Software Development": {
-    "fields": ["Data/IT"],
-    "groups": [],
-    "roles_contains": ["Systemutvecklare", "Backend", "Frontend", "Fullstack", "Software Engineer", "Developer"]
+    "fields": [],
+    "groups": ["Mjukvaru- och systemutvecklare m.fl.", "Utvecklare inom spel och digitala media"],
+    "roles_contains": ["Backend", "Frontend", "Fullstack", "Software Engineer", "Developer", "Java", ".NET", "Python", "React", "Node", "C#", "C++"]
   },
   "Automation / Industrial": {
-    "fields": ["Tekniskt arbete", "Industriell tillverkning"],
-    "groups": [],
-    "roles_contains": ["Automation", "Drifttekniker", "Underhåll", "Mekaniker", "Elektriker", "Industr"]
+    "fields": ["Industriell tillverkning", "Installation, drift, underhåll"],
+    "groups": ["Drifttekniker, IT"],
+    "roles_contains": ["Automation", "Drifttekniker", "Underhåll", "Mekaniker", "Elektriker", "Industri", "Processoperator", "PLC", "SCADA", "Robotics", "Mechatronics"]
   },
-  "Technical Support": {
-    "fields": ["Data/IT", "Tekniskt arbete"],
-    "groups": [],
-    "roles_contains": ["Support", "Helpdesk", "Tekniker", "Fältsupport"]
+  "Construction / Infrastructure": {
+    "fields": ["Bygg och anläggning"],
+    "groups": ["Civilingenjörsyrken inom bygg och anläggning", "Ingenjörer och tekniker inom bygg och anläggning"],
+    "roles_contains": ["Snickare", "Anläggning", "Bygg", "Site Manager", "Platschef", "Arbetsledare", "Målare", "VVS", "Betong", "Markarbete"]
   },
   "Logistics / Operations": {
-    "fields": ["Transport, logistik och inköp"],
-    "groups": [],
-    "roles_contains": ["Logistik", "Lager", "Terminal", "Warehouse", "Distribution"]
+    "fields": ["Transport"],
+    "groups": ["Inköps-, logistik- och transportchefer", "Inköpare och upphandlare", "Speditörer och transportmäklare"],
+    "roles_contains": ["Logistik", "Lager", "Terminal", "Warehouse", "Distribution", "Truckförare", "Speditör", "Inköpare", "Supply Chain", "Planerare"]
   },
   "Management": {
-    "fields": [],
+    "fields": ["Chefer och verksamhetsledare"],
     "groups": [],
-    "roles_contains": ["Chef", "Manager", "Head", "Director", "Lead", "Teamleader"]
+    "roles_contains": ["Chef", "Manager", "Head of", "Director", "Lead", "Teamleader", "VD", "CEO", "Verksamhetschef", "Enhetschef"]
   },
   "HR": {
     "fields": [],
-    "groups": [],
-    "roles_contains": ["HR", "Recruit", "Talent", "Employer Branding", "People"]
+    "groups": ["Personal- och HR-chefer", "Personal- och HR-specialister", "Löne- och personaladministratörer"],
+    "roles_contains": ["HR", "Recruit", "Talent", "Employer Branding", "People", "Personal", "Rekryterare", "HRBP"]
   },
   "Finance": {
     "fields": [],
-    "groups": [],
-    "roles_contains": ["Finance", "Controller", "Ekonom", "CFO", "Accounting"]
+    "groups": ["Ekonomi- och finanschefer", "Controller", "Redovisningsekonomer", "Revisorer m.fl.", "Ekonomiassistenter m.fl.", "Finansanalytiker och investeringsrådgivare m.fl."],
+    "roles_contains": ["Finance", "Ekonom", "CFO", "Accounting", "Redovisning", "Revisor", "Bokhållare"]
   },
   "Legal": {
+    "fields": [],
+    "groups": ["Advokater", "Affärs- och företagsjurister", "Domare", "Åklagare", "Övriga jurister", "Förvaltnings- och organisationsjurister"],
+    "roles_contains": ["Legal", "Jurist", "Advokat", "Counsel", "Paralegal", "Domstol", "Lawyer", "Compliance"]
+  },
+  "Administration": {
     "fields": ["Administration, ekonomi, juridik"],
-    "groups": [],
-    "roles_contains": ["Legal", "Jurist", "Advokat", "Counsel"]
+    "groups": ["Kontorsreceptionister", "Chefssekreterare och VD-assistenter m.fl.", "Övriga kontorsassistenter och sekreterare", "Administratörer"],
+    "roles_contains": ["Administratör", "Assistent", "Koordinator", "Sekreterare", "Receptionist", "Handläggare", "Office Manager"]
   },
   "Sales / Marketing": {
-    "fields": [],
-    "groups": [],
-    "roles_contains": ["Sales", "Sälj", "Marketing", "Content", "Account Manager"]
+    "fields": ["Försäljning, inköp, marknadsföring"],
+    "groups": ["Försäljnings- och marknadschefer"],
+    "roles_contains": ["Sales", "Sälj", "Marketing", "Content", "Account Manager", "Marknad", "Kundansvarig", "KAM", "B2B", "B2C"]
   },
   "Healthcare": {
-    "fields": ["Hälso- och sjukvård"],
+    "fields": ["Hälso- och sjukvård", "Kropps- och skönhetsvård"],
     "groups": [],
-    "roles_contains": ["Sjuk", "Nurse", "Läkare"]
+    "roles_contains": ["Sjuksköterska", "Nurse", "Läkare", "Vård", "Omsorg", "Undersköterska", "Personlig assistent", "Tandläkare"]
   },
   "Education": {
     "fields": ["Pedagogiskt arbete"],
+    "groups": ["Chefer inom grund- och gymnasieskola samt vuxenutbildning", "Chefer inom förskoleverksamhet"],
+    "roles_contains": ["Lärare", "Teacher", "Tutor", "Utbildning", "Pedagog", "Rektor", "Förskola", "Fritidspedagog"]
+  },
+  "Service / Hospitality": {
+    "fields": ["Hotell, restaurang, storhushåll", "Sanering och renhållning"],
+    "groups": ["Restaurang- och kökschefer", "Hotell- och konferenschefer"],
+    "roles_contains": ["Servitris", "Kock", "Restaurang", "Hotell", "Reception", "Lokalvård", "Städ", "Bartender", "Barista"]
+  },
+  "Security": {
+    "fields": ["Säkerhetsarbete", "Militärt arbete"],
     "groups": [],
-    "roles_contains": ["Lärare", "Teacher", "Tutor", "Utbild"]
+    "roles_contains": ["Väktare", "Ordningsvakt", "Säkerhet", "Polis", "Brandman", "Soldat", "Officer"]
+  },
+  "Engineering / Tech": {
+    "fields": ["Tekniskt arbete", "Naturvetenskapligt arbete"],
+    "groups": ["Ingenjörer och tekniker inom elektroteknik", "Ingenjörer och tekniker inom maskinteknik", "Civilingenjörsyrken"],
+    "roles_contains": ["Ingenjör", "Engineer", "Tekniker", "Konstruktör", "CAD", "Beräkningsingenjör", "Produktutvecklare"]
+  },
+  "Social Work": {
+    "fields": ["Socialt arbete"],
+    "groups": ["Chefer inom socialt och kurativt arbete", "Chefer inom äldreomsorg"],
+    "roles_contains": ["Socialsekreterare", "Kurator", "Behandlingsassistent", "Boendestödjare"]
+  },
+  "Culture / Media": {
+    "fields": ["Kultur, media, design"],
+    "groups": [],
+    "roles_contains": ["Designer", "Grafisk", "Journalist", "Fotograf", "Producent", "Art Director", "Copywriter"]
+  },
+  "Nature / Agriculture": {
+    "fields": ["Naturbruk"],
+    "groups": [],
+    "roles_contains": ["Trädgård", "Skog", "Lantbruk", "Djur", "Parkarbetare"]
   }
 }

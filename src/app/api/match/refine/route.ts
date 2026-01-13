@@ -87,9 +87,10 @@ export async function POST(req: Request) {
     if (!body?.candidate_id) return jsonError("candidate_id is required", 400);
     if (!body?.wish) return jsonError("wish is required", 400);
 
-    // 1) Load candidate vectors + geo + tags
+    // 1) Load candidate vectors + geo + tags + occupation field
     let v_profile: number[] = [];
     let candidateTags: string[] | null = null;
+    let primaryOccupationField: string | null = null;
 
     let cand_geo: { lat: number | null; lon: number | null; radius: number | null } =
       { lat: null, lon: null, radius: null };
@@ -97,10 +98,11 @@ export async function POST(req: Request) {
     if (body.candidate_id === "demo-local" && body.cv_text) {
       v_profile = await embedProfile(body.cv_text);
       candidateTags = null;
+      primaryOccupationField = null;
     } else if (body.candidate_id !== "demo-local") {
       const { data: cand, error: candErr } = await supabaseService
         .from("candidate_profiles")
-        .select("profile_vector, category_tags, location_lat, location_lon, commute_radius_km")
+        .select("profile_vector, category_tags, primary_occupation_field, location_lat, location_lon, commute_radius_km")
         .eq("user_id", body.candidate_id)
         .maybeSingle();
 
@@ -113,6 +115,7 @@ export async function POST(req: Request) {
 
       v_profile = cand.profile_vector as number[];
       candidateTags = (cand.category_tags as string[] | null) ?? null;
+      primaryOccupationField = (cand.primary_occupation_field as string | null) ?? null;
 
       cand_geo = {
         lat: cand.location_lat,
@@ -167,7 +170,7 @@ export async function POST(req: Request) {
 
     const radiusKm = Number(wish.radius_km ?? cand_geo.radius ?? 40);
 
-    // 6) RPC call (✅ now includes candidate_tags hard gate)
+    // 6) RPC call with occupation field hard filter
     const { data, error } = await supabaseService.rpc("match_jobs_profile_wish", {
       v_profile,
       v_wish,
@@ -178,7 +181,8 @@ export async function POST(req: Request) {
       county: geo.county,
       remote_boost: !!wish.remoteBoost,
       p_top_k: 50,
-      candidate_tags: candidateTags, // ✅ added
+      candidate_tags: candidateTags,
+      filter_occupation_field: primaryOccupationField, // ✅ Hard filter by occupation field
     });
 
     if (error) {

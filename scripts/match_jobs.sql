@@ -1,22 +1,18 @@
--- ✅ FINAL (768-dim) RPC FUNCTIONS WITH OPTIONAL CATEGORY TAG GATE
--- Keep ONLY this in your SQL file
+-- ✅ FINAL (768-dim) RPC FUNCTIONS WITH INTELLIGENT FALLBACK & CORRECT COLUMNS
 
--- Drop to allow signature changes
-drop function if exists match_jobs_initial(vector, float, float, float, int);
 drop function if exists match_jobs_initial(vector, float, float, float, int, text[]);
-
-drop function if exists match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int);
+drop function if exists match_jobs_initial(vector, float, float, float, int, text[], text);
 drop function if exists match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int, text[]);
 
-
--- 1) Initial matching with optional tag hard-gate
+-- 1) Initial matching with occupation field hard filter
 create or replace function match_jobs_initial(
     v_profile vector(768),
     u_lat float,
     u_lon float,
     radius_km float,
     top_k int,
-    candidate_tags text[] default null
+    candidate_tags text[] default null,
+    filter_occupation_field text default null  -- ✅ Hard filter by occupation field
 )
 returns table (
     id text,
@@ -51,14 +47,20 @@ as $$
     and j.is_active = true
     and (j.application_deadline is null or j.application_deadline >= now())
 
-    -- ✅ Hard gate: only if tags provided
+    -- ✅ SMART GATE: 
     and (
       candidate_tags is null
       or array_length(candidate_tags, 1) is null
-      or (
-        j.category_tags is not null
-        and j.category_tags && candidate_tags
-      )
+      or j.category_tags is null 
+      or array_length(j.category_tags, 1) is null
+      or array_length(j.category_tags, 1) = 0
+      or (j.category_tags && candidate_tags)
+    )
+
+    -- ✅ HARD FILTER: Occupation field must match exactly (prevents cross-domain matches)
+    and (
+      filter_occupation_field is null
+      or j.occupation_field_label = filter_occupation_field
     )
 
     and (
@@ -74,8 +76,7 @@ as $$
   limit top_k;
 $$;
 
-
--- 2) Refined matching with optional tag hard-gate
+-- 2) Refined matching with both vectors + occupation field filter
 create or replace function match_jobs_profile_wish(
     v_profile vector(768),
     v_wish vector(768),
@@ -86,7 +87,8 @@ create or replace function match_jobs_profile_wish(
     county text,
     remote_boost boolean,
     p_top_k int,
-    candidate_tags text[] default null
+    candidate_tags text[] default null,
+    filter_occupation_field text default null  -- ✅ Added occupation field filter
 )
 returns table (
     id text,
@@ -127,14 +129,20 @@ as $$
     and j.is_active = true
     and (j.application_deadline is null or j.application_deadline >= now())
 
-    -- ✅ Hard gate: only if tags provided
+    -- ✅ SMART GATE
     and (
       candidate_tags is null
       or array_length(candidate_tags, 1) is null
-      or (
-        j.category_tags is not null
-        and j.category_tags && candidate_tags
-      )
+      or j.category_tags is null
+      or array_length(j.category_tags, 1) is null
+      or array_length(j.category_tags, 1) = 0
+      or (j.category_tags && candidate_tags)
+    )
+
+    -- ✅ HARD FILTER: Occupation field must match exactly (same as initial match)
+    and (
+      filter_occupation_field is null
+      or j.occupation_field_label = filter_occupation_field
     )
 
     and (

@@ -2,8 +2,9 @@
 import os
 import json
 import time
+import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -20,52 +21,117 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 
-env_map_path = os.getenv("CATEGORY_MAP_PATH")
+# ---------------- Config ----------------
+MODE = os.getenv("BACKFILL_MODE", "missing").lower()  # "missing" or "all"
+ONLY_ACTIVE = os.getenv("BACKFILL_ONLY_ACTIVE", "true").lower() == "true"
+BATCH_SIZE = int(os.getenv("BACKFILL_BATCH_SIZE", "500"))
+SLEEP_S = float(os.getenv("BACKFILL_SLEEP_S", "0.05"))
 
-candidates = []
-if env_map_path:
-    candidates.append(Path(env_map_path))
-
-candidates += [
+# Load Category Map
+candidates = [
     REPO_ROOT / "config" / "category_map.json",
     REPO_ROOT / "src" / "app" / "config" / "category_map.json",
     REPO_ROOT / "app" / "config" / "category_map.json",
 ]
-
 CATEGORY_MAP_PATH = next((p for p in candidates if p.exists()), None)
 if not CATEGORY_MAP_PATH:
-    raise SystemExit("❌ category_map.json not found. Tried:\n" + "\n".join(str(p) for p in candidates))
+    raise SystemExit("❌ category_map.json not found.")
 
 CATEGORY_MAP = json.loads(CATEGORY_MAP_PATH.read_text(encoding="utf-8"))
 print(f"✅ Loaded category map: {CATEGORY_MAP_PATH}")
 
-# Resume file next to this script
+# Resume file
 RESUME_FILE = SCRIPT_DIR / "backfill_category_tags_resume.json"
 
 
-def compute_category_tags(field: str, group: str, role: str) -> List[str]:
-    field_l = (field or "").lower()
-    group_l = (group or "").lower()
-    role_l = (role or "").lower()
+# ---------------- Helpers ----------------
+def _safe_json(obj: Any) -> Dict[str, Any]:
+    """Supabase may return JSONB as dict, or as string sometimes; normalize to dict."""
+    if not obj:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if isinstance(obj, str):
+        try:
+            v = json.loads(obj)
+            return v if isinstance(v, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
-    tags: List[str] = []
+def _norm(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def _contains_any(hay: str, needles: List[str]) -> bool:
+    """Substring match with normalized strings."""
+    if not hay or not needles:
+        return False
+    hay = _norm(hay)
+    for n in needles:
+        nn = _norm(n)
+        if nn and nn in hay:
+            return True
+    return False
+
+def _word_hit(text: str, keyword: str) -> bool:
+    """Safer keyword hit using word boundaries for 'full_text' (prevents crazy partial matches)."""
+    if not text or not keyword:
+        return False
+    kw = _norm(keyword)
+    if len(kw) < 3:
+        return False
+    # word boundary-ish: allow Swedish letters too
+    pattern = r"(^|[^a-zåäö0-9])" + re.escape(kw) + r"([^a-zåäö0-9]|$)"
+    return re.search(pattern, _norm(text), flags=re.IGNORECASE) is not None
+
+
+def compute_tags_smart(job: Dict[str, Any]) -> List[str]:
+    tags: Set[str] = set()
+
+    # 1) Structured AF taxonomy (strong signals)
+    occ_field = _safe_json(job.get("occupation_field"))
+    occ_group = _safe_json(job.get("occupation_group"))
+
+    field_label = _norm(occ_field.get("label") or "")
+    group_label = _norm(occ_group.get("label") or "")
+
+    # 2) Text fallback
+    headline = _norm(job.get("headline") or "")
+    desc = job.get("description_text") or ""
+    full_text = f"{headline}\n{desc}"
+
     for tag, rules in CATEGORY_MAP.items():
-        fields = [x.lower() for x in rules.get("fields", [])]
-        groups = [x.lower() for x in rules.get("groups", [])]
-        role_contains = [x.lower() for x in rules.get("roles_contains", [])]
+        rule_fields = rules.get("fields", []) or []
+        rule_groups = rules.get("groups", []) or []
+        role_keywords = rules.get("roles_contains", []) or []
 
+        # Rule A: field/group contains (NOT equals)
+        if field_label and _contains_any(field_label, rule_fields):
+            tags.add(tag)
+            continue
+        if group_label and _contains_any(group_label, rule_groups):
+            tags.add(tag)
+            continue
+
+        # Rule B: headline keyword (strong)
         hit = False
-        if fields and any(f in field_l for f in fields):
-            hit = True
-        if groups and any(g in group_l for g in groups):
-            hit = True
-        if role_contains and any(rc in role_l for rc in role_contains):
-            hit = True
-
+        for kw in role_keywords:
+            if kw and _word_hit(headline, kw):
+                hit = True
+                break
         if hit:
-            tags.append(tag)
+            tags.add(tag)
+            continue
 
-    return sorted(set(tags))
+        # Rule C: full text keyword (weaker but still useful)
+        for kw in role_keywords:
+            if kw and _word_hit(full_text, kw):
+                tags.add(tag)
+                break
+
+    return sorted(tags)
 
 
 def load_resume_cursor() -> Optional[str]:
@@ -77,115 +143,85 @@ def load_resume_cursor() -> Optional[str]:
             return None
     return None
 
-
 def save_resume_cursor(last_id: str) -> None:
     RESUME_FILE.write_text(json.dumps({"last_id": last_id}), encoding="utf-8")
-
 
 def clear_resume_cursor() -> None:
     if RESUME_FILE.exists():
         RESUME_FILE.unlink()
 
 
-def backfill(
-    batch_size: int = 500,
-    sleep_s: float = 0.05,
-    only_active: bool = True,
-    include_empty_arrays: bool = True,
-    dry_run: bool = False,
-) -> None:
-    """
-    Backfill category_tags for jobs.
-    - Reads: id, occupation_field_label, occupation_group_label, occupation_label, job_category, category_tags
-    - Writes: id, category_tags (upsert on id)
-    - Resumes by last_id cursor.
-    """
-
+# ---------------- Main ----------------
+def backfill():
     last_id = load_resume_cursor()
-    total_updated = 0
     total_seen = 0
+    total_updated = 0
 
-    print("🚀 Starting backfill_category_tags")
-    print(f"   batch_size={batch_size}, only_active={only_active}, include_empty_arrays={include_empty_arrays}, dry_run={dry_run}")
+    print("🚀 Starting Smart Backfill")
+    print(f"   MODE={MODE} (missing|all), ONLY_ACTIVE={ONLY_ACTIVE}, BATCH_SIZE={BATCH_SIZE}")
     if last_id:
-        print(f"   Resuming after last_id={last_id}")
+        print(f"⏩ Resuming after last_id={last_id}")
 
     while True:
         q = (
             supabase.table("job_ads")
-            .select("id,occupation_field_label,occupation_group_label,occupation_label,job_category,category_tags,is_active")
+            .select("id, headline, description_text, occupation_field, occupation_group, category_tags, is_active")
             .order("id", desc=False)
-            .limit(batch_size)
+            .limit(BATCH_SIZE)
         )
 
-        # Resume cursor
         if last_id:
             q = q.gt("id", last_id)
 
-        # Optional: only active rows
-        if only_active:
+        if ONLY_ACTIVE:
             q = q.eq("is_active", True)
 
-        # Filter rows needing tags:
-        # PostgREST supports OR filters; we include null and optionally empty array.
-        # Empty array matching can be inconsistent depending on PostgREST version, so null-only still works.
-        if include_empty_arrays:
-            # category_tags is null OR equals {} (empty array)
+        if MODE == "missing":
+            # only rows with NULL or empty array
             q = q.or_("category_tags.is.null,category_tags.eq.{}")
-        else:
-            q = q.is_("category_tags", "null")
 
         resp = q.execute()
         rows = resp.data or []
 
         if not rows:
-            print("✅ Done. No more rows to backfill.")
+            print("✅ Done. No more rows.")
+            clear_resume_cursor()
             break
 
-        total_seen += len(rows)
-
         updates: List[Dict[str, Any]] = []
-        for r in rows:
-            jid = r.get("id")
-            field = (r.get("occupation_field_label") or "").strip()
-            group = (r.get("occupation_group_label") or "").strip()
-            role = (r.get("occupation_label") or r.get("job_category") or "").strip()
 
-            tags = compute_category_tags(field, group, role)
+        for row in rows:
+            old_tags = row.get("category_tags") or []
+            if old_tags is None:
+                old_tags = []
 
-            # If no tags matched, you still may want to store an empty array to avoid reprocessing.
-            # Here we store [] so the row is "done" and you can audit later.
-            updates.append({"id": jid, "category_tags": tags})
+            new_tags = compute_tags_smart(row)
 
-        last_id = rows[-1].get("id")
-        if last_id:
-            save_resume_cursor(last_id)
+            # Update if changed OR if MODE=missing and tags were null/empty
+            if set(new_tags) != set(old_tags):
+                updates.append({"id": row["id"], "category_tags": new_tags})
 
-        if dry_run:
-            print(f"🧪 DRY RUN: would upsert {len(updates)} rows. last_id={last_id}")
-        else:
+        if updates:
             try:
                 supabase.table("job_ads").upsert(updates, on_conflict="id").execute()
                 total_updated += len(updates)
-                print(f"✅ Updated {len(updates)} rows (total_updated={total_updated}). last_id={last_id}")
+                print(f"💾 Updated {len(updates)} rows. total_updated={total_updated}")
             except Exception as e:
-                print(f"❌ Upsert failed: {e}")
-                print("   Keeping resume cursor so you can rerun safely.")
-                break
+                print(f"❌ Batch upsert failed: {e}")
+                print("   Keeping cursor; retrying after 5s.")
+                time.sleep(5)
+                continue
+        else:
+            print(f"⏩ No changes needed for this batch of {len(rows)}.")
 
-        time.sleep(sleep_s)
+        total_seen += len(rows)
+        last_id = rows[-1]["id"]
+        save_resume_cursor(last_id)
+
+        time.sleep(SLEEP_S)
 
     print(f"📊 Summary: total_seen={total_seen}, total_updated={total_updated}")
-    print(f"📌 Resume file: {RESUME_FILE}")
-    print("   If everything looks good and you don't need resume anymore, you can delete the resume file.")
 
 
 if __name__ == "__main__":
-    # Tune batch_size if you hit timeouts. 200 is super safe.
-    backfill(
-        batch_size=int(os.getenv("BACKFILL_BATCH_SIZE", "500")),
-        sleep_s=float(os.getenv("BACKFILL_SLEEP_S", "0.05")),
-        only_active=True,
-        include_empty_arrays=True,
-        dry_run=False,
-    )
+    backfill()

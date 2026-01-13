@@ -74,11 +74,17 @@ def load_category_map() -> Dict[str, Any]:
 
     p = next((x for x in candidates if x.exists()), None)
     if not p:
-        raise SystemExit("❌ category_map.json not found. Tried:\n" + "\n".join(str(x) for x in candidates))
+        # Fallback empty map if file missing, to prevent crash
+        print("⚠️ category_map.json not found. Using empty map.")
+        return {}
 
-    data = json.loads(p.read_text(encoding="utf-8"))
-    print(f"✅ Loaded category map: {p}")
-    return data
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        print(f"✅ Loaded category map: {p}")
+        return data
+    except Exception as e:
+        print(f"❌ Failed to parse category map: {e}")
+        return {}
 
 
 CATEGORY_MAP = load_category_map()
@@ -111,6 +117,76 @@ def compute_category_tags_from_text(text: str) -> List[str]:
             tags.append(tag)
 
     return sorted(set(tags))
+
+
+# Mapping from category tags to occupation fields (must match job_ads.occupation_field_label)
+CATEGORY_TO_OCCUPATION_FIELD = {
+    "IT": "Data/IT",
+    "Software Development": "Data/IT",
+    "Engineering / Tech": "Tekniskt arbete",
+    "Automation / Industrial": "Industriell tillverkning",
+    "Construction / Infrastructure": "Bygg och anläggning",
+    "Logistics / Operations": "Transport",
+    "Management": "Chefer och verksamhetsledare",
+    "HR": "Administration, ekonomi, juridik",
+    "Finance": "Administration, ekonomi, juridik",
+    "Legal": "Administration, ekonomi, juridik",
+    "Administration": "Administration, ekonomi, juridik",
+    "Sales / Marketing": "Försäljning, inköp, marknadsföring",
+    "Healthcare": "Hälso- och sjukvård",
+    "Education": "Pedagogiskt arbete",
+    "Service / Hospitality": "Hotell, restaurang, storhushåll",
+    "Security": "Säkerhetsarbete",
+    "Social Work": "Socialt arbete",
+    "Culture / Media": "Kultur, media, design",
+    "Nature / Agriculture": "Naturbruk",
+}
+
+TAG_PRIORITY = [
+    "Software Development",
+    "IT",
+    "Engineering / Tech",
+    "Automation / Industrial",
+    "Construction / Infrastructure",
+    "Logistics / Operations",
+    "Finance",
+    "Legal",
+    "HR",
+    "Sales / Marketing",
+    "Healthcare",
+    "Education",
+    "Service / Hospitality",
+    "Security",
+    "Social Work",
+    "Culture / Media",
+    "Management",
+    "Administration",
+    "Nature / Agriculture",
+]
+
+
+def compute_primary_occupation_field(category_tags: List[str]) -> Optional[str]:
+    """
+    Given category tags, determine the primary occupation field.
+    This provides a hard filter for job matching.
+    """
+    if not category_tags:
+        return None
+
+    tag_set = set(category_tags)
+
+    # IT/Software takes precedence (most common use case)
+    if "Software Development" in tag_set or "IT" in tag_set:
+        return "Data/IT"
+
+    # Find highest priority tag
+    for priority_tag in TAG_PRIORITY:
+        if priority_tag in tag_set:
+            return CATEGORY_TO_OCCUPATION_FIELD.get(priority_tag)
+
+    # Fallback: first tag alphabetically
+    first_tag = sorted(category_tags)[0]
+    return CATEGORY_TO_OCCUPATION_FIELD.get(first_tag)
 
 
 # ---------------- Resume cursor helpers ----------------
@@ -681,6 +757,12 @@ async def enrich_candidates():
                     patch["category_tags"] = tags
                     print(f"🏷️ category_tags = {tags}")
 
+                    # ----- Compute primary occupation field from tags -----
+                    primary_field = compute_primary_occupation_field(tags)
+                    if primary_field:
+                        patch["primary_occupation_field"] = primary_field
+                        print(f"🎯 primary_occupation_field = '{primary_field}'")
+
                 # ----- Persist patch -----
                 # Only update if patch has something meaningful beyond has_picture
                 meaningful = [k for k in patch.keys() if k not in ("has_picture",)]
@@ -703,6 +785,8 @@ async def enrich_candidates():
     print(f"   total_updated_rows={total_updated}")
     print(f"   resume_file={RESUME_FILE} (delete if finished)")
 
+# ✅ EXPORT ALIAS (This fixes the ImportError in service.py)
+build_candidate_vector = embed_text_to_vector
 
 if __name__ == "__main__":
     asyncio.run(enrich_candidates())

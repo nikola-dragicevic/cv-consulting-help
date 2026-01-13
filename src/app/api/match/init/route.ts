@@ -59,13 +59,14 @@ export async function POST(req: Request) {
 
     let v_profile: number[] = [];
     let candidateTags: string[] | null = null;
+    let primaryOccupationField: string | null = null;
 
     if (user) {
       console.log(`Authenticated request for user: ${user.id}`);
 
       const { data: profile, error: profileError } = await supabaseService
         .from("candidate_profiles")
-        .select("profile_vector, category_tags")
+        .select("profile_vector, category_tags, primary_occupation_field")
         .eq("user_id", user.id)
         .single();
 
@@ -86,8 +87,9 @@ export async function POST(req: Request) {
 
       v_profile = profile.profile_vector as number[];
       candidateTags = (profile.category_tags as string[] | null) ?? null;
+      primaryOccupationField = (profile.primary_occupation_field as string | null) ?? null;
 
-      console.log("Using stored profile vector + category tags.");
+      console.log("Using stored profile vector + category tags + occupation field:", primaryOccupationField);
     } else {
       console.log("Anonymous request.");
 
@@ -116,7 +118,8 @@ export async function POST(req: Request) {
       u_lon: geo.lon,
       radius_km: radiusKm,
       top_k: 20,
-      candidate_tags: candidateTags, // ✅ fixed
+      candidate_tags: candidateTags,
+      filter_occupation_field: primaryOccupationField, // ✅ Hard filter by occupation field
     });
 
     if (error) {
