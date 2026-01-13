@@ -1,14 +1,22 @@
--- Drop the old functions first to allow return type changes
-DROP FUNCTION IF EXISTS match_jobs_initial(vector, float, float, float, int);
-DROP FUNCTION IF EXISTS match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int);
+-- ✅ FINAL (768-dim) RPC FUNCTIONS WITH OPTIONAL CATEGORY TAG GATE
+-- Keep ONLY this in your SQL file
 
--- 1. Re-create Initial Matching Function
+-- Drop to allow signature changes
+drop function if exists match_jobs_initial(vector, float, float, float, int);
+drop function if exists match_jobs_initial(vector, float, float, float, int, text[]);
+
+drop function if exists match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int);
+drop function if exists match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int, text[]);
+
+
+-- 1) Initial matching with optional tag hard-gate
 create or replace function match_jobs_initial(
-    v_profile vector(1024),
+    v_profile vector(768),
     u_lat float,
     u_lon float,
     radius_km float,
-    top_k int
+    top_k int,
+    candidate_tags text[] default null
 )
 returns table (
     id text,
@@ -36,35 +44,49 @@ as $$
     j.work_modality,
     j.job_url,
     j.webpage_url,
-    (1 - (j.embedding <=> v_profile)) as s_profile -- Cosine Similarity
+    (1 - (j.embedding <=> v_profile)) as s_profile
   from job_ads j
-  where 
-    j.embedding is not null 
-    AND j.is_active = true 
-    AND (j.application_deadline is null or j.application_deadline >= now())
-    AND (
-      radius_km >= 9999 
-      OR (
-        j.location_lat BETWEEN u_lat - (radius_km / 111.0) AND u_lat + (radius_km / 111.0)
-        AND
-        j.location_lon BETWEEN u_lon - (radius_km / (111.0 * cos(radians(u_lat)))) AND u_lon + (radius_km / (111.0 * cos(radians(u_lat))))
+  where
+    j.embedding is not null
+    and j.is_active = true
+    and (j.application_deadline is null or j.application_deadline >= now())
+
+    -- ✅ Hard gate: only if tags provided
+    and (
+      candidate_tags is null
+      or array_length(candidate_tags, 1) is null
+      or (
+        j.category_tags is not null
+        and j.category_tags && candidate_tags
+      )
+    )
+
+    and (
+      radius_km >= 9999
+      or (
+        j.location_lat between u_lat - (radius_km / 111.0) and u_lat + (radius_km / 111.0)
+        and
+        j.location_lon between u_lon - (radius_km / (111.0 * cos(radians(u_lat))))
+                         and u_lon + (radius_km / (111.0 * cos(radians(u_lat))))
       )
     )
   order by (j.embedding <=> v_profile) asc
   limit top_k;
 $$;
 
--- 2. Re-create Refined Matching Function
+
+-- 2) Refined matching with optional tag hard-gate
 create or replace function match_jobs_profile_wish(
-    v_profile vector(1024),
-    v_wish vector(1024),
+    v_profile vector(768),
+    v_wish vector(768),
     u_lat float,
     u_lon float,
     radius_km float,
     metro text,
     county text,
     remote_boost boolean,
-    p_top_k int
+    p_top_k int,
+    candidate_tags text[] default null
 )
 returns table (
     id text,
@@ -95,93 +117,33 @@ as $$
     (1 - (j.embedding <=> v_profile)) as s_profile,
     (1 - (j.embedding <=> v_wish)) as s_wish,
     (
-      (0.7 * (1 - (j.embedding <=> v_profile))) + 
-      (0.3 * (1 - (j.embedding <=> v_wish))) +
-      (CASE WHEN remote_boost AND j.work_modality IN ('hybrid', 'remote') THEN 0.05 ELSE 0 END)
+      (0.2 * (1 - (j.embedding <=> v_profile))) +
+      (0.8 * (1 - (j.embedding <=> v_wish))) +
+      (case when remote_boost and j.work_modality in ('hybrid', 'remote') then 0.05 else 0 end)
     ) as final_score
   from job_ads j
-  where 
-    j.embedding is not null 
-    AND j.is_active = true 
-    AND (j.application_deadline is null or j.application_deadline >= now())
-    AND (
-      radius_km >= 9999
-      OR (
-        j.location_lat BETWEEN u_lat - (radius_km / 111.0) AND u_lat + (radius_km / 111.0)
-        AND
-        j.location_lon BETWEEN u_lon - (radius_km / (111.0 * cos(radians(u_lat)))) AND u_lon + (radius_km / (111.0 * cos(radians(u_lat))))
+  where
+    j.embedding is not null
+    and j.is_active = true
+    and (j.application_deadline is null or j.application_deadline >= now())
+
+    -- ✅ Hard gate: only if tags provided
+    and (
+      candidate_tags is null
+      or array_length(candidate_tags, 1) is null
+      or (
+        j.category_tags is not null
+        and j.category_tags && candidate_tags
       )
     )
-  order by final_score desc
-  limit p_top_k;
-$$;
 
--- 1. Ta bort den gamla funktionen (för att undvika Error 42P13)
-DROP FUNCTION IF EXISTS match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int);
-
--- 2. (Valfritt) Säkerställ att kolumnerna finns
-ALTER TABLE candidate_profiles 
-ADD COLUMN IF NOT EXISTS wish_vector vector(1024),
-ADD COLUMN IF NOT EXISTS wish_text_vector TEXT;
-
--- 3. Skapa den nya, smarta matchningsfunktionen
-create or replace function match_jobs_profile_wish(
-    v_profile vector(1024),
-    v_wish vector(1024),
-    u_lat float,
-    u_lon float,
-    radius_km float,
-    metro text,
-    county text,
-    remote_boost boolean,
-    p_top_k int
-)
-returns table (
-    id text,
-    headline text,
-    location text,
-    location_lat float,
-    location_lon float,
-    company_size text,
-    work_modality text,
-    job_url text,
-    webpage_url text,
-    s_profile float,
-    s_wish float,
-    final_score float
-)
-language sql stable
-as $$
-  select
-    j.id,
-    j.headline,
-    j.location,
-    j.location_lat,
-    j.location_lon,
-    j.company_size,
-    j.work_modality,
-    j.job_url,
-    j.webpage_url,
-    (1 - (j.embedding <=> v_profile)) as s_profile,
-    (1 - (j.embedding <=> v_wish)) as s_wish,
-    (
-      -- UPDATED: 80% Wish (Framtid), 20% Profile (Historik)
-      -- Detta kommer filtrera bort dina gamla lagerjobb!
-      (0.2 * (1 - (j.embedding <=> v_profile))) + 
-      (0.8 * (1 - (j.embedding <=> v_wish))) +
-      (CASE WHEN remote_boost AND j.work_modality IN ('hybrid', 'remote') THEN 0.05 ELSE 0 END)
-    ) as final_score
-  from job_ads j
-  where 
-    j.embedding is not null 
-    AND j.is_active = true 
-    AND (j.application_deadline is null or j.application_deadline >= now())
-    AND (
+    and (
       radius_km >= 9999
-      OR (
-        j.location_lat BETWEEN u_lat - (radius_km / 111.0) AND u_lat + (radius_km / 111.0)
-        AND
-        j.location_lon BETWEEN u_lon - (radius_km / (111.0 * cos(radians(u_lat)))) AND u_lon + (radius_km / (111.0 * cos(radians(u_lat))))
+      or (
+        j.location_lat between u_lat - (radius_km / 111.0) and u_lat + (radius_km / 111.0)
+        and
+        j.location_lon between u_lon - (radius_km / (111.0 * cos(radians(u_lat))))
+                         and u_lon + (radius_km / (111.0 * cos(radians(u_lat))))
       )
     )
   order by final_score desc

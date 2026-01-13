@@ -4,7 +4,10 @@ import asyncio
 import httpx
 import math
 import re
-from typing import List, Optional, Tuple, Dict
+import json
+import time
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict, Any
 
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -17,13 +20,21 @@ except ImportError:
 
 load_dotenv()
 
+# ---------------- Env + Clients ----------------
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+    raise SystemExit("❌ Missing SUPABASE_URL or SUPABASE_SERVICE_KEY")
 
-# Prefer /api/embed (batch + L2-normalized vectors)
+# Prefer /api/embed (batch + normalized vectors)
 OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://ollama:11434/api/embed")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 DIMS = int(os.getenv("DIMS", "768"))
+
+# Paging / runtime controls
+BATCH_SIZE = int(os.getenv("CANDIDATE_BATCH_SIZE", "50"))
+SLEEP_S = float(os.getenv("CANDIDATE_SLEEP_S", "0.05"))
 
 # Chunking controls (character heuristic)
 CHUNK_CHARS = int(os.getenv("CHUNK_CHARS", "1800"))
@@ -34,8 +45,88 @@ MAX_CHUNKS = int(os.getenv("MAX_CHUNKS", "12"))
 MIN_SIGNAL_CHARS = int(os.getenv("MIN_SIGNAL_CHARS", "350"))   # if extractor yields less -> fallback to cleaned CV
 MAX_DEBUG_PREVIEW = int(os.getenv("MAX_DEBUG_PREVIEW", "2000"))
 
+# Optional behavior toggles
+FORCE_REBUILD_PROFILE = os.getenv("FORCE_REBUILD_PROFILE", "0") == "1"
+FORCE_REBUILD_WISH = os.getenv("FORCE_REBUILD_WISH", "0") == "1"
+FORCE_REBUILD_TAGS = os.getenv("FORCE_REBUILD_TAGS", "0") == "1"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent  # /app inside worker container
+RESUME_FILE = SCRIPT_DIR / "generate_candidate_vector_resume.json"
+
+
+# ---------------- Category map loading ----------------
+
+def load_category_map() -> Dict[str, Any]:
+    env_map_path = os.getenv("CATEGORY_MAP_PATH")
+
+    candidates: List[Path] = []
+    if env_map_path:
+        candidates.append(Path(env_map_path))
+
+    candidates += [
+        REPO_ROOT / "config" / "category_map.json",
+        REPO_ROOT / "src" / "app" / "config" / "category_map.json",
+        REPO_ROOT / "app" / "config" / "category_map.json",
+    ]
+
+    p = next((x for x in candidates if x.exists()), None)
+    if not p:
+        raise SystemExit("❌ category_map.json not found. Tried:\n" + "\n".join(str(x) for x in candidates))
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    print(f"✅ Loaded category map: {p}")
+    return data
+
+
+CATEGORY_MAP = load_category_map()
+
+
+def compute_category_tags_from_text(text: str) -> List[str]:
+    """
+    Candidate-side category tagging:
+    We match the category_map rules against a combined text (CV signal doc + wish text).
+    """
+    t = (text or "").lower()
+    if not t:
+        return []
+
+    tags: List[str] = []
+    for tag, rules in CATEGORY_MAP.items():
+        fields = [x.lower() for x in rules.get("fields", [])]
+        groups = [x.lower() for x in rules.get("groups", [])]
+        role_contains = [x.lower() for x in rules.get("roles_contains", [])]
+
+        hit = False
+        if fields and any(f in t for f in fields):
+            hit = True
+        if groups and any(g in t for g in groups):
+            hit = True
+        if role_contains and any(rc in t for rc in role_contains):
+            hit = True
+
+        if hit:
+            tags.append(tag)
+
+    return sorted(set(tags))
+
+
+# ---------------- Resume cursor helpers ----------------
+
+def load_resume_cursor() -> Optional[str]:
+    if RESUME_FILE.exists():
+        try:
+            data = json.loads(RESUME_FILE.read_text(encoding="utf-8"))
+            return data.get("last_id")
+        except Exception:
+            return None
+    return None
+
+
+def save_resume_cursor(last_id: str) -> None:
+    RESUME_FILE.write_text(json.dumps({"last_id": last_id}), encoding="utf-8")
 
 
 # ---------------- Vector helpers ----------------
@@ -47,6 +138,7 @@ def l2_normalize(vec: List[float]) -> List[float]:
     if mag == 0:
         return [0.0] * len(vec)
     return [x / mag for x in vec]
+
 
 def mean_pool(vectors: List[List[float]]) -> List[float]:
     if not vectors:
@@ -116,39 +208,30 @@ _HEADING_MAP = {
     "references": "references",
 }
 
+
 def _normalize_heading(line: str) -> str:
     x = line.strip().lower()
-    # remove surrounding punctuation
     x = re.sub(r"^[=\-•\s]+|[=\-•\s:]+$", "", x)
     return x
 
+
 def _is_heading(line: str) -> Optional[str]:
-    """
-    Return canonical heading key or None.
-    """
     norm = _normalize_heading(line)
     if not norm:
         return None
-    # exact match
     if norm in _HEADING_MAP:
         return _HEADING_MAP[norm]
-    # common heading patterns like "=== EXPERIENCE ==="
     if re.fullmatch(r"[a-zåäö\s]{3,40}", norm) and norm in _HEADING_MAP:
         return _HEADING_MAP[norm]
     return None
 
+
 def _looks_like_contact_line(line: str) -> bool:
     l = line.lower()
-
-    # email
     if "@" in line and "." in line:
         return True
-
-    # phone-ish
     if re.search(r"(\+46|0\d{1,3})[\s\-]?\d{2,4}[\s\-]?\d{2,4}[\s\-]?\d{0,4}", line):
         return True
-
-    # personal/address indicators
     contact_keywords = [
         "telefon", "mobil", "e-post", "email", "mail",
         "adress", "postnummer", "zipcode",
@@ -157,58 +240,40 @@ def _looks_like_contact_line(line: str) -> bool:
     ]
     if any(k in l for k in contact_keywords):
         return True
-
-    # street-ish
     if re.search(r"\b(vägen|väg|gatan|gata|street|st\.|box)\b", l):
         return True
-
     return False
 
+
 def _drop_contact_block(lines: List[str]) -> List[str]:
-    """
-    If CV starts with a contact section, drop it.
-    Heuristic: if first ~25 lines contains 'kontakt' or many contact-like lines, remove until first real heading.
-    """
     if not lines:
         return lines
 
     top = lines[:25]
     top_low = " ".join([x.lower() for x in top])
-
     likely_contact = ("kontakt" in top_low) or (sum(1 for x in top if _looks_like_contact_line(x)) >= 3)
     if not likely_contact:
         return lines
 
-    # remove lines until we hit a known heading (experience/skills/education/...)
     for i, ln in enumerate(lines):
         h = _is_heading(ln)
         if h in ("experience", "skills", "education", "licenses", "languages"):
             return lines[i:]
-    # if no heading found, just remove first 15 lines
     return lines[15:]
 
+
 def _extract_skill_tokens(all_text: str) -> str:
-    """
-    Pull out high-signal technical tokens:
-    - ALLCAPS tokens (PLC, SCADA, HMI)
-    - tokens w/ digits/hyphens (S7-300, IEC/ISA 62443)
-    - short tool phrases (WinCC, Kepware, Modbus, OPC, SQL, Python, C# ...)
-    This is intentionally heuristic but works well on your CVs.
-    """
     if not all_text:
         return ""
 
     tokens = set()
 
-    # ALLCAPS tokens
     for m in re.finditer(r"\b[A-ZÅÄÖ]{2,10}\b", all_text):
         tokens.add(m.group(0))
 
-    # digit/hyphen tokens
     for m in re.finditer(r"\b[A-Za-z]{1,6}[-/ ]?\d{2,5}(?:[-/]\d{2,5})?\b", all_text):
         tokens.add(m.group(0))
 
-    # common tech words (expandable)
     common = [
         "PLC", "SCADA", "HMI", "WMS", "SQL", "Python", "Java", "JavaScript", "TypeScript",
         "C#", "C++", "Docker", "Kubernetes", "Linux", "Windows",
@@ -223,16 +288,11 @@ def _extract_skill_tokens(all_text: str) -> str:
         if w.lower() in low:
             tokens.add(w)
 
-    # keep it stable and not huge
-    out = sorted(tokens)
-    out = out[:80]
+    out = sorted(tokens)[:80]
     return ", ".join(out)
 
+
 def extract_cv_signals(candidate: dict, cv_text: str) -> str:
-    """
-    Build a compact, high-signal document for embedding.
-    If extraction becomes too short, caller should fallback to cleaned raw CV.
-    """
     raw = clean_text_keep_unicode(cv_text)
     if not raw:
         return ""
@@ -240,7 +300,6 @@ def extract_cv_signals(candidate: dict, cv_text: str) -> str:
     lines = raw.splitlines()
     lines = _drop_contact_block(lines)
 
-    # Section capture
     sections: Dict[str, List[str]] = {
         "skills": [],
         "licenses": [],
@@ -254,25 +313,19 @@ def extract_cv_signals(candidate: dict, cv_text: str) -> str:
     for ln in lines:
         h = _is_heading(ln)
         if h:
-            # Drop references section entirely
             if h == "references":
                 current = "references"
                 continue
             current = h
             continue
 
-        # Remove contact lines anywhere
         if _looks_like_contact_line(ln):
             continue
 
-        # Drop content inside references section
         if current == "references":
             continue
 
-        # If we haven't hit a heading yet, we still keep some lines,
-        # but we don't want long generic profile paragraphs.
         if current is None:
-            # Keep short high-signal lines only (contain tech, years, role words)
             if re.search(r"\b(PLC|SCADA|HMI|WMS|SQL|Python|Java|C#|Siemens|automation|automatis|control|warehouse|lager|truck)\b", ln, flags=re.I):
                 sections["skills"].append(ln)
             elif re.search(r"\b(20\d{2}|19\d{2})\b", ln):
@@ -281,31 +334,23 @@ def extract_cv_signals(candidate: dict, cv_text: str) -> str:
 
         if current in sections:
             sections[current].append(ln)
-        else:
-            # ignore unknown sections
-            pass
 
-    # Compress experience: remove very long paragraphs, keep bullet-ish and date/company/title lines
     exp_out: List[str] = []
     for ln in sections["experience"]:
         if len(ln) > 240:
-            # keep only the first chunk of long lines
             ln = ln[:240].rstrip()
         if re.search(r"\b(20\d{2}|19\d{2})\b", ln) or ln.startswith(("•", "-", "●")):
             exp_out.append(ln)
         elif re.search(r"\b(technician|engineer|operator|specialist|automation|automatis|process|warehouse|lager)\b", ln, flags=re.I):
             exp_out.append(ln)
 
-    exp_out = exp_out[:60]  # cap
-
-    # Skills/licenses are usually lists -> keep more
+    exp_out = exp_out[:60]
     skills_out = sections["skills"][:60]
     lic_out = sections["licenses"][:30]
     edu_out = sections["education"][:25]
     lang_out = sections["languages"][:15]
 
-    all_text = raw
-    tech_tokens = _extract_skill_tokens(all_text)
+    tech_tokens = _extract_skill_tokens(raw)
 
     name = (candidate.get("full_name") or "Unknown").strip()
     city = (candidate.get("city") or "").strip()
@@ -362,10 +407,8 @@ def chunk_text(text: str, chunk_chars: int, overlap_chars: int, max_chunks: int)
 
     return chunks
 
+
 def build_chunk_inputs(candidate: dict, chunks: List[str]) -> List[str]:
-    """
-    For similarity search (doc-doc), use search_document on BOTH sides.
-    """
     name = (candidate.get("full_name") or "Unknown").strip()
     city = (candidate.get("city") or "").strip()
     headline = (candidate.get("headline") or "").strip()
@@ -382,11 +425,8 @@ def build_chunk_inputs(candidate: dict, chunks: List[str]) -> List[str]:
         inputs.append(f"search_document: {header}\nCV Chunk {i}/{len(chunks)}:\n{ch}")
     return inputs
 
+
 async def ollama_embed_batch(inputs: List[str]) -> List[List[float]]:
-    """
-    Calls Ollama /api/embed with batch input.
-    /api/embed returns L2-normalized vectors, but after pooling we normalize again.
-    """
     if not inputs:
         return []
 
@@ -406,7 +446,7 @@ async def ollama_embed_batch(inputs: List[str]) -> List[List[float]]:
             else:
                 raise ValueError(f"Unexpected Ollama embed response keys: {list(data.keys())}")
 
-        out = []
+        out: List[List[float]] = []
         for e in embs:
             if not e or len(e) != DIMS:
                 got = len(e) if e else 0
@@ -415,21 +455,23 @@ async def ollama_embed_batch(inputs: List[str]) -> List[List[float]]:
 
         return out
 
-async def build_candidate_vector(candidate: dict, cv_text: str) -> Optional[List[float]]:
+
+async def embed_text_to_vector(candidate: dict, source_text: str) -> Optional[List[float]]:
     """
-    1) Clean CV text
-    2) Extract signals (remove boilerplate)
-    3) Chunk + /api/embed batch
-    4) Mean pool + final L2 normalize
+    Your production embedding pipeline:
+      - clean
+      - extract signals
+      - fallback to raw if too short
+      - chunk
+      - /api/embed batch
+      - mean pool
+      - L2 normalize
     """
-    cv_clean = clean_text_keep_unicode(cv_text)
+    cv_clean = clean_text_keep_unicode(source_text)
     if len(cv_clean) < 50:
         return None
 
-    # Signal extraction first
     signal_doc = extract_cv_signals(candidate, cv_clean)
-
-    # If signal extraction got too short, fallback to cleaned raw CV
     embed_source = signal_doc if len(signal_doc) >= MIN_SIGNAL_CHARS else cv_clean
 
     chunks = chunk_text(embed_source, CHUNK_CHARS, OVERLAP_CHARS, MAX_CHUNKS)
@@ -457,7 +499,6 @@ def download_and_extract_cv(candidate: dict) -> Tuple[str, bool]:
 
     is_pdf = bucket_path.lower().endswith(".pdf")
     is_docx = bucket_path.lower().endswith(".docx")
-
     local_ext = ".pdf" if is_pdf else (".docx" if is_docx else ".txt")
 
     cid = candidate.get("id") or candidate.get("user_id") or "unknown"
@@ -494,73 +535,174 @@ def download_and_extract_cv(candidate: dict) -> Tuple[str, bool]:
     return cv_text, bool(has_picture)
 
 
-# ---------------- Main enrichment loop ----------------
+# ---------------- Core: process one candidate ----------------
+
+def build_candidate_debug_text(candidate: dict, cv_text: str) -> str:
+    cv_clean = clean_text_keep_unicode(cv_text)
+    signal_doc = extract_cv_signals(candidate, cv_clean)
+    debug_source = signal_doc if signal_doc else cv_clean
+    debug_preview = debug_source[:MAX_DEBUG_PREVIEW]
+
+    name = (candidate.get("full_name") or "Unknown").strip()
+    return (
+        f"search_document: Candidate: {name}\n"
+        f"CV Signals Preview:\n{debug_preview}"
+    ).strip()
+
+
+def should_build_profile(c: dict) -> bool:
+    if FORCE_REBUILD_PROFILE:
+        return True
+    return c.get("profile_vector") is None
+
+
+def should_build_wish(c: dict) -> bool:
+    if FORCE_REBUILD_WISH:
+        return bool((c.get("wish_text_vector") or "").strip())
+    return (c.get("wish_vector") is None) and bool((c.get("wish_text_vector") or "").strip())
+
+
+def should_build_tags(c: dict) -> bool:
+    if FORCE_REBUILD_TAGS:
+        return True
+    return c.get("category_tags") is None
+
+
+def combine_for_tags(candidate_text_vector: str, wish_text_vector: str) -> str:
+    # Tags should be derived from the same human-readable sources we store
+    combined = "\n".join([candidate_text_vector or "", wish_text_vector or ""]).strip()
+    return combined
+
+
+# ---------------- Main enrichment loop (paged + resumable) ----------------
 
 async def enrich_candidates():
-    print("📋 Candidate Vector Generation (Signal extraction + Chunk pooling + /api/embed batch)")
+    print("📋 Candidate enrichment: profile_vector + wish_vector + category_tags")
+    print(f"   model={EMBEDDING_MODEL} dims={DIMS} embed_url={OLLAMA_EMBED_URL}")
+    print(f"   batch_size={BATCH_SIZE} force_profile={FORCE_REBUILD_PROFILE} force_wish={FORCE_REBUILD_WISH} force_tags={FORCE_REBUILD_TAGS}")
 
-    res = (
-        supabase.table("candidate_profiles")
-        .select("*")
-        .is_("profile_vector", "null")
-        .execute()
-    )
-    candidates = res.data or []
+    last_id = load_resume_cursor()
+    if last_id:
+        print(f"📌 Resuming after last_id={last_id}")
 
-    if not candidates:
-        print("✅ No candidates need updating.")
-        return
+    total_seen = 0
+    total_updated = 0
 
-    print(f"📋 Found {len(candidates)} candidates to process.")
-
-    for c in candidates:
-        email = c.get("email", "Unknown")
-        print(f"\n👤 Processing: {email}")
-
-        try:
-            cv_text = c.get("cv_text") or ""
-            has_picture = False
-
-            if not cv_text.strip():
-                cv_text, has_picture = download_and_extract_cv(c)
-
-            if not cv_text or len(cv_text) < 50:
-                try:
-                    supabase.table("candidate_profiles").update({
-                        "has_picture": bool(has_picture)
-                    }).eq("id", c["id"]).execute()
-                except Exception as e:
-                    print(f"⚠️ Could not update has_picture: {e}")
-
-                print("⏭️ Skipping: No usable CV text (possibly scanned/image-only).")
-                continue
-
-            vec = await build_candidate_vector(c, cv_text)
-            if vec is None:
-                print("⏭️ Skipping: Vector build failed (no chunks).")
-                continue
-
-            # Debug preview: store extracted signals first, fallback to raw
-            cv_clean = clean_text_keep_unicode(cv_text)
-            signal_doc = extract_cv_signals(c, cv_clean)
-            debug_source = signal_doc if signal_doc else cv_clean
-            debug_preview = debug_source[:MAX_DEBUG_PREVIEW]
-
-            debug_text = (
-                f"search_document: Candidate: {(c.get('full_name') or 'Unknown')}\n"
-                f"CV Signals Preview:\n{debug_preview}"
+    while True:
+        q = (
+            supabase.table("candidate_profiles")
+            .select(
+                "id,user_id,email,full_name,city,headline,"
+                "cv_bucket_path,cv_text,has_picture,"
+                "candidate_text_vector,profile_vector,"
+                "wish_text_vector,wish_vector,"
+                "category_tags"
             )
+            .order("id", desc=False)
+            .limit(BATCH_SIZE)
+        )
+        if last_id:
+            q = q.gt("id", last_id)
 
-            supabase.table("candidate_profiles").update({
-                "profile_vector": vec,
-                "candidate_text_vector": debug_text,
-                "has_picture": bool(has_picture),
-            }).eq("id", c["id"]).execute()
+        resp = q.execute()
+        rows = resp.data or []
+        if not rows:
+            print("✅ Done. No more rows.")
+            break
 
-            print(f"✅ Updated vector for {email} | has_picture={bool(has_picture)}")
+        total_seen += len(rows)
+        last_id = rows[-1].get("id")
+        if last_id:
+            save_resume_cursor(last_id)
 
-        except Exception as e:
-            print(f"❌ Failed for {email}: {e}")
+        for c in rows:
+            cid = c.get("id")
+            email = c.get("email") or c.get("user_id") or "unknown"
+            print(f"\n👤 Processing: {email} (id={cid})")
+
+            try:
+                need_profile = should_build_profile(c)
+                need_wish = should_build_wish(c)
+                need_tags = should_build_tags(c)
+
+                if not (need_profile or need_wish or need_tags):
+                    print("✅ Already complete (profile_vector + wish_vector (if any) + category_tags).")
+                    continue
+
+                patch: Dict[str, Any] = {"has_picture": bool(c.get("has_picture") or False)}
+
+                # ----- Build / refresh CV text -----
+                cv_text = (c.get("cv_text") or "").strip()
+                has_picture = bool(c.get("has_picture") or False)
+
+                if need_profile or need_tags:
+                    if not cv_text:
+                        cv_text, has_picture = download_and_extract_cv(c)
+                        patch["has_picture"] = bool(has_picture)
+
+                    if not cv_text or len(cv_text) < 50:
+                        # can't build profile vector; still can build wish vector + tags from wish only
+                        print("⏭️ No usable CV text (possibly scanned/image-only).")
+
+                    else:
+                        # always keep candidate_text_vector fresh if we are building profile OR tags are missing
+                        debug_text = build_candidate_debug_text(c, cv_text)
+                        patch["candidate_text_vector"] = debug_text
+
+                        if need_profile:
+                            vec = await embed_text_to_vector(c, cv_text)
+                            if vec is None:
+                                print("⏭️ Skipping profile_vector: vector build failed (no chunks).")
+                            else:
+                                patch["profile_vector"] = vec
+                                print(f"✅ profile_vector ready ({len(vec)} dims)")
+
+                # ----- Build wish vector (from wish_text_vector) -----
+                if need_wish:
+                    wish_text = (c.get("wish_text_vector") or "").strip()
+                    if not wish_text:
+                        print("ℹ️ No wish_text_vector present; skipping wish_vector.")
+                    else:
+                        # Reuse same embedding pipeline (signals/sections works fine even for wish text)
+                        vec_w = await embed_text_to_vector(c, wish_text)
+                        if vec_w is None:
+                            print("⏭️ Skipping wish_vector: vector build failed.")
+                        else:
+                            patch["wish_vector"] = vec_w
+                            print(f"✅ wish_vector ready ({len(vec_w)} dims)")
+
+                # ----- Compute category tags whenever we write vectors OR tags missing -----
+                # Use candidate_text_vector (signal doc) + wish_text_vector for best signal.
+                if need_tags or ("profile_vector" in patch) or ("wish_vector" in patch):
+                    candidate_text_vector = patch.get("candidate_text_vector") or c.get("candidate_text_vector") or ""
+                    wish_text_vector = c.get("wish_text_vector") or ""
+                    combined = combine_for_tags(candidate_text_vector, wish_text_vector)
+                    tags = compute_category_tags_from_text(combined)
+                    patch["category_tags"] = tags
+                    print(f"🏷️ category_tags = {tags}")
+
+                # ----- Persist patch -----
+                # Only update if patch has something meaningful beyond has_picture
+                meaningful = [k for k in patch.keys() if k not in ("has_picture",)]
+                if not meaningful and patch.get("has_picture") == bool(c.get("has_picture") or False):
+                    print("ℹ️ Nothing to update.")
+                    continue
+
+                supabase.table("candidate_profiles").update(patch).eq("id", cid).execute()
+                total_updated += 1
+                print(f"✅ Updated candidate {email}")
+
+            except Exception as e:
+                print(f"❌ Failed for {email}: {e}")
+
+            if SLEEP_S > 0:
+                await asyncio.sleep(SLEEP_S)
+
+    print("\n📊 Summary")
+    print(f"   total_seen={total_seen}")
+    print(f"   total_updated_rows={total_updated}")
+    print(f"   resume_file={RESUME_FILE} (delete if finished)")
+
 
 if __name__ == "__main__":
     asyncio.run(enrich_candidates())

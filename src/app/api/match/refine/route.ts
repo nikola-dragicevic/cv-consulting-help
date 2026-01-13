@@ -1,19 +1,15 @@
-// app/api/match/refine/route.ts
-import { NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-import { embedProfile } from "@/lib/ollama" 
+// src/app/api/match/refine/route.ts
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { embedProfile } from "@/lib/ollama";
 
-// NOTE: We will import `get_local_embedding` or similar if available, 
-// or use the same logic as your scripts. Since this is Next.js, we assume 
-// there is an 'embedText' or similar in @/lib/ollama or we fetch directly.
-// For now, I will assume embedProfile can handle generic text, or I use the fetch pattern.
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export const runtime = "nodejs"
-export const dynamic = "force-dynamic"
-
-// Define OLLAMA config directly here to be safe, or import from lib
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://worker:8000/api/embeddings" // Internal Docker URL usually
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "snowflake-arctic-embed2"
+const OLLAMA_URL =
+  process.env.OLLAMA_URL || "http://worker:8000/api/embeddings";
+const EMBEDDING_MODEL =
+  process.env.EMBEDDING_MODEL || "snowflake-arctic-embed2";
 
 async function generateEmbedding(text: string): Promise<number[]> {
   try {
@@ -21,38 +17,57 @@ async function generateEmbedding(text: string): Promise<number[]> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),
-    })
-    if (!res.ok) throw new Error("Ollama error")
-    const data = await res.json()
-    return data.embedding
+    });
+    if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
+    const data = await res.json();
+    return data.embedding ?? [];
   } catch (e) {
-    console.error("Embedding failed:", e)
-    return []
+    console.error("Embedding failed:", e);
+    return [];
   }
 }
 
 function jsonError(message: string, status = 500) {
-  console.error("[API ERROR /match/refine]", message)
-  return NextResponse.json({ error: message }, { status })
+  console.error("[API ERROR /match/refine]", message);
+  return NextResponse.json({ error: message }, { status });
 }
 
-const CITY_FALLBACK: Record<string, { lat: number; lon: number; county?: string; metro?: string }> = {
+const CITY_FALLBACK: Record<
+  string,
+  { lat: number; lon: number; county?: string; metro?: string }
+> = {
   stockholm: { lat: 59.3293, lon: 18.0686, county: "01", metro: "stockholm" },
-  göteborg:  { lat: 57.7089, lon: 11.9746, county: "14", metro: "goteborg" },
-  goteborg:  { lat: 57.7089, lon: 11.9746, county: "14", metro: "goteborg" },
-  malmö:     { lat: 55.6050, lon: 13.0038, county: "12", metro: "malmo" },
-  malmo:     { lat: 55.6050, lon: 13.0038, county: "12", metro: "malmo" },
-  uppsala:   { lat: 59.8586, lon: 17.6389, county: "03", metro: "uppsala" },
-}
+  göteborg: { lat: 57.7089, lon: 11.9746, county: "14", metro: "goteborg" },
+  goteborg: { lat: 57.7089, lon: 11.9746, county: "14", metro: "goteborg" },
+  malmö: { lat: 55.605, lon: 13.0038, county: "12", metro: "malmo" },
+  malmo: { lat: 55.605, lon: 13.0038, county: "12", metro: "malmo" },
+  uppsala: { lat: 59.8586, lon: 17.6389, county: "03", metro: "uppsala" },
+};
 
-function coerceGeo(input: { city?: string; lat?: number; lon?: number; county_code?: string | null }) {
+function coerceGeo(input: {
+  city?: string;
+  lat?: number;
+  lon?: number;
+  county_code?: string | null;
+}) {
   if (typeof input.lat === "number" && typeof input.lon === "number") {
-    return { lat: input.lat, lon: input.lon, county: input.county_code ?? null, metro: null as string | null }
+    return {
+      lat: input.lat,
+      lon: input.lon,
+      county: input.county_code ?? null,
+      metro: null as string | null,
+    };
   }
-  const key = (input.city || "").trim().toLowerCase()
-  const f = CITY_FALLBACK[key]
-  if (f) return { lat: f.lat, lon: f.lon, county: input.county_code ?? f.county ?? null, metro: f.metro ?? null }
-  return null
+  const key = (input.city || "").trim().toLowerCase();
+  const f = CITY_FALLBACK[key];
+  if (f)
+    return {
+      lat: f.lat,
+      lon: f.lon,
+      county: input.county_code ?? f.county ?? null,
+      metro: f.metro ?? null,
+    };
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -62,86 +77,97 @@ export async function POST(req: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    let body: any
+    let body: any;
     try {
-      body = await req.json()
+      body = await req.json();
     } catch {
-      return jsonError("Invalid JSON body", 400)
+      return jsonError("Invalid JSON body", 400);
     }
 
-    if (!body?.candidate_id) return jsonError("candidate_id is required", 400)
-    if (!body?.wish) return jsonError("wish is required", 400)
+    if (!body?.candidate_id) return jsonError("candidate_id is required", 400);
+    if (!body?.wish) return jsonError("wish is required", 400);
 
-    // 1. Get User Profile Vector
-    let v_profile: number[];
-    let cand_geo: { lat: number | null, lon: number | null, radius: number | null } = { lat: null, lon: null, radius: null };
+    // 1) Load candidate vectors + geo + tags
+    let v_profile: number[] = [];
+    let candidateTags: string[] | null = null;
+
+    let cand_geo: { lat: number | null; lon: number | null; radius: number | null } =
+      { lat: null, lon: null, radius: null };
 
     if (body.candidate_id === "demo-local" && body.cv_text) {
       v_profile = await embedProfile(body.cv_text);
+      candidateTags = null;
     } else if (body.candidate_id !== "demo-local") {
       const { data: cand, error: candErr } = await supabaseService
         .from("candidate_profiles")
-        .select("profile_vector, location_lat, location_lon, commute_radius_km")
+        .select("profile_vector, category_tags, location_lat, location_lon, commute_radius_km")
         .eq("user_id", body.candidate_id)
-        .maybeSingle()
+        .maybeSingle();
 
       if (candErr || !cand?.profile_vector) {
-        return jsonError("Ditt CV analyseras fortfarande. Klicka 'Hitta matchningar' först.", 400);
+        return jsonError(
+          "Ditt CV analyseras fortfarande. Klicka 'Hitta matchningar' först.",
+          400
+        );
       }
-      v_profile = cand.profile_vector as number[]
-      cand_geo = { lat: cand.location_lat, lon: cand.location_lon, radius: cand.commute_radius_km };
+
+      v_profile = cand.profile_vector as number[];
+      candidateTags = (cand.category_tags as string[] | null) ?? null;
+
+      cand_geo = {
+        lat: cand.location_lat,
+        lon: cand.location_lon,
+        radius: cand.commute_radius_km,
+      };
     } else {
       return jsonError("Refine requires a logged-in user or cv_text.", 400);
     }
 
-    // 2. CONSTRUCT WISH TEXT STRING (This is the Magic Step)
+    // 2) Build wish text
     const wish = body.wish;
-    const parts = [];
-    
-    // Explicit description is king
+    const parts: string[] = [];
+
     if (wish.freeText) parts.push(`Målbild/Beskrivning: ${wish.freeText}`);
-    
-    // Structured data adds weight
     if (wish.titles?.length) parts.push(`Önskade titlar: ${wish.titles.join(", ")}`);
     if (wish.use_skills?.length) parts.push(`Färdigheter jag vill använda: ${wish.use_skills.join(", ")}`);
     if (wish.learn_skills?.length) parts.push(`Vill lära mig: ${wish.learn_skills.join(", ")}`);
     if (wish.industries?.length) parts.push(`Branscher: ${wish.industries.join(", ")}`);
     if (wish.modality) parts.push(`Arbetssätt: ${wish.modality}`);
-    
+
     const fullWishText = parts.join("\n");
     console.log("📝 Generating Wish Vector for:", fullWishText);
 
-    // 3. Vectorize the Wish
+    // 3) Vectorize wish
     const v_wish = await generateEmbedding(fullWishText);
 
-    // 4. SAVE TO DATABASE (If logged in)
-    // This allows us to debug exactly what the AI matched against later.
+    // 4) Save wish info (logged-in only)
     if (body.candidate_id !== "demo-local") {
-        await supabaseService
-            .from("candidate_profiles")
-            .update({
-                wish_vector: v_wish,
-                wish_text_vector: fullWishText // ✅ Saving the debug string
-            })
-            .eq("user_id", body.candidate_id);
+      await supabaseService
+        .from("candidate_profiles")
+        .update({
+          wish_vector: v_wish,
+          wish_text_vector: fullWishText,
+        })
+        .eq("user_id", body.candidate_id);
     }
 
-    // 5. Determine Geo parameters
-    const geoFromWish = (typeof wish.lat === "number" && typeof wish.lon === "number")
-      ? { lat: wish.lat, lon: wish.lon, county: wish.county_code ?? null, metro: null as string | null }
-      : null
-      
+    // 5) Determine geo
+    const geoFromWish =
+      typeof wish.lat === "number" && typeof wish.lon === "number"
+        ? { lat: wish.lat, lon: wish.lon, county: wish.county_code ?? null, metro: null as string | null }
+        : null;
+
     const geo =
       geoFromWish ??
       (cand_geo.lat && cand_geo.lon
         ? { lat: cand_geo.lat as number, lon: cand_geo.lon as number, county: null as string | null, metro: null as string | null }
-        : coerceGeo({ city: wish.location_city }))
+        : coerceGeo({ city: wish.location_city, county_code: wish.county_code ?? null }));
 
-    if (!geo) return jsonError("Missing/unknown location for refine step", 400)
+    if (!geo) return jsonError("Missing/unknown location for refine step", 400);
 
-    const radiusKm = Number(wish.radius_km ?? cand_geo.radius ?? 40)
-    
-    // 6. Call RPC with updated weights (Logic is now 80% Wish / 20% CV in your SQL)
+    const radiusKm = Number(wish.radius_km ?? cand_geo.radius ?? 40);
+
+    // 6) RPC call (✅ now includes candidate_tags hard gate)
     const { data, error } = await supabaseService.rpc("match_jobs_profile_wish", {
       v_profile,
       v_wish,
@@ -152,15 +178,16 @@ export async function POST(req: Request) {
       county: geo.county,
       remote_boost: !!wish.remoteBoost,
       p_top_k: 50,
-    })
+      candidate_tags: candidateTags, // ✅ added
+    });
 
     if (error) {
-      console.error("RPC error:", error)
-      return jsonError(error.message, 500)
+      console.error("RPC error:", error);
+      return jsonError(error.message, 500);
     }
 
-    return NextResponse.json({ jobs: data ?? [] })
+    return NextResponse.json({ jobs: data ?? [] });
   } catch (e: any) {
-    return jsonError(e?.message ?? "Server error")
+    return jsonError(e?.message ?? "Server error");
   }
 }
