@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Multiple Occupation Fields Matching</title>
+    <style>
+        body {
+            font-family: monospace;
+            max-width: 1200px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .container {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            padding: 30px;
+            border-radius: 8px;
+        }
+        h1 {
+            color: #4ec9b0;
+            border-bottom: 2px solid #4ec9b0;
+            padding-bottom: 10px;
+        }
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        button:hover {
+            background: #1177bb;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 20px;
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+        .info { color: #dcdcaa; }
+        .job {
+            padding: 10px;
+            margin: 10px 0;
+            background: #2d2d30;
+            border-left: 3px solid #4ec9b0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Multiple Occupation Fields Matching</h1>
+
+        <p class="info">
+            This test page calls the API directly to verify that Lidia gets BOTH restaurant AND cleaning jobs.
+        </p>
+
+        <button onclick="testMatching()">▶️ Test Matching for Lidia</button>
+        <button onclick="clearResult()">🗑️ Clear Results</button>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        async function testMatching() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p class="info">⏳ Testing...</p>';
+
+            try {
+                // Call the init API
+                const response = await fetch('http://localhost:3000/api/match/init', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',  // Include auth cookies
+                    body: JSON.stringify({
+                        city: 'Stockholm',
+                        radius_km: 40
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    resultDiv.innerHTML = `<p class="error">❌ Error: ${data.error}</p>`;
+                    return;
+                }
+
+                // Check if we got diverse jobs
+                const jobs = data.jobs || [];
+                const restaurantJobs = jobs.filter(j =>
+                    j.headline.toLowerCase().includes('restaurang') ||
+                    j.headline.toLowerCase().includes('kök') ||
+                    j.headline.toLowerCase().includes('bronck') ||
+                    j.headline.toLowerCase().includes('servic')
+                );
+                const cleaningJobs = jobs.filter(j =>
+                    j.headline.toLowerCase().includes('clean') ||
+                    j.headline.toLowerCase().includes('städ') ||
+                    j.headline.toLowerCase().includes('lokalvård')
+                );
+
+                let html = `<p class="success">✅ SUCCESS! Got ${jobs.length} jobs</p>\n\n`;
+
+                html += `<p class="info">📊 Analysis:</p>\n`;
+                html += `<p>  Restaurant jobs: <span class="success">${restaurantJobs.length}</span></p>\n`;
+                html += `<p>  Cleaning jobs: <span class="success">${cleaningJobs.length}</span></p>\n\n`;
+
+                if (restaurantJobs.length > 0 && cleaningJobs.length > 0) {
+                    html += `<p class="success">🎉 PERFECT! Getting BOTH restaurant AND cleaning jobs!</p>\n\n`;
+                } else if (restaurantJobs.length > 0) {
+                    html += `<p class="error">⚠️  Only getting restaurant jobs. Missing cleaning jobs.</p>\n\n`;
+                } else if (cleaningJobs.length > 0) {
+                    html += `<p class="error">⚠️  Only getting cleaning jobs. Missing restaurant jobs.</p>\n\n`;
+                } else {
+                    html += `<p class="error">⚠️  Not getting expected job types.</p>\n\n`;
+                }
+
+                html += `<p class="info">📋 Top 10 Jobs:</p>\n`;
+                jobs.slice(0, 10).forEach((job, i) => {
+                    const isRestaurant = restaurantJobs.includes(job);
+                    const isCleaning = cleaningJobs.includes(job);
+                    const badge = isRestaurant ? '🍽️' : isCleaning ? '🧹' : '💼';
+                    html += `<div class="job">${i+1}. ${badge} ${job.headline} (${Math.round(job.s_profile * 100)}%)</div>`;
+                });
+
+                resultDiv.innerHTML = html;
+
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">❌ Error: ${error.message}</p>`;
+            }
+        }
+
+        function clearResult() {
+            document.getElementById('result').innerHTML = '';
+        }
+
+        // Auto-run test on load
+        window.addEventListener('load', () => {
+            setTimeout(testMatching, 500);
+        });
+    </script>
+</body>
+</html>

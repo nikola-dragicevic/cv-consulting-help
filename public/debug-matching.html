@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Job Matching</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover { background: #1177bb; }
+        .output {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            padding: 15px;
+            margin: 10px 0;
+            white-space: pre-wrap;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+        .warning { color: #dcdcaa; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Debug Job Matching System</h1>
+
+    <div>
+        <button onclick="clearCache()">🗑️ Clear All Cache</button>
+        <button onclick="checkAuth()">👤 Check Auth Status</button>
+        <button onclick="testMatching()">🎯 Test Job Matching</button>
+        <button onclick="checkLocalStorage()">💾 Check localStorage</button>
+    </div>
+
+    <div id="output" class="output"></div>
+
+    <script>
+        function log(msg, color = '') {
+            const output = document.getElementById('output');
+            const span = document.createElement('div');
+            if (color) span.className = color;
+            span.textContent = msg;
+            output.appendChild(span);
+        }
+
+        function clear() {
+            document.getElementById('output').innerHTML = '';
+        }
+
+        async function clearCache() {
+            clear();
+            log('🗑️ Clearing all cache...', 'warning');
+
+            // Clear localStorage
+            localStorage.clear();
+            log('✅ localStorage cleared');
+
+            // Clear sessionStorage
+            sessionStorage.clear();
+            log('✅ sessionStorage cleared');
+
+            // Clear cookies (only our domain)
+            document.cookie.split(";").forEach(c => {
+                document.cookie = c.trim().split("=")[0] + '=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/';
+            });
+            log('✅ Cookies cleared');
+
+            log('\n✅ All cache cleared! Please log in again and test.', 'success');
+        }
+
+        async function checkAuth() {
+            clear();
+            log('👤 Checking authentication status...\n', 'warning');
+
+            try {
+                const response = await fetch('/api/auth/user', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    log('✅ User is authenticated:', 'success');
+                    log(JSON.stringify(data, null, 2));
+                } else {
+                    log('❌ Not authenticated', 'error');
+                    log('Response status: ' + response.status);
+                }
+            } catch (err) {
+                log('❌ Error checking auth: ' + err.message, 'error');
+                log('\nNote: /api/auth/user might not exist.');
+                log('Try checking: document.cookie');
+                log('Current cookies: ' + document.cookie);
+            }
+        }
+
+        async function testMatching() {
+            clear();
+            log('🎯 Testing job matching...\n', 'warning');
+
+            try {
+                log('Calling /api/match/init...');
+                const response = await fetch('/api/match/init', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        city: 'Stockholm',
+                        radius_km: 40
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    log('❌ API Error: ' + data.error, 'error');
+                    return;
+                }
+
+                const jobs = data.jobs || [];
+                log(`✅ Got ${jobs.length} jobs\n`, 'success');
+
+                // Analyze job types
+                const restaurant = jobs.filter(j =>
+                    /restaurang|kök|bronck|servic/i.test(j.headline)
+                );
+                const cleaning = jobs.filter(j =>
+                    /clean|städ|lokalvård/i.test(j.headline)
+                );
+                const it = jobs.filter(j =>
+                    /data|engineer|developer|it|system/i.test(j.headline)
+                );
+
+                log('📊 Job Type Analysis:');
+                log(`  Restaurant: ${restaurant.length}`);
+                log(`  Cleaning: ${cleaning.length}`);
+                log(`  IT/Tech: ${it.length}\n`);
+
+                if (it.length > restaurant.length + cleaning.length) {
+                    log('⚠️  WARNING: Getting mostly IT jobs!', 'error');
+                    log('This means you are logged in as an IT profile (Nikola)');
+                    log('NOT as Lidia (cleaning/restaurant)!\n');
+                } else if (restaurant.length > 0 && cleaning.length > 0) {
+                    log('✅ SUCCESS: Getting both restaurant AND cleaning jobs!', 'success');
+                    log('The multi-field matching is working!\n');
+                }
+
+                log('Top 10 jobs:');
+                jobs.slice(0, 10).forEach((job, i) => {
+                    const score = Math.round((job.s_profile || 0) * 100);
+                    const emoji = /restaurang|kök/i.test(job.headline) ? '🍽️' :
+                                  /clean|städ/i.test(job.headline) ? '🧹' :
+                                  /data|engineer|it/i.test(job.headline) ? '💻' : '💼';
+                    log(`${i+1}. ${emoji} ${job.headline} (${score}%)`);
+                });
+
+            } catch (err) {
+                log('❌ Error: ' + err.message, 'error');
+            }
+        }
+
+        async function checkLocalStorage() {
+            clear();
+            log('💾 Checking localStorage...\n', 'warning');
+
+            if (localStorage.length === 0) {
+                log('✅ localStorage is empty', 'success');
+            } else {
+                log(`Found ${localStorage.length} items in localStorage:\n`);
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    const value = localStorage.getItem(key);
+                    log(`${key}:`);
+                    try {
+                        log(JSON.stringify(JSON.parse(value), null, 2));
+                    } catch {
+                        log(value);
+                    }
+                    log('');
+                }
+            }
+
+            log('\nCookies: ' + (document.cookie || '(none)'));
+        }
+
+        // Auto-check auth on load
+        window.addEventListener('load', () => {
+            setTimeout(checkAuth, 100);
+        });
+    </script>
+</body>
+</html>

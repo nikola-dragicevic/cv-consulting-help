@@ -90,10 +90,41 @@ def load_category_map() -> Dict[str, Any]:
 CATEGORY_MAP = load_category_map()
 
 
+def load_occupation_field_relations() -> dict:
+    """Load occupation field relationships and multi-field category mappings"""
+    env_path = os.getenv("OCCUPATION_FIELD_RELATIONS_PATH")
+    candidates: List[Path] = []
+    if env_path:
+        candidates.append(Path(env_path))
+
+    candidates += [
+        REPO_ROOT / "config" / "occupation_field_relations.json",
+        REPO_ROOT / "src" / "app" / "config" / "occupation_field_relations.json",
+        REPO_ROOT / "app" / "config" / "occupation_field_relations.json",
+    ]
+
+    p = next((x for x in candidates if x.exists()), None)
+    if not p:
+        print("⚠️ occupation_field_relations.json not found. Using empty relations.")
+        return {"relations": {}, "multi_field_categories": {}}
+
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        print(f"✅ Loaded occupation field relations: {p}")
+        return data
+    except Exception as e:
+        print(f"❌ Failed to parse occupation field relations: {e}")
+        return {"relations": {}, "multi_field_categories": {}}
+
+
+OCCUPATION_FIELD_RELATIONS = load_occupation_field_relations()
+
+
 def compute_category_tags_from_text(text: str) -> List[str]:
     """
     Candidate-side category tagging:
     We match the category_map rules against a combined text (CV signal doc + wish text).
+    Uses word boundary matching to avoid false positives (e.g., "vård" in "lokalvård").
     """
     t = (text or "").lower()
     if not t:
@@ -106,12 +137,19 @@ def compute_category_tags_from_text(text: str) -> List[str]:
         role_contains = [x.lower() for x in rules.get("roles_contains", [])]
 
         hit = False
+        # For fields and groups, use substring matching (broader matching)
         if fields and any(f in t for f in fields):
             hit = True
         if groups and any(g in t for g in groups):
             hit = True
-        if role_contains and any(rc in t for rc in role_contains):
-            hit = True
+        # For role_contains, use word boundary matching to avoid false positives
+        if role_contains:
+            for rc in role_contains:
+                # Use regex word boundaries to match complete words only
+                pattern = r'\b' + re.escape(rc) + r'\b'
+                if re.search(pattern, t):
+                    hit = True
+                    break
 
         if hit:
             tags.append(tag)
@@ -167,26 +205,84 @@ TAG_PRIORITY = [
 
 def compute_primary_occupation_field(category_tags: List[str]) -> Optional[str]:
     """
-    Given category tags, determine the primary occupation field.
-    This provides a hard filter for job matching.
+    DEPRECATED: Use compute_occupation_fields instead.
+    Kept for backwards compatibility. Returns first field from compute_occupation_fields.
+    """
+    fields = compute_occupation_fields(category_tags, include_related=False)
+    return fields[0] if fields else None
+
+
+def compute_occupation_fields(category_tags: List[str], include_related: bool = True) -> List[str]:
+    """
+    Given category tags, determine all applicable occupation fields.
+    Supports multiple occupation fields per candidate for better job matching.
+
+    Args:
+        category_tags: List of category tags from the candidate
+        include_related: Whether to include related occupation fields
+
+    Returns:
+        List of occupation field labels (e.g., ["Hotell, restaurang, storhushåll", "Sanering och renhållning"])
     """
     if not category_tags:
-        return None
+        return []
 
     tag_set = set(category_tags)
+    occupation_fields = set()
 
+    # Check for multi-field categories first (e.g., Service/Hospitality → multiple fields)
+    multi_field_map = OCCUPATION_FIELD_RELATIONS.get("multi_field_categories", {})
+    for tag in category_tags:
+        if tag in multi_field_map and multi_field_map[tag]:
+            occupation_fields.update(multi_field_map[tag])
+
+    # If we found multi-field matches, use those
+    if occupation_fields:
+        result = sorted(list(occupation_fields))
+        if include_related:
+            # Add related fields for each primary field
+            related = set()
+            relations = OCCUPATION_FIELD_RELATIONS.get("relations", {})
+            for field in result:
+                if field in relations:
+                    related.update(relations[field].get("related", []))
+            if related:
+                result.extend(sorted(list(related)))
+        return result
+
+    # Otherwise, use single-field mapping with priority
     # IT/Software takes precedence (most common use case)
     if "Software Development" in tag_set or "IT" in tag_set:
-        return "Data/IT"
+        occupation_fields.add("Data/IT")
+    else:
+        # Find highest priority tag
+        for priority_tag in TAG_PRIORITY:
+            if priority_tag in tag_set:
+                field = CATEGORY_TO_OCCUPATION_FIELD.get(priority_tag)
+                if field:
+                    occupation_fields.add(field)
+                    break
 
-    # Find highest priority tag
-    for priority_tag in TAG_PRIORITY:
-        if priority_tag in tag_set:
-            return CATEGORY_TO_OCCUPATION_FIELD.get(priority_tag)
+        # Fallback: first tag alphabetically
+        if not occupation_fields:
+            first_tag = sorted(category_tags)[0]
+            field = CATEGORY_TO_OCCUPATION_FIELD.get(first_tag)
+            if field:
+                occupation_fields.add(field)
 
-    # Fallback: first tag alphabetically
-    first_tag = sorted(category_tags)[0]
-    return CATEGORY_TO_OCCUPATION_FIELD.get(first_tag)
+    result = sorted(list(occupation_fields))
+
+    # Add related fields if requested
+    if include_related and result:
+        related = set()
+        relations = OCCUPATION_FIELD_RELATIONS.get("relations", {})
+        for field in result:
+            if field in relations:
+                related.update(relations[field].get("related", []))
+        if related:
+            result.extend(sorted(list(related)))
+
+    return result
 
 
 # ---------------- Resume cursor helpers ----------------
@@ -487,13 +583,10 @@ def chunk_text(text: str, chunk_chars: int, overlap_chars: int, max_chunks: int)
 def build_chunk_inputs(candidate: dict, chunks: List[str]) -> List[str]:
     name = (candidate.get("full_name") or "Unknown").strip()
     city = (candidate.get("city") or "").strip()
-    headline = (candidate.get("headline") or "").strip()
 
     header_parts = [f"Candidate: {name}"]
     if city:
         header_parts.append(f"City: {city}")
-    if headline:
-        header_parts.append(f"Headline: {headline}")
     header = " | ".join(header_parts)
 
     inputs = []
@@ -668,8 +761,8 @@ async def enrich_candidates():
         q = (
             supabase.table("candidate_profiles")
             .select(
-                "id,user_id,email,full_name,city,headline,"
-                "cv_bucket_path,cv_text,has_picture,"
+                "id,user_id,email,full_name,city,"
+                "cv_bucket_path,has_picture,"
                 "candidate_text_vector,profile_vector,"
                 "wish_text_vector,wish_vector,"
                 "category_tags"
@@ -757,11 +850,13 @@ async def enrich_candidates():
                     patch["category_tags"] = tags
                     print(f"🏷️ category_tags = {tags}")
 
-                    # ----- Compute primary occupation field from tags -----
-                    primary_field = compute_primary_occupation_field(tags)
-                    if primary_field:
-                        patch["primary_occupation_field"] = primary_field
-                        print(f"🎯 primary_occupation_field = '{primary_field}'")
+                    # ----- Compute occupation fields from tags (supports multiple fields) -----
+                    # Set include_related=False to only use direct mappings
+                    # Set include_related=True to also include related occupation fields
+                    occupation_fields = compute_occupation_fields(tags, include_related=False)
+                    if occupation_fields:
+                        patch["primary_occupation_field"] = occupation_fields
+                        print(f"🎯 primary_occupation_field = {occupation_fields}")
 
                 # ----- Persist patch -----
                 # Only update if patch has something meaningful beyond has_picture

@@ -1,0 +1,89 @@
+{
+  "relations": {
+    "Hotell, restaurang, storhushåll": {
+      "related": ["Sanering och renhållning"],
+      "reason": "Cleaning is often part of restaurant/hotel work"
+    },
+    "Sanering och renhållning": {
+      "related": ["Hotell, restaurang, storhushåll"],
+      "reason": "Cleaning experience applies to hospitality settings"
+    },
+    "Data/IT": {
+      "related": ["Tekniskt arbete"],
+      "reason": "Technical work often overlaps with IT"
+    },
+    "Tekniskt arbete": {
+      "related": ["Data/IT", "Industriell tillverkning"],
+      "reason": "Technical skills transfer across domains"
+    },
+    "Hälso- och sjukvård": {
+      "related": ["Socialt arbete", "Kropps- och skönhetsvård"],
+      "reason": "Healthcare overlaps with social work and body care"
+    },
+    "Socialt arbete": {
+      "related": ["Hälso- och sjukvård"],
+      "reason": "Social work often involves health-related care"
+    },
+    "Administration, ekonomi, juridik": {
+      "related": ["Chefer och verksamhetsledare"],
+      "reason": "Administrative roles support management"
+    },
+    "Chefer och verksamhetsledare": {
+      "related": [],
+      "reason": "Management can apply to any domain through category tags"
+    },
+    "Försäljning, inköp, marknadsföring": {
+      "related": ["Administration, ekonomi, juridik"],
+      "reason": "Sales/marketing often requires administrative skills"
+    },
+    "Pedagogiskt arbete": {
+      "related": ["Socialt arbete"],
+      "reason": "Education and social work share similar skills"
+    },
+    "Bygg och anläggning": {
+      "related": ["Tekniskt arbete", "Installation, drift, underhåll"],
+      "reason": "Construction involves technical and maintenance skills"
+    },
+    "Installation, drift, underhåll": {
+      "related": ["Bygg och anläggning", "Tekniskt arbete"],
+      "reason": "Installation work overlaps with construction and technical"
+    },
+    "Transport": {
+      "related": ["Industriell tillverkning"],
+      "reason": "Logistics often works with manufacturing"
+    },
+    "Industriell tillverkning": {
+      "related": ["Tekniskt arbete", "Transport"],
+      "reason": "Manufacturing involves technical skills and logistics"
+    },
+    "Kultur, media, design": {
+      "related": ["Försäljning, inköp, marknadsföring"],
+      "reason": "Creative roles often interface with marketing"
+    },
+    "Säkerhetsarbete": {
+      "related": [],
+      "reason": "Security is specialized"
+    },
+    "Militärt arbete": {
+      "related": ["Säkerhetsarbete"],
+      "reason": "Military experience applies to security"
+    },
+    "Kropps- och skönhetsvård": {
+      "related": ["Hälso- och sjukvård"],
+      "reason": "Body care overlaps with healthcare"
+    },
+    "Naturbruk": {
+      "related": [],
+      "reason": "Agriculture/nature work is specialized"
+    },
+    "Naturvetenskapligt arbete": {
+      "related": ["Data/IT", "Tekniskt arbete"],
+      "reason": "Scientific work often requires technical and IT skills"
+    }
+  },
+  "multi_field_categories": {
+    "Service / Hospitality": ["Hotell, restaurang, storhushåll", "Sanering och renhållning"],
+    "Management": [],
+    "comment": "Categories that should map to multiple occupation fields. Management gets handled separately through category tags."
+  }
+}

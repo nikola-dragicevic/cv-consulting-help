@@ -59,7 +59,7 @@ export async function POST(req: Request) {
 
     let v_profile: number[] = [];
     let candidateTags: string[] | null = null;
-    let primaryOccupationField: string | null = null;
+    let primaryOccupationFields: string[] | null = null;
 
     if (user) {
       console.log(`Authenticated request for user: ${user.id}`);
@@ -87,9 +87,9 @@ export async function POST(req: Request) {
 
       v_profile = profile.profile_vector as number[];
       candidateTags = (profile.category_tags as string[] | null) ?? null;
-      primaryOccupationField = (profile.primary_occupation_field as string | null) ?? null;
+      primaryOccupationFields = (profile.primary_occupation_field as string[] | null) ?? null;
 
-      console.log("Using stored profile vector + category tags + occupation field:", primaryOccupationField);
+      console.log("Using stored profile vector + category tags + occupation fields:", primaryOccupationFields);
     } else {
       console.log("Anonymous request.");
 
@@ -119,7 +119,7 @@ export async function POST(req: Request) {
       radius_km: radiusKm,
       top_k: 20,
       candidate_tags: candidateTags,
-      filter_occupation_field: primaryOccupationField, // ✅ Hard filter by occupation field
+      filter_occupation_fields: primaryOccupationFields, // ✅ Hard filter by occupation fields (supports multiple)
     });
 
     if (error) {

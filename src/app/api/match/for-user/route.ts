@@ -28,7 +28,7 @@ export async function POST(req: Request) {
         // 1. Fetch the user's profile to get their vector and location
         const { data: profile, error: profileError } = await supabase
             .from('candidate_profiles')
-            .select('profile_vector, location_lat, location_lon, commute_radius_km')
+            .select('profile_vector, location_lat, location_lon, commute_radius_km, category_tags, primary_occupation_field')
             .eq('user_id', user.id)
             .single();
 
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
         if (!profile.profile_vector) {
             return NextResponse.json({ error: 'Din profil har uppdaterats och analyseras nu. Vänligen vänta 10-30 sekunder och försök igen.' }, { status: 400 });
         }
-        
+
         if (!profile.location_lat || !profile.location_lon) {
              return NextResponse.json({ error: 'Plats saknas i din profil. Vänligen uppdatera din stad.' }, { status: 400 });
         }
@@ -50,7 +50,9 @@ export async function POST(req: Request) {
             u_lat: profile.location_lat,
             u_lon: profile.location_lon,
             radius_km: profile.commute_radius_km || 40,
-            top_k: 50 // Fetch more for logged-in users
+            top_k: 50, // Fetch more for logged-in users
+            candidate_tags: (profile.category_tags as string[] | null) ?? null,
+            filter_occupation_fields: (profile.primary_occupation_field as string[] | null) ?? null
         });
         
         if (rpcError) throw new Error(rpcError.message);

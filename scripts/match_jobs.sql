@@ -1,10 +1,13 @@
 -- ✅ FINAL (768-dim) RPC FUNCTIONS WITH INTELLIGENT FALLBACK & CORRECT COLUMNS
+-- ✅ UPDATED: Support for multiple occupation fields per candidate
 
 drop function if exists match_jobs_initial(vector, float, float, float, int, text[]);
 drop function if exists match_jobs_initial(vector, float, float, float, int, text[], text);
+drop function if exists match_jobs_initial(vector, float, float, float, int, text[], text[]);
 drop function if exists match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int, text[]);
+drop function if exists match_jobs_profile_wish(vector, vector, float, float, float, text, text, boolean, int, text[], text[]);
 
--- 1) Initial matching with occupation field hard filter
+-- 1) Initial matching with occupation fields hard filter (supports multiple fields)
 create or replace function match_jobs_initial(
     v_profile vector(768),
     u_lat float,
@@ -12,7 +15,7 @@ create or replace function match_jobs_initial(
     radius_km float,
     top_k int,
     candidate_tags text[] default null,
-    filter_occupation_field text default null  -- ✅ Hard filter by occupation field
+    filter_occupation_fields text[] default null  -- ✅ Hard filter by occupation fields (array)
 )
 returns table (
     id text,
@@ -57,10 +60,13 @@ as $$
       or (j.category_tags && candidate_tags)
     )
 
-    -- ✅ HARD FILTER: Occupation field must match exactly (prevents cross-domain matches)
+    -- ✅ HARD FILTER: Occupation field must match one of the candidate's fields
+    -- When filter is set, exclude jobs with NULL occupation_field_label
+    -- Supports multiple occupation fields per candidate
     and (
-      filter_occupation_field is null
-      or j.occupation_field_label = filter_occupation_field
+      filter_occupation_fields is null
+      or array_length(filter_occupation_fields, 1) is null
+      or (j.occupation_field_label is not null and j.occupation_field_label = ANY(filter_occupation_fields))
     )
 
     and (
@@ -76,7 +82,7 @@ as $$
   limit top_k;
 $$;
 
--- 2) Refined matching with both vectors + occupation field filter
+-- 2) Refined matching with both vectors + occupation fields filter (supports multiple fields)
 create or replace function match_jobs_profile_wish(
     v_profile vector(768),
     v_wish vector(768),
@@ -88,7 +94,7 @@ create or replace function match_jobs_profile_wish(
     remote_boost boolean,
     p_top_k int,
     candidate_tags text[] default null,
-    filter_occupation_field text default null  -- ✅ Added occupation field filter
+    filter_occupation_fields text[] default null  -- ✅ Occupation fields filter (array)
 )
 returns table (
     id text,
@@ -139,10 +145,13 @@ as $$
       or (j.category_tags && candidate_tags)
     )
 
-    -- ✅ HARD FILTER: Occupation field must match exactly (same as initial match)
+    -- ✅ HARD FILTER: Occupation field must match one of the candidate's fields
+    -- When filter is set, exclude jobs with NULL occupation_field_label
+    -- Supports multiple occupation fields per candidate
     and (
-      filter_occupation_field is null
-      or j.occupation_field_label = filter_occupation_field
+      filter_occupation_fields is null
+      or array_length(filter_occupation_fields, 1) is null
+      or (j.occupation_field_label is not null and j.occupation_field_label = ANY(filter_occupation_fields))
     )
 
     and (
