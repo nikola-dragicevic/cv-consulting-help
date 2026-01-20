@@ -7,8 +7,14 @@ import { getBrowserSupabase } from "@/lib/supabaseBrowser";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { User, Eye } from "lucide-react"; 
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { User, Eye } from "lucide-react";
 import Link from "next/link";
 
 interface Profile {
@@ -18,6 +24,9 @@ interface Profile {
   city: string;
   street: string;
   cv_file_url: string | null;
+
+  // NEW
+  job_offer_consent?: boolean;
 }
 
 export default function ProfilePage() {
@@ -27,12 +36,17 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [cvFile, setCvFile] = useState<File | null>(null);
+
+  // Checkbox 1 (required)
   const [gdprAccepted, setGdprAccepted] = useState(false);
-  
-  // Kept the new state variables
+
+  // Checkbox 2 (optional): job offers/interviews only
+  const [jobOfferConsent, setJobOfferConsent] = useState(false);
+
+  // CV view state
   const [cvViewLoading, setCvViewLoading] = useState(false);
   const [cvViewError, setCvViewError] = useState<string | null>(null);
-  
+
   // Rate limiting state
   const [isRateLimited, setIsRateLimited] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -41,7 +55,6 @@ export default function ProfilePage() {
     (async () => {
       setLoading(true);
       try {
-        // load from server via cookie-authenticated route
         const res = await fetch("/api/profile", { method: "GET" });
 
         if (res.status === 401) {
@@ -53,8 +66,10 @@ export default function ProfilePage() {
         const data = await res.json();
 
         if (!data) {
-          // no profile row yet; still need email for display
-          const { data: { user } } = await supabase.auth.getUser();
+          const {
+            data: { user },
+          } = await supabase.auth.getUser();
+
           setProfile({
             full_name: "",
             email: user?.email || "",
@@ -62,9 +77,20 @@ export default function ProfilePage() {
             city: "",
             street: "",
             cv_file_url: null,
+            job_offer_consent: false,
           });
+
+          // Fresh profile
+          setJobOfferConsent(false);
+          setGdprAccepted(false);
         } else {
           setProfile(data);
+
+          // ✅ Load stored consent
+          setJobOfferConsent(Boolean(data.job_offer_consent));
+
+          // ✅ Reduce friction: profile already exists => keep checkbox 1 checked
+          setGdprAccepted(true);
         }
       } catch (e) {
         console.error("Error fetching profile:", e);
@@ -78,17 +104,16 @@ export default function ProfilePage() {
     e.preventDefault();
     if (!profile) return;
 
-    // Prevent spam
     if (isRateLimited) {
       setMessage(`Vänligen vänta ${countdown} sekunder innan du sparar igen.`);
       return;
     }
 
     if (!gdprAccepted) {
-      setMessage("Du måste godkänna villkoren för att spara.");
+      setMessage("Du måste godkänna behandlingen av dina uppgifter för att spara.");
       return;
     }
-    
+
     setLoading(true);
     setMessage("");
 
@@ -97,6 +122,10 @@ export default function ProfilePage() {
     form.append("phone", profile.phone);
     form.append("city", profile.city);
     form.append("street", profile.street);
+
+    // ✅ Send optional consent
+    form.append("jobOfferConsent", jobOfferConsent ? "true" : "false");
+
     if (cvFile) form.append("cv", cvFile);
 
     try {
@@ -104,13 +133,16 @@ export default function ProfilePage() {
       const result = await res.json();
 
       if (!res.ok) throw new Error(result.error || "Något gick fel.");
-      setMessage("✅ Din profil har sparats! Din matchningsprofil kommer att regenereras vid nästa sökning.");
+
+      setMessage(
+        "✅ Din profil har sparats! Din matchningsprofil kommer att regenereras vid nästa sökning."
+      );
 
       if (result.newCvUrl) {
-        setProfile(prev => (prev ? { ...prev, cv_file_url: result.newCvUrl } : prev));
+        setProfile((prev) => (prev ? { ...prev, cv_file_url: result.newCvUrl } : prev));
       }
 
-      // START RATE LIMITER
+      // Rate limiter
       setIsRateLimited(true);
       setCountdown(10);
       const timer = setInterval(() => {
@@ -123,7 +155,6 @@ export default function ProfilePage() {
           return prev - 1;
         });
       }, 1000);
-
     } catch (err: any) {
       setMessage(`Fel: ${err.message}`);
     } finally {
@@ -139,7 +170,6 @@ export default function ProfilePage() {
     if (profile) setProfile({ ...profile, [name]: value });
   };
 
-  // Kept the new 'handleViewCv' function
   const handleViewCv = async () => {
     setCvViewLoading(true);
     setCvViewError(null);
@@ -148,31 +178,27 @@ export default function ProfilePage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
       if (!token) {
-        setCvViewError('Ingen session token');
+        setCvViewError("Ingen session token");
         setCvViewLoading(false);
         return;
       }
 
-      // Call the server API
-      const response = await fetch('/api/cv/signed-url', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const response = await fetch("/api/cv/signed-url", {
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!response.ok) {
         const errData = await response.json();
-        setCvViewError(errData.error || 'Kunde inte hämta CV');
+        setCvViewError(errData.error || "Kunde inte hämta CV");
         setCvViewLoading(false);
         return;
       }
 
       const { url } = await response.json();
-      // Open CV in a new tab
-      window.open(url, '_blank');
+      window.open(url, "_blank");
       setCvViewLoading(false);
     } catch (err: any) {
-      setCvViewError(err.message || 'Fel vid hämtning av CV');
+      setCvViewError(err.message || "Fel vid hämtning av CV");
       setCvViewLoading(false);
     }
   };
@@ -189,6 +215,7 @@ export default function ProfilePage() {
           </CardTitle>
           <CardDescription>Håll din information uppdaterad för bästa matchningar.</CardDescription>
         </CardHeader>
+
         <CardContent>
           <form onSubmit={handleUpdateProfile} className="space-y-6">
             <div className="space-y-2">
@@ -220,25 +247,27 @@ export default function ProfilePage() {
             <div className="space-y-2">
               <Label htmlFor="cv-upload">Ladda upp nytt CV (PDF eller .txt)</Label>
               <div className="flex items-center gap-3">
-                <Input id="cv-upload" type="file" accept=".pdf,.txt" onChange={(e) => setCvFile(e.target.files?.[0] || null)} />
+                <Input
+                  id="cv-upload"
+                  type="file"
+                  accept=".pdf,.txt"
+                  onChange={(e) => setCvFile(e.target.files?.[0] || null)}
+                />
                 {profile.cv_file_url && (
-                  <Button 
-                    type="button" 
-                    variant="outline"
-                    onClick={handleViewCv}
-                    disabled={cvViewLoading}
-                  >
+                  <Button type="button" variant="outline" onClick={handleViewCv} disabled={cvViewLoading}>
                     <Eye className="h-4 w-4 mr-2" />
-                    {cvViewLoading ? 'Laddar...' : 'Visa nuvarande'}
+                    {cvViewLoading ? "Laddar..." : "Visa nuvarande"}
                   </Button>
                 )}
               </div>
               {cvViewError && <p className="text-xs text-red-600">{cvViewError}</p>}
               <p className="text-xs text-slate-500">
-                När du sparar ändringar kommer din matchningsprofil att regenereras automatiskt. Detta tar några sekunder och sker vid nästa sökning.
+                När du sparar ändringar kommer din matchningsprofil att regenereras automatiskt. Detta tar några sekunder och sker
+                vid nästa sökning.
               </p>
             </div>
 
+            {/* Checkbox 1 (required) */}
             <div className="flex items-start space-x-3 p-4 bg-slate-50 rounded-md border border-slate-200">
               <input
                 id="gdpr-check"
@@ -248,16 +277,35 @@ export default function ProfilePage() {
                 className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600 cursor-pointer"
               />
               <div className="grid gap-1.5 leading-none">
-                <label
-                  htmlFor="gdpr-check"
-                  className="text-sm font-medium leading-snug cursor-pointer text-slate-700"
-                >
-                  Jag godkänner lagring av mina uppgifter
+                <label htmlFor="gdpr-check" className="text-sm font-medium leading-snug cursor-pointer text-slate-700">
+                  Jag godkänner att jobbnu.se behandlar och lagrar mina uppgifter för jobbanalys och matchning
                 </label>
                 <p className="text-xs text-slate-500">
-                  Dina uppgifter sparas säkert internt och är endast tillgängliga för administratören. 
-                  Vi använder din e-post och telefon enbart för att kontakta dig vid jobbmatchningar. 
-                  Läs mer i vår <Link href="/integritetspolicy" target="_blank" className="text-blue-600 underline hover:text-blue-800">Integritetspolicy</Link>.
+                  Krävs för att kunna spara din profil och ge dig matchningar. Läs mer i vår{" "}
+                  <Link href="/integritetspolicy" target="_blank" className="text-blue-600 underline hover:text-blue-800">
+                    Integritetspolicy
+                  </Link>
+                  .
+                </p>
+              </div>
+            </div>
+
+            {/* Checkbox 2 (optional) */}
+            <div className="flex items-start space-x-3 p-4 bg-white rounded-md border border-slate-200">
+              <input
+                id="job-offer-check"
+                type="checkbox"
+                checked={jobOfferConsent}
+                onChange={(e) => setJobOfferConsent(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600 cursor-pointer"
+              />
+              <div className="grid gap-1.5 leading-none">
+                <label htmlFor="job-offer-check" className="text-sm font-medium leading-snug cursor-pointer text-slate-700">
+                  Jag vill att jobbnu.se kontaktar mig om konkreta jobberbjudanden eller intervjuer som matchar min profil
+                </label>
+                <p className="text-xs text-slate-500">
+                  Valfritt. Vi kontaktar dig endast när vi har ett relevant jobberbjudande eller en intervju som matchar din profil.
+                  Du kan när som helst återkalla samtycket.
                 </p>
               </div>
             </div>
@@ -265,6 +313,7 @@ export default function ProfilePage() {
             <Button type="submit" disabled={loading || !gdprAccepted || isRateLimited} className="w-full">
               {loading ? "Sparar..." : isRateLimited ? `Vänta innan du sparar igen (${countdown}s)` : "Spara ändringar"}
             </Button>
+
             {message && <p className="text-sm text-center text-green-600 mt-4">{message}</p>}
           </form>
         </CardContent>

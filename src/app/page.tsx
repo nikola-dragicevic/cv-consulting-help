@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge"
 import { Mail, Phone, FileText, Users, Award, Wand2, MapPin, Upload, X, Eye, Lock, Star, Check, LogIn, User, BrainCircuit, MessageSquareText } from "lucide-react"
 
 import InteractiveJobMap from "@/components/ui/InteractiveJobMap"
+import JobCategoriesSection from "@/components/ui/JobCategoriesSection"
 import { format } from "date-fns"
 
 /* ============================================================
@@ -518,6 +519,9 @@ export default function UnifiedLandingPage() {
           </div>
         </div>
       </section>
+
+      {/* === JOB CATEGORIES === */}
+      <JobCategoriesSection />
 
       {/* === PACKAGES === */}
       <section id="packages" className="py-20 bg-white">

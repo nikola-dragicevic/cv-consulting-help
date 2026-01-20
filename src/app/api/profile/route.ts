@@ -3,15 +3,12 @@ import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { cityToGeo } from "@/lib/city-geo";
 
-// Define the worker URL (internal docker network)
 const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://worker:8000";
 
-// ✅ HELPER: Robust PDF parsing using dynamic import
-// This fixes the "Module has no default export" error by checking both ESM and CJS shapes at runtime.
 async function parsePdf(buffer: Buffer): Promise<string> {
   try {
     const mod: any = await import("pdf-parse");
-    const pdfParse = mod.default ?? mod; // Handles both import shapes
+    const pdfParse = mod.default ?? mod;
     const data = await pdfParse(buffer);
     return data?.text ?? "";
   } catch (error) {
@@ -56,20 +53,22 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("cv") as File | null;
 
-    // Extract form data
     const city = String(formData.get("city") ?? "").trim();
     const fullName = String(formData.get("fullName") ?? "");
     const phone = String(formData.get("phone") ?? "");
     const street = String(formData.get("street") ?? "");
 
-    // ✅ FETCH EXISTING PROFILE to check for existing CV
+    // NEW: optional consent checkbox
+    const jobOfferConsentRaw = formData.get("jobOfferConsent");
+    const jobOfferConsent =
+      String(jobOfferConsentRaw ?? "false").toLowerCase() === "true";
+
     const { data: existingProfile } = await supabase
       .from("candidate_profiles")
       .select("cv_bucket_path")
       .eq("user_id", user.id)
       .single();
 
-    // Prepare profile data object
     const profileData: Record<string, any> = {
       user_id: user.id,
       email: user.email,
@@ -77,11 +76,13 @@ export async function POST(req: Request) {
       phone: phone,
       city: city,
       street: street,
-      // ✅ IMPORTANT: Reset vector to NULL so it gets regenerated with improved algorithm
+
+      // NEW: persist consent
+      job_offer_consent: jobOfferConsent,
+
       profile_vector: null,
     };
 
-    // 1. HANDLE GEOLOCATION
     if (city) {
       const geo = cityToGeo(city);
       if (geo) {
@@ -92,71 +93,55 @@ export async function POST(req: Request) {
 
     let extractedText = "";
 
-    // 2. HANDLE CV UPLOAD & TEXT EXTRACTION
     if (file) {
       console.log("Uploading CV file:", file.name);
-      
-      // ✅ Corrected Template String with backticks
       const path = `${user.id}/${crypto.randomUUID()}_${file.name}`;
 
-      // A. Upload file to Storage
       const { error: uploadError } = await supabase
         .storage
         .from("cvs")
         .upload(path, file, { upsert: true });
 
       if (uploadError) {
-        // ✅ Corrected Template String with backticks
         throw new Error(`CV upload failed: ${uploadError.message}`);
       }
 
       const { data: pub } = supabase.storage.from("cvs").getPublicUrl(path);
-      
+
       profileData.cv_file_url = pub?.publicUrl ?? null;
       profileData.cv_bucket_path = path;
 
-      // B. Extract Text for Vectorization
       try {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        
-        // ✅ Fixed logic using the async helper
+
         if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-            extractedText = await parsePdf(buffer);
+          extractedText = await parsePdf(buffer);
         } else {
-            extractedText = buffer.toString("utf-8");
+          extractedText = buffer.toString("utf-8");
         }
-        
-        // Clean up whitespace (but DON'T truncate - nomic-embed-text supports 8192 tokens!)
-        extractedText = extractedText.replace(/\s+/g, " ").trim(); 
+
+        extractedText = extractedText.replace(/\s+/g, " ").trim();
       } catch (err) {
         console.error("Text extraction failed:", err);
       }
     }
 
-    // 3. UPSERT PROFILE TO DB
     const { error: upsertError } = await supabase
       .from("candidate_profiles")
       .upsert(profileData, { onConflict: "user_id" });
 
     if (upsertError) {
-        // ✅ Corrected Template String with backticks
-        throw new Error(`Profile update failed: ${upsertError.message}`);
+      throw new Error(`Profile update failed: ${upsertError.message}`);
     }
 
-    // 4. TRIGGER VECTOR UPDATE (EVENT DRIVEN)
-    // ✅ FIX: Trigger webhook when:
-    // - New CV uploaded (extractedText exists), OR
-    // - Profile updated and has existing CV (cv_bucket_path in profileData or existingProfile)
     const hasCv = extractedText || profileData.cv_bucket_path || existingProfile?.cv_bucket_path;
 
     if (hasCv) {
       console.log("🚀 Triggering vector update webhook for user:", user.id);
 
-      // If we just extracted text, use it. Otherwise, worker will download from bucket
       const cvText = extractedText || "";
 
-      // Fire and forget - don't await the result to keep UI snappy
       fetch(`${WORKER_URL}/webhook/update-profile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -167,9 +152,9 @@ export async function POST(req: Request) {
       }).catch(err => console.error("Webhook trigger failed:", err));
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      newCvUrl: profileData.cv_file_url 
+    return NextResponse.json({
+      success: true,
+      newCvUrl: profileData.cv_file_url
     });
 
   } catch (err: any) {
