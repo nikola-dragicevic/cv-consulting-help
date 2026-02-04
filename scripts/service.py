@@ -16,23 +16,23 @@ from dotenv import load_dotenv
 from scripts.update_jobs import run_job_update
 from scripts.enrich_jobs import enrich_job_vectors
 from scripts.geocode_jobs import geocode_new_jobs
-from scripts.sync_active_jobs import clean_stale_jobs  # <--- Add this
-
-# ✅ FIX: Import the correct new function
-from scripts.generate_candidate_vector import build_candidate_vector
+from scripts.sync_active_jobs import clean_stale_jobs  # removes stale jobs
+from scripts.generate_candidate_vector import build_candidate_vector  # chunking inside
 
 load_dotenv()
 
 # --- Configuration ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+
+# /embed endpoint only (simple legacy helper)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-DIMS = 768
+DIMS = int(os.getenv("DIMS", "768"))
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-# --- Helper: Normalization ---
+# --- Helper: Normalization (only used by /embed endpoint) ---
 def normalize_vector(vector: list[float]) -> list[float]:
     if not vector:
         return []
@@ -51,7 +51,7 @@ async def fetch_simple_embedding(text: str):
         try:
             response = await client.post(
                 OLLAMA_URL,
-                json={"model": EMBEDDING_MODEL, "prompt": text}
+                json={"model": EMBEDDING_MODEL, "prompt": text},
             )
             response.raise_for_status()
             data = response.json()
@@ -70,18 +70,18 @@ async def fetch_simple_embedding(text: str):
 def run_daily_pipeline():
     print(f"🚀 [CRON] Starting daily job pipeline: {time.ctime()}")
     try:
-        # 1. Sync Active IDs (Removes stale jobs FIRST)
+        # 1) Remove stale jobs first
         clean_stale_jobs()
-        
-        # 2. Fetch new jobs (Adds new jobs)
+
+        # 2) Fetch new/changed jobs
         run_job_update()
-        
-        # 3. Enrich new jobs
+
+        # 3) Enrich jobs missing embeddings (CPU-safe script)
         asyncio.run(enrich_job_vectors())
-        
-        # 4. Geocode
+
+        # 4) Geocode missing lat/lon
         asyncio.run(geocode_new_jobs())
-        
+
         print("✅ [CRON] Pipeline finished successfully")
     except Exception as e:
         print(f"❌ [CRON] Pipeline failed: {e}")
@@ -112,20 +112,59 @@ class ProfileUpdateWebhook(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": EMBEDDING_MODEL}
+    return {"status": "ok", "model": EMBEDDING_MODEL, "dims": DIMS}
 
 @app.post("/embed")
 async def generate_embedding(req: EmbedRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
-    text = req.text[:1500] 
+
+    # Keep /embed small and stable
+    text = req.text[:1500]
     return await fetch_simple_embedding(text)
+
+async def generate_persona_vectors(profile: dict) -> dict:
+    """
+    Generate vectors for persona fields when entry_mode is 'manual_entry'.
+    Returns dict with persona vector fields to update.
+    """
+    patch = {}
+
+    # Generate current persona vector
+    if profile.get("persona_current_text"):
+        vec = await build_candidate_vector(profile, profile["persona_current_text"])
+        if vec:
+            patch["persona_current_vector"] = vec
+            print(f"✅ persona_current_vector generated ({len(vec)} dims)")
+
+    # Generate target persona vector
+    if profile.get("persona_target_text"):
+        vec = await build_candidate_vector(profile, profile["persona_target_text"])
+        if vec:
+            patch["persona_target_vector"] = vec
+            print(f"✅ persona_target_vector generated ({len(vec)} dims)")
+
+    # Generate past persona vectors (1-3)
+    for i in range(1, 4):
+        text_field = f"persona_past_{i}_text"
+        vec_field = f"persona_past_{i}_vector"
+        if profile.get(text_field):
+            vec = await build_candidate_vector(profile, profile[text_field])
+            if vec:
+                patch[vec_field] = vec
+                print(f"✅ {vec_field} generated ({len(vec)} dims)")
+
+    return patch
 
 @app.post("/webhook/update-profile")
 async def webhook_update_profile(req: ProfileUpdateWebhook):
-    print(f"📥 [WEBHOOK] Generating vector for user: {req.user_id}")
+    print(f"📥 [WEBHOOK] Generating candidate vector for user: {req.user_id}")
+
+    has_picture: bool = False
+    cv_text = req.cv_text
+
     try:
-        # 1. Fetch Profile
+        # 1) Fetch profile
         profile_res = (
             supabase.table("candidate_profiles")
             .select("*")
@@ -138,13 +177,14 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
             raise HTTPException(404, "Profile not found")
 
         profile = profile_res.data
-        cv_text = req.cv_text
-        has_picture: bool = False
+        entry_mode = profile.get("entry_mode", "cv_upload")
 
-        # 2. Download CV if text is missing
+        # 2) If cv_text missing: download and parse from storage
         if (not cv_text or not cv_text.strip()) and profile.get("cv_bucket_path"):
             path = profile["cv_bucket_path"]
             print(f"📥 [WEBHOOK] CV text empty, downloading: {path}")
+
+            local_path = None
             try:
                 from scripts.parse_cv_pdf import (
                     extract_text_from_pdf,
@@ -153,7 +193,7 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
                 )
 
                 data = supabase.storage.from_("cvs").download(path)
-                
+
                 is_pdf = path.lower().endswith(".pdf")
                 is_docx = path.lower().endswith(".docx")
                 local_ext = ".pdf" if is_pdf else (".docx" if is_docx else ".txt")
@@ -162,7 +202,6 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
                 with open(local_path, "wb") as f:
                     f.write(data)
 
-                # Parse
                 if is_pdf:
                     raw, has_img_bool = extract_text_from_pdf(local_path)
                     has_picture = bool(has_img_bool)
@@ -177,50 +216,114 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
                     cv_text = summarize_cv_text(raw)
                     has_picture = False
 
-                if os.path.exists(local_path):
-                    os.remove(local_path)
-
-                print(f"✅ Extracted {len(cv_text) if cv_text else 0} chars.")
+                print(f"✅ [WEBHOOK] Extracted {len(cv_text) if cv_text else 0} chars. has_picture={has_picture}")
 
             except Exception as e:
-                print(f"⚠️ [WEBHOOK] Storage download failed: {e}")
+                print(f"⚠️ [WEBHOOK] Storage download/parse failed: {e}")
                 raise HTTPException(500, f"Failed to download CV: {str(e)}")
 
-        # 3. Handle Empty CV
+            finally:
+                # Always clean temp file if it exists
+                try:
+                    if local_path and os.path.exists(local_path):
+                        os.remove(local_path)
+                except Exception:
+                    pass
+
+        # 3) Handle empty CV
         if not cv_text or not cv_text.strip():
-            supabase.table("candidate_profiles").update({
-                "has_picture": has_picture
-            }).eq("user_id", req.user_id).execute()
-            
-            print("❌ [WEBHOOK] No text available.")
+            # Still store has_picture info if we detected it
+            try:
+                supabase.table("candidate_profiles").update({
+                    "has_picture": has_picture
+                }).eq("user_id", req.user_id).execute()
+            except Exception as e:
+                print(f"⚠️ [WEBHOOK] Failed saving has_picture: {e}")
+
+            print("❌ [WEBHOOK] No CV text available")
             raise HTTPException(400, "No CV text available")
 
-        # 4. Generate Vector (Chunked)
-        print(f"🎯 [WEBHOOK] Generating Chunked Vector...")
-        
-        # ✅ FIX: Calls the new function that handles chunking internally
-        vector = await build_candidate_vector(profile, cv_text)
+        # 4) Generate vectors based on entry mode
+        update_data = {"has_picture": has_picture}
 
-        if not vector:
-            print("❌ [WEBHOOK] Vector generation failed (too short or empty?)")
-            raise HTTPException(500, "Failed to generate vector")
+        if entry_mode == "manual_entry":
+            print("🎯 [WEBHOOK] Manual entry mode - generating persona vectors...")
 
-        # Create a preview string for debugging
-        debug_preview = (cv_text or "").replace("\x00", "")[:2000]
-        debug_text = f"search_document: Candidate: {profile.get('full_name')}\nCV Preview:\n{debug_preview}"
+            # Generate all persona vectors
+            persona_vectors = await generate_persona_vectors(profile)
+            update_data.update(persona_vectors)
 
-        # 5. Save to DB
-        supabase.table("candidate_profiles").update({
-            "profile_vector": vector,
-            "candidate_text_vector": debug_text,
-            "has_picture": has_picture
-        }).eq("user_id", req.user_id).execute()
+            # Also generate a combined profile_vector for backward compatibility
+            # Combine current + target text for the main profile vector
+            combined_text = []
+            if profile.get("persona_current_text"):
+                combined_text.append(f"Current: {profile['persona_current_text']}")
+            if profile.get("persona_target_text"):
+                combined_text.append(f"Target: {profile['persona_target_text']}")
+            if profile.get("skills_text"):
+                combined_text.append(f"Skills: {profile['skills_text']}")
+            if profile.get("education_certifications_text"):
+                combined_text.append(f"Education: {profile['education_certifications_text']}")
+
+            if combined_text:
+                combined = "\n".join(combined_text)
+                vector = await build_candidate_vector(profile, combined)
+                if vector:
+                    update_data["profile_vector"] = vector
+                    print(f"✅ profile_vector (combined) generated ({len(vector)} dims)")
+
+                # Store debug text
+                debug_preview = combined[:2000]
+                debug_text = (
+                    f"search_document:\n"
+                    f"Candidate: {profile.get('full_name')}\n"
+                    f"Manual Entry Preview:\n{debug_preview}"
+                )
+                update_data["candidate_text_vector"] = debug_text
+
+            print(f"✅ [WEBHOOK] Generated {len(persona_vectors)} persona vectors")
+
+        else:
+            # CV upload mode - original behavior
+            print("🎯 [WEBHOOK] CV upload mode - generating chunked candidate vector...")
+            vector = await build_candidate_vector(profile, cv_text)
+
+            if not vector:
+                # still store has_picture
+                supabase.table("candidate_profiles").update({
+                    "has_picture": has_picture
+                }).eq("user_id", req.user_id).execute()
+
+                raise HTTPException(500, "Failed to generate vector")
+
+            # 5) Save to DB (store debug preview, not necessarily exact embed input)
+            debug_preview = (cv_text or "").replace("\x00", "")[:2000]
+            debug_text = (
+                f"search_document:\n"
+                f"Candidate: {profile.get('full_name')}\n"
+                f"CV Preview:\n{debug_preview}"
+            )
+
+            update_data["profile_vector"] = vector
+            update_data["candidate_text_vector"] = debug_text
+
+        # Save all updates to DB
+        supabase.table("candidate_profiles").update(update_data).eq("user_id", req.user_id).execute()
 
         print(f"✅ [WEBHOOK] Success for {req.user_id}")
-        return {"status": "success", "user_id": req.user_id}
+        return {"status": "success", "user_id": req.user_id, "entry_mode": entry_mode}
 
     except HTTPException:
         raise
     except Exception as e:
         print(f"❌ [WEBHOOK] Critical Error: {e}")
+
+        # attempt to store has_picture even on critical error
+        try:
+            supabase.table("candidate_profiles").update({
+                "has_picture": has_picture
+            }).eq("user_id", req.user_id).execute()
+        except Exception:
+            pass
+
         raise HTTPException(500, str(e))

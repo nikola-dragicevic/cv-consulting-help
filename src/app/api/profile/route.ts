@@ -63,6 +63,18 @@ export async function POST(req: Request) {
     const jobOfferConsent =
       String(jobOfferConsentRaw ?? "false").toLowerCase() === "true";
 
+    // NEW: persona fields
+    const entryMode = String(formData.get("entryMode") ?? "cv_upload");
+    const intent = String(formData.get("intent") ?? "");
+    const personaPast1 = String(formData.get("personaPast1") ?? "");
+    const personaPast2 = String(formData.get("personaPast2") ?? "");
+    const personaPast3 = String(formData.get("personaPast3") ?? "");
+    const personaCurrent = String(formData.get("personaCurrent") ?? "");
+    const personaTarget = String(formData.get("personaTarget") ?? "");
+    const skills = String(formData.get("skills") ?? "");
+    const education = String(formData.get("education") ?? "");
+    const seniorityLevel = String(formData.get("seniorityLevel") ?? "");
+
     const { data: existingProfile } = await supabase
       .from("candidate_profiles")
       .select("cv_bucket_path")
@@ -80,7 +92,25 @@ export async function POST(req: Request) {
       // NEW: persist consent
       job_offer_consent: jobOfferConsent,
 
+      // NEW: persist entry mode and persona fields
+      entry_mode: entryMode,
+      intent: intent || null,
+      persona_past_1_text: personaPast1 || null,
+      persona_past_2_text: personaPast2 || null,
+      persona_past_3_text: personaPast3 || null,
+      persona_current_text: personaCurrent || null,
+      persona_target_text: personaTarget || null,
+      skills_text: skills || null,
+      education_certifications_text: education || null,
+      seniority_level: seniorityLevel || null,
+
+      // Clear vectors when updating manually (they'll be regenerated)
       profile_vector: null,
+      persona_current_vector: null,
+      persona_target_vector: null,
+      persona_past_1_vector: null,
+      persona_past_2_vector: null,
+      persona_past_3_vector: null,
     };
 
     if (city) {
