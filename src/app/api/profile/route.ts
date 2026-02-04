@@ -166,9 +166,13 @@ export async function POST(req: Request) {
     }
 
     const hasCv = extractedText || profileData.cv_bucket_path || existingProfile?.cv_bucket_path;
+    const hasManualEntry = entryMode === 'manual_entry' && (
+      personaCurrent || personaTarget || skills || education
+    );
 
-    if (hasCv) {
-      console.log("🚀 Triggering vector update webhook for user:", user.id);
+    // Trigger webhook for CV upload OR manual entry
+    if (hasCv || hasManualEntry) {
+      console.log("🚀 Triggering vector update webhook for user:", user.id, "mode:", entryMode);
 
       const cvText = extractedText || "";
 
