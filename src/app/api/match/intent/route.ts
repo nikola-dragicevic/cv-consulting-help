@@ -64,7 +64,7 @@ async function matchCurrentRole(profile: any, supabase: any) {
     candidate_vector: vector,
     candidate_lat: profile.location_lat,
     candidate_lon: profile.location_lon,
-    radius_m: profile.commute_radius || 50000,
+    radius_m: (profile.commute_radius_km || 50) * 1000,
     occupation_fields: occupationFields,
     limit_count: 100
   });
@@ -97,7 +97,7 @@ async function matchTargetRole(profile: any, supabase: any) {
     candidate_vector: vector,
     candidate_lat: profile.location_lat,
     candidate_lon: profile.location_lon,
-    radius_m: profile.commute_radius || 50000,
+    radius_m: (profile.commute_radius_km || 50) * 1000,
     occupation_fields: occupationFields,
     limit_count: 100
   });
@@ -155,7 +155,7 @@ async function matchMultipleTracks(profile: any, supabase: any) {
         candidate_vector: profile.profile_vector,
         candidate_lat: profile.location_lat,
         candidate_lon: profile.location_lon,
-        radius_m: profile.commute_radius || 50000,
+        radius_m: (profile.commute_radius_km || 50) * 1000,
         occupation_fields: relatedFields,
         limit_count: 50
       });
