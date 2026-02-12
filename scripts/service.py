@@ -18,6 +18,7 @@ from scripts.enrich_jobs import enrich_job_vectors
 from scripts.geocode_jobs import geocode_new_jobs
 from scripts.sync_active_jobs import clean_stale_jobs  # removes stale jobs
 from scripts.generate_candidate_vector import build_candidate_vector  # chunking inside
+import json
 
 load_dotenv()
 
@@ -27,7 +28,9 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 # /embed endpoint only (simple legacy helper)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/embeddings")
+OLLAMA_GENERATE_URL = os.getenv("OLLAMA_GENERATE_URL", "http://ollama:11434/api/generate")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+CATEGORIZATION_MODEL = os.getenv("CATEGORIZATION_MODEL", "llama3.2:3b")
 DIMS = int(os.getenv("DIMS", "768"))
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -106,6 +109,13 @@ app = FastAPI(lifespan=lifespan)
 class EmbedRequest(BaseModel):
     text: str
 
+class CVCategorizationRequest(BaseModel):
+    cv_text: str
+
+class JobSkillExtractionRequest(BaseModel):
+    job_id: int
+    description: str
+
 class ProfileUpdateWebhook(BaseModel):
     user_id: str
     cv_text: str
@@ -122,6 +132,188 @@ async def generate_embedding(req: EmbedRequest):
     # Keep /embed small and stable
     text = req.text[:1500]
     return await fetch_simple_embedding(text)
+
+@app.post("/categorize-cv")
+async def categorize_cv(req: CVCategorizationRequest):
+    """
+    Layer 1: The Filter - Categorize CV using llama3.2
+    Returns top 3-5 subcategory IDs from Arbetsförmedlingen taxonomy
+    """
+    if not req.cv_text or not req.cv_text.strip():
+        raise HTTPException(400, "CV text cannot be empty")
+
+    # Load the taxonomy from the file
+    taxonomy_path = "/opt/cv-consulting/AllJobCategoriesAndSubCategories.md"
+    try:
+        with open(taxonomy_path, "r", encoding="utf-8") as f:
+            taxonomy_text = f.read()
+    except Exception as e:
+        print(f"❌ Failed to load taxonomy: {e}")
+        return {"subcategory_ids": []}
+
+    # Prepare the prompt for llama3.2
+    prompt = f"""Using the Arbetsförmedlingen taxonomy below, identify the top 3-5 subcategory names that best fit this CV.
+
+Return ONLY a JSON array of subcategory names. Do not include any explanation or additional text.
+
+CV Text:
+{req.cv_text[:2000]}
+
+Taxonomy:
+{taxonomy_text[:3000]}
+
+Output format example: ["Data/IT", "Tekniskt arbete", "Pedagogiskt arbete"]
+
+Your response (JSON array only):"""
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                OLLAMA_GENERATE_URL,
+                json={
+                    "model": CATEGORIZATION_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "temperature": 0.3,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract the generated text
+            generated_text = data.get("response", "")
+
+            # Try to parse as JSON
+            try:
+                # Clean up the response - sometimes models add markdown code blocks
+                cleaned = generated_text.strip()
+                if cleaned.startswith("```json"):
+                    cleaned = cleaned[7:]
+                if cleaned.startswith("```"):
+                    cleaned = cleaned[3:]
+                if cleaned.endswith("```"):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+
+                subcategories = json.loads(cleaned)
+
+                # Ensure it's a list
+                if isinstance(subcategories, list):
+                    # Return the subcategory names (we'll use these for category matching)
+                    print(f"✅ [CATEGORIZATION] Found categories: {subcategories}")
+                    return {"subcategory_ids": subcategories[:5]}  # Max 5
+                else:
+                    print(f"⚠️ [CATEGORIZATION] Response was not a list: {subcategories}")
+                    return {"subcategory_ids": []}
+
+            except json.JSONDecodeError as e:
+                print(f"⚠️ [CATEGORIZATION] Failed to parse JSON: {generated_text[:200]}")
+                return {"subcategory_ids": []}
+
+    except httpx.RequestError as e:
+        print(f"❌ Connection error to Ollama: {e}")
+        return {"subcategory_ids": []}  # Graceful degradation
+    except Exception as e:
+        print(f"❌ Categorization error: {e}")
+        return {"subcategory_ids": []}
+
+@app.post("/extract-job-skills")
+async def extract_job_skills(req: JobSkillExtractionRequest):
+    """
+    Layer 4: The Auditor - Extract required and preferred skills from job description
+    Uses llama3.2 to extract structured skills data
+    """
+    if not req.description or len(req.description.strip()) < 50:
+        return {"skills_data": {}}
+
+    # Truncate very long descriptions
+    desc_text = req.description[:3000]
+
+    prompt = f"""Extract two JSON lists from this Swedish job description:
+1. 'required_skills' - Must-have requirements (Krav, Kvalifikationer)
+2. 'preferred_skills' - Nice-to-have requirements (Meriterande)
+
+Include:
+- Technical skills (programming languages, tools, software)
+- Certifications (B-körkort, PLC, etc.)
+- Experience requirements
+- Education requirements
+- Language requirements
+
+Return ONLY valid JSON in this exact format:
+{{
+  "required_skills": ["skill1", "skill2"],
+  "preferred_skills": ["skill3", "skill4"]
+}}
+
+Job Description:
+{desc_text}
+
+Your response (JSON only):"""
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                OLLAMA_GENERATE_URL,
+                json={
+                    "model": CATEGORIZATION_MODEL,  # Use llama3.2
+                    "prompt": prompt,
+                    "stream": False,
+                    "temperature": 0.2,
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            generated_text = data.get("response", "")
+
+            # Clean up response
+            cleaned = generated_text.strip()
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:]
+            if cleaned.startswith("```"):
+                cleaned = cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+
+            # Parse JSON
+            skills_data = json.loads(cleaned)
+
+            # Validate structure
+            if isinstance(skills_data, dict):
+                required = skills_data.get("required_skills", [])
+                preferred = skills_data.get("preferred_skills", [])
+
+                if not isinstance(required, list):
+                    required = []
+                if not isinstance(preferred, list):
+                    preferred = []
+
+                result = {
+                    "required_skills": required[:15],  # Max 15 each
+                    "preferred_skills": preferred[:15]
+                }
+
+                # Optionally save to database
+                if req.job_id:
+                    try:
+                        supabase.table("job_ads").update({
+                            "skills_data": result
+                        }).eq("id", req.job_id).execute()
+                        print(f"✅ [SKILL-EXTRACTION] Saved skills for job {req.job_id}")
+                    except Exception as e:
+                        print(f"⚠️ [SKILL-EXTRACTION] Failed to save: {e}")
+
+                return {"skills_data": result}
+
+    except json.JSONDecodeError as e:
+        print(f"⚠️ [SKILL-EXTRACTION] Failed to parse JSON: {str(e)[:100]}")
+        return {"skills_data": {}}
+    except Exception as e:
+        print(f"❌ [SKILL-EXTRACTION] Error: {e}")
+        return {"skills_data": {}}
+
+    return {"skills_data": {}}
 
 async def generate_persona_vectors(profile: dict) -> dict:
     """
