@@ -1,6 +1,6 @@
 // src/lib/ollama.ts
 
-export const DIMS = 1024;
+export const DIMS = 768;
 
 // Connects to the 'worker' service in Docker
 const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://localhost:8000";
@@ -24,7 +24,7 @@ export async function embedText(text: string): Promise<number[]> {
     }
     
     const data = await res.json();
-    return data.vector; // This is already normalized and 1024-dim
+    return data.vector; 
   } catch (e) {
     console.error("Embedding failed:", e);
     // Return empty array to prevent UI crashes, let upstream handle 0 matches

@@ -1,0 +1,1711 @@
+[
+  {
+    "job_id": "30392579",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392606",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392604",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392602",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 18,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392577",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "Svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30391705",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "Svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392597",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392575",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      },
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.4,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392593",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      },
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.4,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 35,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392573",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      },
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.4,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 35,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392549",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392568",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 4,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392566",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [
+      "H\u00e4lso- och sjukv\u00e5rd"
+    ],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392564",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 4,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392545",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392562",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      },
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.4,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392560",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392558",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "Svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [
+      {
+        "language": "Engelska",
+        "level": null,
+        "strength": "nice"
+      }
+    ],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392543",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392556",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "Svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392530",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392554",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 10,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392528",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392539",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 18,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392525",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 11
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392536",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 13,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392534",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 19,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392504",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392517",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      },
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.4,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 30,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392511",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392513",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392515",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392489",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392491",
+    "requirements_version": 1,
+    "must_have_skills": [
+      "excel",
+      "sql"
+    ],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.4,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 21,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392508",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 16,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392506",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 15,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392487",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392485",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 11
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392483",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 15,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392481",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392468",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [
+      {
+        "language": "Engelska",
+        "level": null,
+        "strength": "nice"
+      },
+      {
+        "language": "Serbiska",
+        "level": null,
+        "strength": "nice"
+      },
+      {
+        "language": "Svenska",
+        "level": null,
+        "strength": "nice"
+      }
+    ],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392492",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392476",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "Svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [
+      "Samh\u00e4lls- och beteendevetenskap"
+    ],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392470",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "Svenska",
+        "level": null,
+        "strength": "must"
+      },
+      {
+        "language": "svenska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {
+      "driving_license_required": true
+    },
+    "parse_confidence": 0.4,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392466",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392464",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392451",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392462",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.2,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392473",
+    "requirements_version": 1,
+    "must_have_skills": [
+      "docker",
+      "javascript",
+      "linux",
+      "react",
+      "typescript"
+    ],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.8,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  },
+  {
+    "job_id": "30392460",
+    "requirements_version": 1,
+    "must_have_skills": [],
+    "must_have_licenses": [],
+    "must_have_certifications": [],
+    "must_have_languages": [
+      {
+        "language": "engelska",
+        "level": null,
+        "strength": "must"
+      }
+    ],
+    "must_have_education": [],
+    "must_have_experience": {},
+    "nice_to_have_skills": [],
+    "nice_to_have_licenses": [],
+    "nice_to_have_certifications": [],
+    "nice_to_have_languages": [],
+    "nice_to_have_education": [],
+    "nice_to_have_experience": {},
+    "hard_constraints": {},
+    "parse_confidence": 0.30000000000000004,
+    "parse_sources": {
+      "structured_present": true,
+      "description_used": true,
+      "must_lines_count": 0,
+      "nice_lines_count": 0
+    },
+    "missing_extraction_flags": [
+      "structured_must_have_education_empty",
+      "structured_must_have_skills_empty",
+      "structured_nice_to_have_skills_empty"
+    ],
+    "extracted_at": "now()"
+  }
+]

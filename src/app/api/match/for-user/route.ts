@@ -45,14 +45,13 @@ export async function POST(req: Request) {
         }
 
         // 2. Call the RPC function with the user's data
-        const { data: jobs, error: rpcError } = await supabase.rpc('match_jobs_initial', {
-            v_profile: profile.profile_vector,
-            u_lat: profile.location_lat,
-            u_lon: profile.location_lon,
-            radius_km: profile.commute_radius_km || 40,
-            top_k: 50, // Fetch more for logged-in users
-            candidate_tags: (profile.category_tags as string[] | null) ?? null,
-            filter_occupation_fields: (profile.primary_occupation_field as string[] | null) ?? null
+        const { data: jobs, error: rpcError } = await supabase.rpc('match_jobs_with_occupation_filter', {
+            candidate_vector: profile.profile_vector,
+            candidate_lat: profile.location_lat,
+            candidate_lon: profile.location_lon,
+            radius_m: (profile.commute_radius_km || 40) * 1000, // Konvertera 40km till 40 000m
+            occupation_fields: profile.primary_occupation_field, // T.ex. ["Transport"]
+            limit_count: 50
         });
         
         if (rpcError) throw new Error(rpcError.message);
