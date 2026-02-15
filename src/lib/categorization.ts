@@ -56,3 +56,44 @@ export async function categorizeCandidateProfile(profile: {
 
   return categorizeCVWithLLM(combinedText);
 }
+
+/**
+ * Extract key skills and terms from CV text for keyword matching
+ * Used in Layer 2 weighted hybrid search
+ */
+export function extractKeywordsFromCV(cvText: string): string[] {
+  if (!cvText) return [];
+
+  // Common technical skills and keywords to look for
+  const skillPatterns = [
+    // Programming languages
+    /\b(JavaScript|TypeScript|Python|Java|C\+\+|C#|Ruby|PHP|Swift|Kotlin|Go|Rust)\b/gi,
+    // Frameworks
+    /\b(React|Angular|Vue|Node\.js|Django|Flask|Spring|Laravel|Rails)\b/gi,
+    // Tools
+    /\b(Docker|Kubernetes|AWS|Azure|GCP|Git|Jenkins|Terraform)\b/gi,
+    // Skills
+    /\b(SQL|NoSQL|REST|GraphQL|API|Microservices|Agile|Scrum)\b/gi,
+    // Certifications
+    /\b(B-körkort|C-körkort|PLC|S7)\b/gi,
+  ];
+
+  const keywords = new Set<string>();
+
+  for (const pattern of skillPatterns) {
+    const matches = cvText.match(pattern);
+    if (matches) {
+      matches.forEach((match) => keywords.add(match));
+    }
+  }
+
+  // Also extract capitalized words (likely skills/technologies)
+  const capitalizedWords = cvText.match(/\b[A-Z][a-zA-Z0-9.+#-]{2,}\b/g);
+  if (capitalizedWords) {
+    capitalizedWords
+      .filter((word) => word.length > 2 && word.length < 20)
+      .forEach((word) => keywords.add(word));
+  }
+
+  return Array.from(keywords).slice(0, 20); // Max 20 keywords
+}

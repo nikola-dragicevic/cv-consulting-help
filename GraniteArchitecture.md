@@ -18,7 +18,7 @@ This architecture is designed to be "granite-level" stable: it uses local LLMs f
 | --- | --- | --- | --- |
 | **1. The Filter** | **Categorization** | Local Generative LLM | `llama3.2` (via Ollama) |
 | **2. The Engine** | **Hybrid Search** | Postgres + pgvector | `nomic-embed-text` |
-| **3. The Manager** | **Deep Matching** | ChatGPT API (Top 20-50) | `gpt-4o-mini` |
+| **3. The Manager** | **Deep Matching** | Claude API (Haiku 3.5) | `claude-haiku-3.5` |
 | **4. The Auditor** | **Gap Analysis** | Local Extraction | `llama3.2` (Auto-scraper) |
 
 ---
@@ -56,7 +56,7 @@ You likely have a `WHERE` clause that is too strict. If a category doesn't match
 This is where the system feels "smart" to the user. We only do this for the Top 20-50 results to save money.
 
 1. **Action:** Take the Candidate Summary and the Job Description.
-2. **Call:** ChatGPT API.
+2. **Call:** Claude API (Haiku 3.5).
 3. **Prompt:** > "Act as a Hiring Manager. On a scale of 1-10, how well does this candidate fit this specific job? Provide the score and a 1-sentence explanation of why."
 4. **UI:** Display this "Manager's Opinion" on the job card. This provides instant value that vector search cannot.
 
@@ -104,5 +104,5 @@ Since your jobs are scraped automatically, you need a "Worker" script(Check serv
 
 1. Use `nomic-embed-text` for the **Vectors** (Layer 2).
 2. Use `llama3.2:3b` for the **Categorization** and **Skill Extraction** (Layers 1 & 4).
-3. Use your **ChatGPT API** for the **Final Decision** (Layer 3).
+3. Use **Claude API (Haiku 3.5)** for the **Final Decision** (Layer 3).
 

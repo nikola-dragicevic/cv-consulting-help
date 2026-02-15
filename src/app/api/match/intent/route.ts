@@ -1,13 +1,79 @@
 // src/app/api/match/intent/route.ts
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { extractKeywordsFromCV } from "@/lib/categorization";
+import {
+  checkMatchRateLimit,
+  updateLastMatchTime,
+  saveMatchCache,
+  getCachedMatches,
+} from "@/lib/rateLimiter";
 
+/**
+ * GET /api/match/intent
+ * Fetch cached match results (no rate limiting)
+ */
+export async function GET(req: Request) {
+  const supabase = await getServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Fetch cached matches
+  const cached = await getCachedMatches(user.id, supabase);
+
+  if (!cached) {
+    return NextResponse.json(
+      {
+        error: "No cached matches found",
+        message: "Kör din första matchning för att se resultat",
+        noCacheFound: true,
+      },
+      { status: 404 }
+    );
+  }
+
+  // Check rate limit status for UI display
+  const rateLimit = await checkMatchRateLimit(user.id, supabase);
+
+  return NextResponse.json({
+    ...cached.data,
+    cached: true,
+    cachedAt: cached.updatedAt.toISOString(),
+    canRefresh: rateLimit.allowed,
+    nextRefreshTime: rateLimit.nextAllowedTime?.toISOString() || null,
+    hoursUntilRefresh: rateLimit.hoursRemaining || 0,
+    minutesUntilRefresh: rateLimit.minutesRemaining || 0,
+  });
+}
+
+/**
+ * POST /api/match/intent
+ * Run new matching with rate limiting (once per 24h)
+ */
 export async function POST(req: Request) {
   const supabase = await getServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Check if user is allowed to match (24h cooldown)
+  const rateLimit = await checkMatchRateLimit(user.id, supabase);
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Rate limit exceeded",
+        message: `Du kan söka jobb en gång per 24 timmar. Nästa sökning tillgänglig om ${rateLimit.hoursRemaining}h ${rateLimit.minutesRemaining}min.`,
+        nextAllowedTime: rateLimit.nextAllowedTime,
+        rateLimited: true,
+      },
+      { status: 429 }
+    );
   }
 
   // Fetch profile with persona vectors
@@ -24,10 +90,21 @@ export async function POST(req: Request) {
   const intent = profile.intent || "show_multiple_tracks";
   const results = await matchByIntent(profile, intent, supabase);
 
-  return NextResponse.json({
+  const response = {
     intent,
-    ...results
-  });
+    candidate_cv_text: profile.candidate_text_vector || profile.persona_current_text || "",
+    ...results,
+    cached: false,
+    matchedAt: new Date().toISOString(),
+  };
+
+  // Save results to cache
+  await saveMatchCache(user.id, intent, response, supabase);
+
+  // Update last match time
+  await updateLastMatchTime(user.id, supabase);
+
+  return NextResponse.json(response);
 }
 
 async function matchByIntent(profile: any, intent: string, supabase: any) {
@@ -49,6 +126,31 @@ async function matchByIntent(profile: any, intent: string, supabase: any) {
   }
 }
 
+// Helper: Use Granite matching with weighted hybrid search
+async function matchWithGranite(
+  vector: any,
+  occupationFields: string[],
+  profile: any,
+  supabase: any
+) {
+  // Extract keywords from CV text for keyword matching bonus
+  const cvText = profile.candidate_text_vector || profile.persona_current_text || "";
+  const keywords = extractKeywordsFromCV(cvText);
+
+  // Call granite RPC with full scoring
+  const { data: jobs } = await supabase.rpc("match_jobs_granite", {
+    candidate_vector: vector,
+    candidate_lat: profile.location_lat,
+    candidate_lon: profile.location_lon,
+    radius_m: (profile.commute_radius_km || 50) * 1000,
+    category_names: occupationFields,
+    cv_keywords: keywords.slice(0, 10), // Top 10 keywords
+    limit_count: 100
+  });
+
+  return jobs || [];
+}
+
 async function matchCurrentRole(profile: any, supabase: any) {
   const vector = profile.persona_current_vector || profile.profile_vector;
 
@@ -56,25 +158,13 @@ async function matchCurrentRole(profile: any, supabase: any) {
     throw new Error("No current role vector available");
   }
 
-  // Step 1: Gate by occupation fields (from current role)
+  // Use Granite matching with weighted hybrid search
   const occupationFields = profile.occupation_field_candidates || [];
-
-  // Step 2: Vector search with occupation field filter
-  const { data: jobs } = await supabase.rpc("match_jobs_with_occupation_filter", {
-    candidate_vector: vector,
-    candidate_lat: profile.location_lat,
-    candidate_lon: profile.location_lon,
-    radius_m: (profile.commute_radius_km || 50) * 1000,
-    occupation_fields: occupationFields,
-    limit_count: 100
-  });
-
-  // Step 3: Apply structured boosts
-  const rankedJobs = applyStructuredBoosts(jobs || [], profile);
+  const jobs = await matchWithGranite(vector, occupationFields, profile, supabase);
 
   return {
     buckets: {
-      current: rankedJobs,
+      current: jobs,
       target: [],
       adjacent: []
     },
@@ -89,25 +179,15 @@ async function matchTargetRole(profile: any, supabase: any) {
     throw new Error("No target role defined. Please fill in your target persona.");
   }
 
-  // Use target occupation fields
+  // Use Granite matching with target occupation fields
   const occupationFields = profile.occupation_targets ||
                           profile.occupation_field_candidates || [];
-
-  const { data: jobs } = await supabase.rpc("match_jobs_with_occupation_filter", {
-    candidate_vector: vector,
-    candidate_lat: profile.location_lat,
-    candidate_lon: profile.location_lon,
-    radius_m: (profile.commute_radius_km || 50) * 1000,
-    occupation_fields: occupationFields,
-    limit_count: 100
-  });
-
-  const rankedJobs = applyStructuredBoosts(jobs || [], profile);
+  const jobs = await matchWithGranite(vector, occupationFields, profile, supabase);
 
   return {
     buckets: {
       current: [],
-      target: rankedJobs,
+      target: jobs,
       adjacent: []
     },
     matchType: "target_role"
@@ -151,16 +231,13 @@ async function matchMultipleTracks(profile: any, supabase: any) {
     );
 
     try {
-      const { data: adjacentJobs } = await supabase.rpc("match_jobs_with_occupation_filter", {
-        candidate_vector: profile.profile_vector,
-        candidate_lat: profile.location_lat,
-        candidate_lon: profile.location_lon,
-        radius_m: (profile.commute_radius_km || 50) * 1000,
-        occupation_fields: relatedFields,
-        limit_count: 50
-      });
-
-      results.buckets.adjacent = adjacentJobs || [];
+      const adjacentJobs = await matchWithGranite(
+        profile.profile_vector,
+        relatedFields,
+        profile,
+        supabase
+      );
+      results.buckets.adjacent = adjacentJobs.slice(0, 50);
     } catch (e) {
       console.error("Error matching adjacent fields:", e);
     }
