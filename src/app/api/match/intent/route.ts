@@ -76,35 +76,43 @@ export async function POST(req: Request) {
     );
   }
 
-  // Fetch profile with persona vectors
-  const { data: profile } = await supabase
-    .from("candidate_profiles")
-    .select("*")
-    .eq("user_id", user.id)
-    .single();
+  try {
+    // Fetch profile with persona vectors
+    const { data: profile } = await supabase
+      .from("candidate_profiles")
+      .select("*")
+      .eq("user_id", user.id)
+      .single();
 
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+    if (!profile) {
+      return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+    }
+
+    const intent = profile.intent || "show_multiple_tracks";
+    const results = await matchByIntent(profile, intent, supabase);
+
+    const response = {
+      intent,
+      candidate_cv_text: profile.candidate_text_vector || profile.persona_current_text || "",
+      ...results,
+      cached: false,
+      matchedAt: new Date().toISOString(),
+    };
+
+    // Save results to cache
+    await saveMatchCache(user.id, intent, response, supabase);
+
+    // Update last match time
+    await updateLastMatchTime(user.id, supabase);
+
+    return NextResponse.json(response);
+  } catch (error: any) {
+    console.error("Match intent error:", error);
+    return NextResponse.json(
+      { error: error?.message || "Matching failed" },
+      { status: 500 }
+    );
   }
-
-  const intent = profile.intent || "show_multiple_tracks";
-  const results = await matchByIntent(profile, intent, supabase);
-
-  const response = {
-    intent,
-    candidate_cv_text: profile.candidate_text_vector || profile.persona_current_text || "",
-    ...results,
-    cached: false,
-    matchedAt: new Date().toISOString(),
-  };
-
-  // Save results to cache
-  await saveMatchCache(user.id, intent, response, supabase);
-
-  // Update last match time
-  await updateLastMatchTime(user.id, supabase);
-
-  return NextResponse.json(response);
 }
 
 async function matchByIntent(profile: any, intent: string, supabase: any) {
@@ -138,7 +146,7 @@ async function matchWithGranite(
   const keywords = extractKeywordsFromCV(cvText);
 
   // Call granite RPC with full scoring
-  const { data: jobs } = await supabase.rpc("match_jobs_granite", {
+  const { data: jobs, error } = await supabase.rpc("match_jobs_granite", {
     candidate_vector: vector,
     candidate_lat: profile.location_lat,
     candidate_lon: profile.location_lon,
@@ -148,7 +156,22 @@ async function matchWithGranite(
     limit_count: 100
   });
 
-  return jobs || [];
+  if (error) {
+    throw new Error(`match_jobs_granite failed: ${error.message}`);
+  }
+
+  return (jobs || []).map(normalizeGraniteJob);
+}
+
+function normalizeGraniteJob(job: any) {
+  return {
+    ...job,
+    id: String(job?.id ?? ""),
+    title: job?.title ?? job?.headline ?? "",
+    company: job?.company ?? job?.employer_name ?? "",
+    city: job?.city ?? job?.location ?? "",
+    description: job?.description ?? job?.description_text ?? "",
+  };
 }
 
 async function matchCurrentRole(profile: any, supabase: any) {

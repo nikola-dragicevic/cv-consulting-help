@@ -2,7 +2,7 @@
 // Layer 3: The "Hiring Manager" Re-ranker using ChatGPT API
 
 interface Job {
-  id: number;
+  id: string;
   title: string;
   company: string;
   description: string;
@@ -10,7 +10,7 @@ interface Job {
 }
 
 interface RerankResult {
-  job_id: number;
+  job_id: string;
   score: number; // 1-10
   explanation: string;
 }
@@ -23,8 +23,8 @@ export async function rerankJobsWithManager(
   candidateSummary: string,
   jobs: Job[],
   topN: number = 20
-): Promise<Map<number, RerankResult>> {
-  const resultsMap = new Map<number, RerankResult>();
+): Promise<Map<string, RerankResult>> {
+  const resultsMap = new Map<string, RerankResult>();
 
   // Only re-rank the top N jobs to save money
   const jobsToRerank = jobs.slice(0, topN);
@@ -82,8 +82,10 @@ export async function rerankJobsWithManager(
         const scores = JSON.parse(content);
         if (Array.isArray(scores)) {
           scores.forEach((item: any) => {
-            resultsMap.set(item.job_id, {
-              job_id: item.job_id,
+            const jobId = String(item?.job_id ?? "");
+            if (!jobId) return;
+            resultsMap.set(jobId, {
+              job_id: jobId,
               score: item.score,
               explanation: item.explanation,
             });
@@ -139,7 +141,7 @@ Consider:
 Respond ONLY with valid JSON in this exact format:
 [
   {
-    "job_id": 123,
+    "job_id": "123",
     "score": 8,
     "explanation": "Strong technical skill match, but limited experience in the specific industry."
   },

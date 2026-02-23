@@ -4,7 +4,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { categorizeCVWithLLM } from "@/lib/categorization";
-import { embedText } from "@/lib/ollama";
 import { rerankJobsWithManager } from "@/lib/managerReranker";
 
 const supabase = createClient(
@@ -102,18 +101,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log(`✅ Layer 2: Found ${jobs?.length || 0} matching jobs`);
+    const normalizedJobs = (jobs || []).map(normalizeGraniteJob);
+
+    console.log(`✅ Layer 2: Found ${normalizedJobs.length} matching jobs`);
 
     // 6. Layer 3: Manager Re-ranker (for top 20 jobs)
     let managerScores = new Map();
-    if (jobs && jobs.length > 0) {
+    if (normalizedJobs.length > 0) {
       console.log("🎯 Layer 3: Running manager re-ranker...");
-      managerScores = await rerankJobsWithManager(cvText, jobs, 20);
+      managerScores = await rerankJobsWithManager(cvText, normalizedJobs, 20);
       console.log(`✅ Layer 3: Re-ranked ${managerScores.size} jobs`);
     }
 
     // 7. Merge Layer 3 scores into results
-    const jobsWithManagerScores = (jobs || []).map((job) => {
+    const jobsWithManagerScores = normalizedJobs.map((job: any) => {
       const managerData = managerScores.get(job.id);
       return {
         ...job,
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       layer1_categories: categoryNames,
-      layer2_match_count: jobs?.length || 0,
+      layer2_match_count: normalizedJobs.length,
       layer3_reranked_count: managerScores.size,
       jobs: jobsWithManagerScores,
       metadata: {
@@ -145,6 +146,17 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function normalizeGraniteJob(job: any) {
+  return {
+    ...job,
+    id: String(job?.id ?? ""),
+    title: job?.title ?? job?.headline ?? "",
+    company: job?.company ?? job?.employer_name ?? "",
+    city: job?.city ?? job?.location ?? "",
+    description: job?.description ?? job?.description_text ?? "",
+  };
 }
 
 /**

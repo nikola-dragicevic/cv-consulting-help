@@ -770,7 +770,7 @@ export default function UnifiedLandingPage() {
                       {j.s_wish != null && (
                         <div className="flex justify-between"><span className="text-slate-600">Önskemål:</span><span className="font-medium">{pct(j.s_wish)}</span></div>
                       )}
-                      <div className="flex justify-between pt-2 border-t"><span className="text-slate-600 font-semibold">Slutbetyg:</span><span className="text-xl font-bold text-blue-700">{pct(j.final_score)}</span></div>
+                      <div className="flex justify-between pt-2 border-t"><span className="text-slate-600 font-semibold">Slutbetyg:</span><span className="text-xl font-bold text-blue-700">{pct(j.final_score ?? j.s_profile)}</span></div>
                     </div>
                     <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
                       <span>

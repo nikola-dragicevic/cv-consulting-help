@@ -10,9 +10,10 @@ import { MatchInsights } from "@/components/ui/MatchInsights";
 import { extractCandidateSkills, analyzeSkillGap } from "@/lib/gapAnalysis";
 
 interface Job {
-  id: number;
+  id: string;
   title: string;
-  employer_name: string;  // Changed from 'company' to match database
+  company?: string;
+  employer_name?: string; // Backward compatibility for cached legacy payloads
   occupation_field_label?: string;
   occupation_group_label?: string;
   city?: string;
@@ -290,7 +291,7 @@ function JobCard({ job, candidateCvText }: {
             <CardDescription className="flex items-center gap-4 text-sm">
               <span className="flex items-center gap-1">
                 <Building2 className="h-4 w-4" />
-                {job.employer_name}
+                {job.company || job.employer_name || "Okänd arbetsgivare"}
               </span>
               {job.city && (
                 <span className="flex items-center gap-1">

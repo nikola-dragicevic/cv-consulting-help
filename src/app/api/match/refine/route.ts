@@ -11,6 +11,13 @@ const OLLAMA_URL =
 const EMBEDDING_MODEL =
   process.env.EMBEDDING_MODEL || "snowflake-arctic-embed2";
 
+const OCCUPATION_FIELD_ALIASES: Record<string, string[]> = {
+  Transport: ["Transport, distribution, lager"],
+  "Tekniskt arbete": ["Yrken med teknisk inriktning"],
+  "Socialt arbete": ["Yrken med social inriktning"],
+  "Pedagogiskt arbete": ["Pedagogik"],
+};
+
 async function generateEmbedding(text: string): Promise<number[]> {
   try {
     const res = await fetch(OLLAMA_URL, {
@@ -30,6 +37,23 @@ async function generateEmbedding(text: string): Promise<number[]> {
 function jsonError(message: string, status = 500) {
   console.error("[API ERROR /match/refine]", message);
   return NextResponse.json({ error: message }, { status });
+}
+
+function normalizeOccupationFields(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const normalized = new Set<string>();
+
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const label = raw.trim();
+    if (!label) continue;
+    normalized.add(label);
+    for (const mapped of OCCUPATION_FIELD_ALIASES[label] ?? []) {
+      normalized.add(mapped);
+    }
+  }
+
+  return normalized.size > 0 ? Array.from(normalized) : null;
 }
 
 const CITY_FALLBACK: Record<
@@ -115,7 +139,7 @@ export async function POST(req: Request) {
 
       v_profile = cand.profile_vector as number[];
       candidateTags = (cand.category_tags as string[] | null) ?? null;
-      primaryOccupationFields = (cand.primary_occupation_field as string[] | null) ?? null;
+      primaryOccupationFields = normalizeOccupationFields(cand.primary_occupation_field);
 
       cand_geo = {
         lat: cand.location_lat,

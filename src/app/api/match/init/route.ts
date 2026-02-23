@@ -20,9 +20,33 @@ type MatchedJob = {
   s_profile: number;
 };
 
+const OCCUPATION_FIELD_ALIASES: Record<string, string[]> = {
+  Transport: ["Transport, distribution, lager"],
+  "Tekniskt arbete": ["Yrken med teknisk inriktning"],
+  "Socialt arbete": ["Yrken med social inriktning"],
+  "Pedagogiskt arbete": ["Pedagogik"],
+};
+
 function jsonError(message: string, status = 500) {
   console.error("[API ERROR /match/init]", message);
   return NextResponse.json({ error: message }, { status });
+}
+
+function normalizeOccupationFields(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const normalized = new Set<string>();
+
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const label = raw.trim();
+    if (!label) continue;
+    normalized.add(label);
+    for (const mapped of OCCUPATION_FIELD_ALIASES[label] ?? []) {
+      normalized.add(mapped);
+    }
+  }
+
+  return normalized.size > 0 ? Array.from(normalized) : null;
 }
 
 const SWEDISH_CITIES: Record<string, { lat: number; lon: number }> = {
@@ -87,7 +111,7 @@ export async function POST(req: Request) {
 
       v_profile = profile.profile_vector as number[];
       candidateTags = (profile.category_tags as string[] | null) ?? null;
-      primaryOccupationFields = (profile.primary_occupation_field as string[] | null) ?? null;
+      primaryOccupationFields = normalizeOccupationFields(profile.primary_occupation_field);
 
       console.log("Using stored profile vector + category tags + occupation fields:", primaryOccupationFields);
     } else {
