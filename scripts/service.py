@@ -17,7 +17,11 @@ from scripts.update_jobs import run_job_update
 from scripts.enrich_jobs import enrich_job_vectors
 from scripts.geocode_jobs import geocode_new_jobs
 from scripts.sync_active_jobs import clean_stale_jobs  # removes stale jobs
-from scripts.generate_candidate_vector import build_candidate_vector  # chunking inside
+from scripts.generate_candidate_vector import (
+    build_candidate_vector,  # chunking inside
+    compute_category_tags_from_text,
+    compute_occupation_fields,
+)
 import json
 
 load_dotenv()
@@ -133,41 +137,260 @@ async def generate_embedding(req: EmbedRequest):
     text = req.text[:1500]
     return await fetch_simple_embedding(text)
 
-@app.post("/categorize-cv")
-async def categorize_cv(req: CVCategorizationRequest):
-    """
-    Layer 1: The Filter - Categorize CV using llama3.2
-    Returns top 3-5 subcategory IDs from Arbetsförmedlingen taxonomy
-    """
-    if not req.cv_text or not req.cv_text.strip():
-        raise HTTPException(400, "CV text cannot be empty")
+# All 21 Arbetsförmedlingen occupation field names — hardcoded so the LLM always
+# sees the COMPLETE list. Previously the code read AllJobCategoriesAndSubCategories.md
+# and truncated to [:3000] chars, which only covered the first ~4 categories.
+_OCCUPATION_FIELDS_LIST = """Administration, ekonomi, juridik
+Bygg och anläggning
+Chefer och verksamhetsledare
+Data/IT
+Försäljning, inköp, marknadsföring
+Hantverksyrken
+Hotell, restaurang, storhushåll
+Hälso- och sjukvård
+Industriell tillverkning
+Installation, drift, underhåll
+Kropps- och skönhetsvård
+Kultur, media, design
+Militärt arbete
+Naturbruk
+Naturvetenskapligt arbete
+Pedagogiskt arbete
+Sanering och renhållning
+Socialt arbete
+Säkerhetsarbete
+Tekniskt arbete
+Transport"""
 
-    # Load the taxonomy from the file
-    taxonomy_path = "/opt/cv-consulting/AllJobCategoriesAndSubCategories.md"
+# ---------------------------------------------------------------------------
+# Group-level keyword fallback — maps specific occupation_group_label values
+# to distinctive Swedish/English keywords found in CVs.
+# Used when LLM (llama3.2:3b) is unavailable.
+# Each entry corresponds to exactly one group in category_map.json.
+# ---------------------------------------------------------------------------
+_GROUP_KEYWORDS: dict[str, list[str]] = {
+    # ── Installation, drift, underhåll ──────────────────────────────────────
+    "Övriga drifttekniker och processövervakare": [
+        "SCADA", "PLC", "DCS", "HMI", "drifttekniker", "processövervakare",
+        "process control", "process operator", "automation engineer",
+        "industrial automation", "control system", "instrumenttekniker",
+    ],
+    "Flygmekaniker m.fl.": [
+        "aircraft mechanic", "aircraft maintenance", "flygmekaniker", "aviation",
+        "avionics", "airframe", "line maintenance", "MRO", "aircraft technician",
+        "AME", "Part-66", "EASA",
+    ],
+    "Underhållsmekaniker och maskinreparatörer": [
+        "underhållsmekaniker", "maintenance mechanic", "maskinreparatör",
+        "preventive maintenance", "corrective maintenance", "predictive maintenance",
+    ],
+    "Industrielektriker": [
+        "industrielektriker", "industrial electrician", "panel builder",
+        "switchboard", "elinstallation industri",
+    ],
+    "Installations- och serviceelektriker": [
+        "installations", "serviceelektriker", "installation electrician",
+        "service electrician", "elnät",
+    ],
+    "Fastighetsskötare": [
+        "fastighetsskötare", "facility technician", "fastighet", "property maintenance",
+    ],
+    "Motorfordonsmekaniker och fordonsreparatörer": [
+        "bilmekaniker", "fordonsreparatör", "vehicle mechanic", "motor mechanic",
+        "fordonsteknik",
+    ],
+    "Drifttekniker vid värme- och vattenverk": [
+        "fjärrvärme", "district heating", "vattenverk", "water treatment",
+        "kraftvärme", "energi",
+    ],
+    # ── Transport ────────────────────────────────────────────────────────────
+    "Arbetsledare inom lager och terminal": [
+        "warehouse manager", "lagerchef", "lageransvarig", "warehouse supervisor",
+        "terminal manager", "arbetsledare lager", "lagerledare",
+        "warehouse operations", "WMS", "WCS",
+    ],
+    "Transportledare och transportsamordnare": [
+        "transport coordinator", "transportledare", "transportsamordnare",
+        "logistics coordinator", "distribution manager", "transport planner",
+        "flödesplanerare",
+    ],
+    "Truckförare": [
+        "truckförare", "truck operator", "forklift", "truckkort",
+        "gaffeltruckförare",
+    ],
+    "Lager- och terminalpersonal": [
+        "lagerpersonal", "lagerarbetare", "warehouse worker", "lagermedarbetare",
+        "terminalarbetare",
+    ],
+    "Speditörer och transportmäklare": [
+        "speditör", "freight forwarder", "transportmäklare", "spedition",
+    ],
+    # ── Data/IT ──────────────────────────────────────────────────────────────
+    "Drifttekniker, IT": [
+        "drifttekniker IT", "IT operations", "systems administrator",
+        "IT support", "server management", "IT infrastructure",
+        "NOC", "servicedesk", "IT drift",
+    ],
+    "Mjukvaru- och systemutvecklare m.fl.": [
+        "software developer", "systemutvecklare", "programmer", "backend developer",
+        "frontend developer", "fullstack", "software engineer",
+        "Python", "Java", "TypeScript", "JavaScript", "React", "API development",
+    ],
+    "Nätverks- och systemtekniker m.fl.": [
+        "network engineer", "nätverkstekniker", "system technician",
+        "Cisco", "network infrastructure", "nätverksadministratör",
+        "TCP/IP", "firewall",
+    ],
+    "Systemadministratörer": [
+        "systemadministratör", "sysadmin", "system administrator",
+        "active directory", "Windows Server", "Linux admin",
+        "Azure AD", "Microsoft 365",
+    ],
+    "IT-säkerhetsspecialister": [
+        "IT security", "cybersecurity", "informationssäkerhet", "penetration testing",
+        "SOC", "SIEM",
+    ],
+    "Supporttekniker, IT": [
+        "IT support", "helpdesk", "servicedesk technician", "1st line support",
+        "2nd line support", "teknisk support",
+    ],
+    # ── Tekniskt arbete ───────────────────────────────────────────────────────
+    "Ingenjörer och tekniker inom industri, logistik och produktionsplanering": [
+        "industrial engineer", "industriingenjör", "production planning",
+        "produktionsplanering", "logistics engineer", "supply chain engineer",
+        "operations engineer", "lean engineer", "logistikingenjör",
+    ],
+    "Flygtekniker": [
+        "flight engineer", "flygtekniker", "aircraft engineer",
+        "certified aircraft", "aircraft design",
+    ],
+    "Ingenjörer och tekniker inom elektroteknik": [
+        "electrical engineer", "elektroingenjör", "power systems",
+        "high voltage", "högspänning", "elkonstruktör",
+    ],
+    "Ingenjörer och tekniker inom maskinteknik": [
+        "mechanical engineer", "maskintekniker", "maskiningenjör",
+        "maskinkonstruktör", "CAD konstruktör",
+    ],
+    "Civilingenjörsyrken inom logistik och produktionsplanering": [
+        "MSc logistics", "civilingenjör logistik", "supply chain management",
+        "operations research",
+    ],
+    # ── Industriell tillverkning ──────────────────────────────────────────────
+    "Arbetsledare inom tillverkning": [
+        "production supervisor", "tillverkningsledare", "shift leader",
+        "skiftledare", "group leader produktion",
+    ],
+    "Svetsare och gasskärare": [
+        "svetsare", "welder", "welding", "gasskärare",
+    ],
+    "Maskinoperatörer, påfyllning, packning och märkning": [
+        "packaging operator", "packing machine", "maskinoperatör packning",
+    ],
+    # ── Chefer och verksamhetsledare ──────────────────────────────────────────
+    "Inköps-, logistik- och transportchefer": [
+        "logistics manager", "logistikchef", "supply chain director",
+        "inköpschef", "operations director",
+    ],
+    "Produktionschefer inom tillverkning": [
+        "production manager", "produktionschef", "plant manager",
+        "manufacturing director",
+    ],
+}
+
+
+def _load_category_map() -> dict:
+    """Load category_map.json from config/. Returns empty dict on failure."""
     try:
-        with open(taxonomy_path, "r", encoding="utf-8") as f:
-            taxonomy_text = f.read()
+        map_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'config', 'category_map.json'
+        )
+        with open(map_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
     except Exception as e:
-        print(f"❌ Failed to load taxonomy: {e}")
-        return {"subcategory_ids": []}
+        print(f"⚠️ _load_category_map error: {e}")
+        return {}
 
-    # Prepare the prompt for llama3.2
-    prompt = f"""Using the Arbetsförmedlingen taxonomy below, identify the top 3-5 subcategory names that best fit this CV.
 
-Return ONLY a JSON array of subcategory names. Do not include any explanation or additional text.
+def groups_to_fields(group_names: list[str]) -> list[str]:
+    """
+    Reverse lookup: given occupation_group_label values, return their parent
+    occupation_field_label values using category_map.json.
+    """
+    category_map = _load_category_map()
+    if not category_map:
+        return []
+    group_set = set(group_names)
+    fields = []
+    for field, field_data in category_map.items():
+        if any(g in group_set for g in field_data.get('groups', [])):
+            fields.append(field)
+    return fields
+
+
+def simple_categorize_cv(text: str, max_groups: int = 10) -> list[str]:
+    """
+    Keyword-based categorization at occupation_group_label level.
+    Scores each group by keyword hit count, returns top N groups.
+    Used as fallback when LLM (llama3.2:3b) is unavailable.
+    """
+    t = (text or "").lower()
+    if not t:
+        return []
+
+    scores: dict[str, int] = {}
+    for group, keywords in _GROUP_KEYWORDS.items():
+        for kw in keywords:
+            if kw.lower() in t:
+                scores[group] = scores.get(group, 0) + 1
+
+    ranked = [(g, s) for g, s in scores.items() if s > 0]
+    ranked.sort(key=lambda x: x[1], reverse=True)
+    return [g for g, _ in ranked[:max_groups]]
+
+
+async def categorize_cv_text(cv_text: str) -> list[str]:
+    """
+    LLM-based CV categorization at occupation_group_label level.
+    Returns 5-10 specific group names chosen from category_map.json.
+    Requires llama3.2:3b (or CATEGORIZATION_MODEL) to be available in Ollama.
+    """
+    if not cv_text or not cv_text.strip():
+        return []
+
+    # Build flat list of all groups from category_map.json for the LLM to choose from
+    category_map = _load_category_map()
+    if category_map:
+        all_groups: list[str] = []
+        for field_data in category_map.values():
+            all_groups.extend(field_data.get('groups', []))
+        groups_list = "\n".join(all_groups)
+    else:
+        # Absolute fallback if category_map.json is missing
+        groups_list = ""
+
+    prompt = f"""You are categorizing a CV into Swedish job market occupation groups.
+
+Choose the 5-10 most relevant occupation groups from this EXACT list (use the names exactly as written):
+
+{groups_list}
 
 CV Text:
-{req.cv_text[:2000]}
+{cv_text[:3000]}
 
-Taxonomy:
-{taxonomy_text[:3000]}
+Rules:
+- Pick only from the list above, using the exact Swedish names
+- Return 5-10 groups, most relevant first
+- Return ONLY a JSON array, no explanation
 
-Output format example: ["Data/IT", "Tekniskt arbete", "Pedagogiskt arbete"]
+Example output: ["Övriga drifttekniker och processövervakare", "Flygmekaniker m.fl.", "Arbetsledare inom lager och terminal", "Drifttekniker, IT"]
 
 Your response (JSON array only):"""
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # CPU-only inference of llama3.2:3b with a ~200-line group list + CV text
+        # typically takes 60-180 s. Use a generous timeout so we don't cut it short.
+        async with httpx.AsyncClient(timeout=180.0) as client:
             response = await client.post(
                 OLLAMA_GENERATE_URL,
                 json={
@@ -179,43 +402,57 @@ Your response (JSON array only):"""
             )
             response.raise_for_status()
             data = response.json()
-
-            # Extract the generated text
             generated_text = data.get("response", "")
 
-            # Try to parse as JSON
-            try:
-                # Clean up the response - sometimes models add markdown code blocks
-                cleaned = generated_text.strip()
-                if cleaned.startswith("```json"):
-                    cleaned = cleaned[7:]
-                if cleaned.startswith("```"):
-                    cleaned = cleaned[3:]
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
+            cleaned = generated_text.strip()
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:]
+            if cleaned.startswith("```"):
+                cleaned = cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
 
-                subcategories = json.loads(cleaned)
-
-                # Ensure it's a list
-                if isinstance(subcategories, list):
-                    # Return the subcategory names (we'll use these for category matching)
-                    print(f"✅ [CATEGORIZATION] Found categories: {subcategories}")
-                    return {"subcategory_ids": subcategories[:5]}  # Max 5
+            subcategories = json.loads(cleaned)
+            if isinstance(subcategories, list):
+                # Validate: keep only groups that exist exactly in the taxonomy
+                valid_set = set(all_groups) if all_groups else set()
+                valid = [g for g in subcategories if g in valid_set]
+                invalid = [g for g in subcategories if g not in valid_set]
+                if invalid:
+                    print(f"⚠️ [CATEGORIZATION] Discarded hallucinated groups: {invalid}")
+                if valid:
+                    print(f"✅ [CATEGORIZATION] Valid groups (LLM): {valid}")
+                    return valid[:10]
                 else:
-                    print(f"⚠️ [CATEGORIZATION] Response was not a list: {subcategories}")
-                    return {"subcategory_ids": []}
+                    print(f"⚠️ [CATEGORIZATION] No valid groups after validation, falling back to keywords")
+                    return []
+            else:
+                print(f"⚠️ [CATEGORIZATION] Response was not a list: {subcategories}")
+                return []
 
-            except json.JSONDecodeError as e:
-                print(f"⚠️ [CATEGORIZATION] Failed to parse JSON: {generated_text[:200]}")
-                return {"subcategory_ids": []}
-
+    except json.JSONDecodeError as e:
+        print(f"⚠️ [CATEGORIZATION] Failed to parse JSON: {generated_text[:200]}")
+        return []
     except httpx.RequestError as e:
-        print(f"❌ Connection error to Ollama: {e}")
-        return {"subcategory_ids": []}  # Graceful degradation
+        print(f"❌ Connection error to Ollama for categorization: {e}")
+        return []
     except Exception as e:
         print(f"❌ Categorization error: {e}")
-        return {"subcategory_ids": []}
+        return []
+
+
+@app.post("/categorize-cv")
+async def categorize_cv(req: CVCategorizationRequest):
+    """
+    Layer 1: The Filter - Categorize CV using llama3.2
+    Returns top 3-5 occupation field names from Arbetsförmedlingen taxonomy
+    """
+    if not req.cv_text or not req.cv_text.strip():
+        raise HTTPException(400, "CV text cannot be empty")
+
+    subcategories = await categorize_cv_text(req.cv_text)
+    return {"subcategory_ids": subcategories}
 
 @app.post("/extract-job-skills")
 async def extract_job_skills(req: JobSkillExtractionRequest):
@@ -252,7 +489,7 @@ Job Description:
 Your response (JSON only):"""
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
                 OLLAMA_GENERATE_URL,
                 json={
@@ -498,6 +735,38 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
 
             update_data["profile_vector"] = vector
             update_data["candidate_text_vector"] = debug_text
+
+        # 5) Categorize CV for Layer 1 matching
+        # Choose text for categorization based on entry mode
+        if entry_mode == "manual_entry":
+            cat_text = " ".join(filter(None, [
+                profile.get("persona_current_text") or "",
+                profile.get("persona_target_text") or "",
+                profile.get("skills_text") or "",
+            ]))
+        else:
+            cat_text = cv_text
+
+        try:
+            # LLM returns validated occupation_group_label values (hallucinations already filtered).
+            # Always run keyword fallback too and merge — keywords are reliable for strong signals,
+            # LLM adds nuance. Union of both gives best coverage.
+            llm_groups = await categorize_cv_text(cat_text)
+            kw_groups = simple_categorize_cv(cat_text)
+
+            # Merge: LLM first (priority), then keyword additions, deduplicated
+            merged = list(dict.fromkeys(llm_groups + [g for g in kw_groups if g not in llm_groups]))
+            final_groups = merged[:10]
+
+            if final_groups:
+                update_data["category_tags"] = final_groups
+                update_data["primary_occupation_field"] = groups_to_fields(final_groups)
+                print(f"🎯 [WEBHOOK] occupation groups (LLM={len(llm_groups)} kw={len(kw_groups)} merged={len(final_groups)}) = {final_groups}")
+            else:
+                print(f"⚠️ [WEBHOOK] No occupation groups found from LLM or keywords")
+
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] Categorization failed (non-critical): {e}")
 
         # Save all updates to DB
         supabase.table("candidate_profiles").update(update_data).eq("user_id", req.user_id).execute()

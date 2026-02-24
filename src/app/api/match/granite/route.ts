@@ -64,15 +64,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Layer 1: Categorize the CV using local LLM
-    console.log("🎯 Layer 1: Categorizing CV...");
+    // 3. Layer 1: Use cached categories from DB, fall back to LLM if not set
+    console.log("🎯 Layer 1: Resolving categories...");
     const cvText =
       profile.candidate_text_vector ||
       profile.persona_current_text ||
       "";
 
-    const categoryNames = await categorizeCVWithLLM(cvText);
-    console.log(`✅ Layer 1: Found ${categoryNames.length} categories:`, categoryNames);
+    let categoryNames: string[] = [];
+
+    // primary_occupation_field is pre-computed on upload (fastest path)
+    if (profile.primary_occupation_field && profile.primary_occupation_field.length > 0) {
+      categoryNames = profile.primary_occupation_field;
+      console.log(`✅ Layer 1: Using cached primary_occupation_field:`, categoryNames);
+    } else if (profile.category_tags && profile.category_tags.length > 0) {
+      categoryNames = profile.category_tags;
+      console.log(`✅ Layer 1: Using cached category_tags:`, categoryNames);
+    } else {
+      // Fall back to on-demand LLM categorization (first search before webhook completes)
+      categoryNames = await categorizeCVWithLLM(cvText);
+      console.log(`✅ Layer 1: LLM categorized ${categoryNames.length} categories:`, categoryNames);
+    }
+
+    console.log(`✅ Layer 1: Final categories (${categoryNames.length}):`, categoryNames);
 
     // 4. Extract keywords from CV for keyword matching
     const keywords = extractKeywords(cvText);

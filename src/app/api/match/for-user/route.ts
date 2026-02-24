@@ -179,6 +179,12 @@ export async function POST(req: Request) {
       typedProfile.occupation_field_candidates
     );
     const cvKeywords = buildKeywords(typedProfile);
+    // category_tags now holds occupation_group_label values (set by webhook after group expansion).
+    // Pass as group_names for a hard SQL filter; falls back gracefully if null or empty.
+    const groupNames =
+      typedProfile.category_tags && typedProfile.category_tags.length > 0
+        ? typedProfile.category_tags
+        : null;
 
     if (typeof lat !== "number" || typeof lon !== "number") {
       return NextResponse.json(
@@ -187,8 +193,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2) CV-only Granite scoring (vector + keyword + category bonus)
-    const granitePrimary = await supabase.rpc("match_jobs_granite", {
+    // 2) CV-only Granite scoring (vector + keyword + group hard-filter)
+    const graniteBaseParams = {
       candidate_vector: typedProfile.profile_vector,
       candidate_lat: lat,
       candidate_lon: lon,
@@ -196,6 +202,12 @@ export async function POST(req: Request) {
       category_names: normalizedOccupationFields,
       cv_keywords: cvKeywords,
       limit_count: 100,
+    };
+
+    // Tier 1: group-level hard filter (occupation_group_label exact match)
+    const granitePrimary = await supabase.rpc("match_jobs_granite", {
+      ...graniteBaseParams,
+      group_names: groupNames,
     });
 
     let graniteRows = (granitePrimary.data as RawJobRow[] | null) ?? null;
@@ -203,16 +215,23 @@ export async function POST(req: Request) {
       console.warn("match_jobs_granite failed, falling back to legacy matcher:", granitePrimary.error.message);
     }
 
-    // If category filter is too strict, keep Granite scoring but widen category gate.
+    // Tier 2: group filter too few results (< 10) → drop group, keep field-level soft boost
+    if (!granitePrimary.error && (graniteRows ?? []).length < 10 && groupNames) {
+      const graniteFieldOnly = await supabase.rpc("match_jobs_granite", {
+        ...graniteBaseParams,
+        group_names: null,
+      });
+      if (!graniteFieldOnly.error) {
+        graniteRows = (graniteFieldOnly.data as RawJobRow[] | null) ?? graniteRows;
+      }
+    }
+
+    // Tier 3: field filter also empty → fully open vector search
     if (!granitePrimary.error && (graniteRows ?? []).length === 0 && normalizedOccupationFields) {
       const graniteBroad = await supabase.rpc("match_jobs_granite", {
-        candidate_vector: typedProfile.profile_vector,
-        candidate_lat: lat,
-        candidate_lon: lon,
-        radius_m: Math.max(1, Math.round(radiusKm * 1000)),
+        ...graniteBaseParams,
         category_names: null,
-        cv_keywords: cvKeywords,
-        limit_count: 100,
+        group_names: null,
       });
       if (!graniteBroad.error) {
         graniteRows = (graniteBroad.data as RawJobRow[] | null) ?? graniteRows;

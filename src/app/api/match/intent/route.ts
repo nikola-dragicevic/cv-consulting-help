@@ -134,6 +134,25 @@ async function matchByIntent(profile: any, intent: string, supabase: any) {
   }
 }
 
+// Taxonomy drift: labels stored by LLM may differ from job_ads occupation_field_label values
+const OCCUPATION_FIELD_ALIASES: Record<string, string[]> = {
+  "Transport": ["Transport, distribution, lager"],
+  "Tekniskt arbete": ["Yrken med teknisk inriktning", "Installation, drift, underhåll"],
+  "Socialt arbete": ["Yrken med social inriktning"],
+  "Pedagogiskt arbete": ["Pedagogik"],
+};
+
+function expandOccupationFields(fields: string[]): string[] {
+  const expanded = new Set<string>();
+  for (const f of fields) {
+    expanded.add(f);
+    for (const alias of OCCUPATION_FIELD_ALIASES[f] ?? []) {
+      expanded.add(alias);
+    }
+  }
+  return Array.from(expanded);
+}
+
 // Helper: Use Granite matching with weighted hybrid search
 async function matchWithGranite(
   vector: any,
@@ -145,15 +164,26 @@ async function matchWithGranite(
   const cvText = profile.candidate_text_vector || profile.persona_current_text || "";
   const keywords = extractKeywordsFromCV(cvText);
 
+  // Expand occupation fields to handle taxonomy drift between our labels and job_ads labels
+  const expandedFields = expandOccupationFields(occupationFields);
+
+  // category_tags holds occupation_group_label values (set by webhook after group expansion).
+  // Pass as group_names for a hard SQL filter on occupation_group_label.
+  const groupNames =
+    profile.category_tags && profile.category_tags.length > 0
+      ? profile.category_tags
+      : null;
+
   // Call granite RPC with full scoring
   const { data: jobs, error } = await supabase.rpc("match_jobs_granite", {
     candidate_vector: vector,
     candidate_lat: profile.location_lat,
     candidate_lon: profile.location_lon,
     radius_m: (profile.commute_radius_km || 50) * 1000,
-    category_names: occupationFields,
+    category_names: expandedFields.length > 0 ? expandedFields : null,
     cv_keywords: keywords.slice(0, 10), // Top 10 keywords
-    limit_count: 100
+    limit_count: 100,
+    group_names: groupNames,
   });
 
   if (error) {
@@ -181,8 +211,8 @@ async function matchCurrentRole(profile: any, supabase: any) {
     throw new Error("No current role vector available");
   }
 
-  // Use Granite matching with weighted hybrid search
-  const occupationFields = profile.occupation_field_candidates || [];
+  // primary_occupation_field is populated by webhook on save; occupation_field_candidates is legacy fallback
+  const occupationFields = profile.primary_occupation_field || profile.occupation_field_candidates || [];
   const jobs = await matchWithGranite(vector, occupationFields, profile, supabase);
 
   return {
@@ -202,8 +232,9 @@ async function matchTargetRole(profile: any, supabase: any) {
     throw new Error("No target role defined. Please fill in your target persona.");
   }
 
-  // Use Granite matching with target occupation fields
+  // occupation_targets is not yet populated; fall through to primary_occupation_field
   const occupationFields = profile.occupation_targets ||
+                          profile.primary_occupation_field ||
                           profile.occupation_field_candidates || [];
   const jobs = await matchWithGranite(vector, occupationFields, profile, supabase);
 
@@ -250,7 +281,7 @@ async function matchMultipleTracks(profile: any, supabase: any) {
   // Bucket C: Adjacent/Related fields (if no target defined)
   if (!profile.persona_target_vector && profile.profile_vector) {
     const relatedFields = getRelatedOccupationFields(
-      profile.occupation_field_candidates || []
+      profile.primary_occupation_field || profile.occupation_field_candidates || []
     );
 
     try {

@@ -1,7 +1,7 @@
 ** These are all the categories and sub categories used on FrontEnd.
 
 Filters from arbetsförmedlingen:
-
+***occupation_field_label from arbetsförmedlingen!
 *Administration, ekonomi, juridik
 *Bygg och anläggning
 *Chefer och verksamhetsledare
@@ -23,6 +23,8 @@ Filters from arbetsförmedlingen:
 *Säkerhetsarbete
 *Tekniskt arbete
 *Transport
+
+***and then for each occupation_field_label all the occupation_group_label
 
 Administration, ekonomi, juridik:
 Advokater
