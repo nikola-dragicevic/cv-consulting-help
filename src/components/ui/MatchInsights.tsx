@@ -1,9 +1,11 @@
 // src/components/ui/MatchInsights.tsx
 // Frontend component for displaying Granite Architecture results
+"use client";
 
 import React from "react";
 import { Badge } from "./badge";
 import { Card } from "./card";
+import { useLanguage } from "@/components/i18n/LanguageProvider";
 
 interface SkillsData {
   required_skills?: string[];
@@ -44,10 +46,10 @@ export function MatchInsights({
   finalScore,
   managerScore,
   managerExplanation,
-  skillsData,
   gapAnalysis,
   compact = false,
 }: MatchInsightsProps) {
+  const { t } = useLanguage();
   if (compact) {
     return <CompactMatchInsights {...{ managerScore, finalScore, gapAnalysis }} />;
   }
@@ -57,28 +59,28 @@ export function MatchInsights({
       {/* Layer 2: Weighted Scores */}
       {finalScore !== undefined && (
         <Card className="p-4">
-          <h3 className="font-semibold mb-3">Match Breakdown</h3>
+          <h3 className="font-semibold mb-3">{t("Matchdetaljer", "Match Breakdown")}</h3>
           <div className="space-y-2 text-sm">
             <ScoreBar
-              label="Content Match"
+              label={t("Innehållsmatch", "Content Match")}
               value={vectorSimilarity || 0}
               color="blue"
             />
             <ScoreBar
-              label="Keyword Bonus"
+              label={t("Nyckelordsbonus", "Keyword Bonus")}
               value={keywordScore || 0}
               color="green"
             />
             {categoryBonus !== undefined && categoryBonus > 0 && (
               <ScoreBar
-                label="Category Boost"
+                label={t("Kategoriboost", "Category Boost")}
                 value={categoryBonus}
                 color="purple"
               />
             )}
             <div className="pt-2 border-t">
               <ScoreBar
-                label="Final Score"
+                label={t("Slutscore", "Final Score")}
                 value={finalScore}
                 color="indigo"
                 bold
@@ -99,10 +101,10 @@ export function MatchInsights({
             </div>
             <div className="flex-1">
               <h3 className="font-semibold text-indigo-900 dark:text-indigo-100 mb-1">
-                Hiring Manager's Opinion
+                {t("Chefens bedömning", "Hiring Manager's Opinion")}
               </h3>
               <p className="text-sm text-indigo-700 dark:text-indigo-300">
-                {managerExplanation || "Good overall fit for this position."}
+                {managerExplanation || t("Bra helhetsmatch för den här rollen.", "Good overall fit for this position.")}
               </p>
             </div>
           </div>
@@ -113,7 +115,7 @@ export function MatchInsights({
       {gapAnalysis && (
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold">Skill Match</h3>
+            <h3 className="font-semibold">{t("Kompetensmatch", "Skill Match")}</h3>
             <CompletionBadge score={gapAnalysis.completion_score} />
           </div>
 
@@ -121,7 +123,7 @@ export function MatchInsights({
           {gapAnalysis.missing_required.length > 0 && (
             <div className="mb-3">
               <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-2">
-                ⚠️ You are missing:
+                {t("⚠️ Du saknar:", "⚠️ You are missing:")}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {gapAnalysis.missing_required.map((skill, idx) => (
@@ -137,7 +139,7 @@ export function MatchInsights({
           {gapAnalysis.missing_preferred.length > 0 && (
             <div className="mb-3">
               <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mb-2">
-                💡 Nice to have:
+                {t("💡 Bra att ha:", "💡 Nice to have:")}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {gapAnalysis.missing_preferred.map((skill, idx) => (
@@ -153,7 +155,7 @@ export function MatchInsights({
           {gapAnalysis.matched_required.length > 0 && (
             <div>
               <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-2">
-                ✅ You have:
+                {t("✅ Du har:", "✅ You have:")}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {gapAnalysis.matched_required.slice(0, 8).map((skill, idx) => (
@@ -163,7 +165,7 @@ export function MatchInsights({
                 ))}
                 {gapAnalysis.matched_required.length > 8 && (
                   <Badge variant="secondary" className="text-xs">
-                    +{gapAnalysis.matched_required.length - 8} more
+                    {t(`+${gapAnalysis.matched_required.length - 8} till`, `+${gapAnalysis.matched_required.length - 8} more`)}
                   </Badge>
                 )}
               </div>
@@ -184,17 +186,18 @@ function CompactMatchInsights({
   finalScore?: number;
   gapAnalysis?: GapAnalysis;
 }) {
+  const { t } = useLanguage();
   return (
     <div className="flex items-center gap-3 text-sm">
       {finalScore !== undefined && (
         <div className="flex items-center gap-1">
-          <span className="text-gray-600 dark:text-gray-400">Match:</span>
+          <span className="text-gray-600 dark:text-gray-400">{t("Match:", "Match:")}</span>
           <span className="font-semibold">{Math.round(finalScore * 100)}%</span>
         </div>
       )}
       {managerScore !== undefined && (
         <div className="flex items-center gap-1">
-          <span className="text-gray-600 dark:text-gray-400">Manager:</span>
+          <span className="text-gray-600 dark:text-gray-400">{t("Chef:", "Manager:")}</span>
           <span className="font-semibold">{managerScore}/10</span>
         </div>
       )}

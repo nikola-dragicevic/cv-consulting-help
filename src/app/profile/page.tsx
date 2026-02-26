@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { User, Eye } from "lucide-react";
 import Link from "next/link";
+import { useLanguage } from "@/components/i18n/LanguageProvider";
 
 interface Profile {
   full_name: string;
@@ -41,6 +42,7 @@ interface Profile {
 
 export default function ProfilePage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const supabase = useMemo(() => getBrowserSupabase(), []);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,7 +74,7 @@ export default function ProfilePage() {
           router.push("/login");
           return;
         }
-        if (!res.ok) throw new Error("Kunde inte hämta profil.");
+        if (!res.ok) throw new Error(t("Kunde inte hämta profil.", "Could not load profile."));
 
         const data = await res.json();
 
@@ -120,19 +122,19 @@ export default function ProfilePage() {
         setLoading(false);
       }
     })();
-  }, [router, supabase]);
+  }, [router, supabase, t]);
 
   const handleUpdateProfile = async (e: FormEvent) => {
     e.preventDefault();
     if (!profile) return;
 
     if (isRateLimited) {
-      setMessage(`Vänligen vänta ${countdown} sekunder innan du sparar igen.`);
+      setMessage(t(`Vänligen vänta ${countdown} sekunder innan du sparar igen.`, `Please wait ${countdown} seconds before saving again.`));
       return;
     }
 
     if (!gdprAccepted) {
-      setMessage("Du måste godkänna behandlingen av dina uppgifter för att spara.");
+      setMessage(t("Du måste godkänna behandlingen av dina uppgifter för att spara.", "You must accept data processing to save."));
       return;
     }
 
@@ -166,10 +168,13 @@ export default function ProfilePage() {
       const res = await fetch("/api/profile", { method: "POST", body: form });
       const result = await res.json();
 
-      if (!res.ok) throw new Error(result.error || "Något gick fel.");
+      if (!res.ok) throw new Error(result.error || t("Något gick fel.", "Something went wrong."));
 
       setMessage(
-        "✅ Din profil har sparats! Din matchningsprofil kommer att regenereras vid nästa sökning."
+        t(
+          "✅ Din profil har sparats! Din matchningsprofil kommer att regenereras vid nästa sökning.",
+          "✅ Your profile has been saved! Your matching profile will be regenerated the next time you search."
+        )
       );
 
       if (result.newCvUrl) {
@@ -212,7 +217,7 @@ export default function ProfilePage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
       if (!token) {
-        setCvViewError("Ingen session token");
+        setCvViewError(t("Ingen session token", "No session token"));
         setCvViewLoading(false);
         return;
       }
@@ -223,7 +228,7 @@ export default function ProfilePage() {
 
       if (!response.ok) {
         const errData = await response.json();
-        setCvViewError(errData.error || "Kunde inte hämta CV");
+        setCvViewError(errData.error || t("Kunde inte hämta CV", "Could not fetch CV"));
         setCvViewLoading(false);
         return;
       }
@@ -232,22 +237,22 @@ export default function ProfilePage() {
       window.open(url, "_blank");
       setCvViewLoading(false);
     } catch (err: any) {
-      setCvViewError(err.message || "Fel vid hämtning av CV");
+      setCvViewError(err.message || t("Fel vid hämtning av CV", "Error fetching CV"));
       setCvViewLoading(false);
     }
   };
 
-  if (loading) return <div className="p-8">Laddar din profil...</div>;
-  if (!profile) return <div className="p-8">Kunde inte ladda din profil. Vänligen logga in igen.</div>;
+  if (loading) return <div className="p-8">{t("Laddar din profil...", "Loading your profile...")}</div>;
+  if (!profile) return <div className="p-8">{t("Kunde inte ladda din profil. Vänligen logga in igen.", "Could not load your profile. Please log in again.")}</div>;
 
   return (
     <div className="container mx-auto max-w-2xl py-12 px-4">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-2xl">
-            <User /> Min Profil
+            <User /> {t("Min Profil", "My Profile")}
           </CardTitle>
-          <CardDescription>Håll din information uppdaterad för bästa matchningar.</CardDescription>
+          <CardDescription>{t("Håll din information uppdaterad för bästa matchningar.", "Keep your information updated for better matches.")}</CardDescription>
         </CardHeader>
 
         <CardContent>
@@ -255,35 +260,35 @@ export default function ProfilePage() {
             {/* Basic Info Section */}
             <div className="space-y-4 pb-6 border-b border-slate-200">
               <div className="space-y-2">
-                <Label htmlFor="fullName">Fullständigt namn</Label>
+                <Label htmlFor="fullName">{t("Fullständigt namn", "Full name")}</Label>
                 <Input id="fullName" name="full_name" value={profile.full_name} onChange={handleInputChange} />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="email">E-post</Label>
+                <Label htmlFor="email">{t("E-post", "Email")}</Label>
                 <Input id="email" name="email" value={profile.email} disabled />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="phone">Telefon</Label>
+                  <Label htmlFor="phone">{t("Telefon", "Phone")}</Label>
                   <Input id="phone" name="phone" value={profile.phone} onChange={handleInputChange} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="city">Stad</Label>
+                  <Label htmlFor="city">{t("Stad", "City")}</Label>
                   <Input id="city" name="city" value={profile.city} onChange={handleInputChange} />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="street">Gatuadress</Label>
+                <Label htmlFor="street">{t("Gatuadress", "Street address")}</Label>
                 <Input id="street" name="street" value={profile.street} onChange={handleInputChange} />
               </div>
             </div>
 
             {/* Entry Mode Toggle */}
             <div className="space-y-3">
-              <Label className="text-base font-semibold">Hur vill du skapa din profil?</Label>
+              <Label className="text-base font-semibold">{t("Hur vill du skapa din profil?", "How do you want to create your profile?")}</Label>
               <div className="flex gap-4">
                 <button
                   type="button"
@@ -294,8 +299,8 @@ export default function ProfilePage() {
                       : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
                 >
-                  <div className="font-medium">Ladda upp CV</div>
-                  <div className="text-xs mt-1 opacity-75">Snabbast och enklast</div>
+                  <div className="font-medium">{t("Ladda upp CV", "Upload CV")}</div>
+                  <div className="text-xs mt-1 opacity-75">{t("Snabbast och enklast", "Fastest and easiest")}</div>
                 </button>
                 <button
                   type="button"
@@ -306,8 +311,8 @@ export default function ProfilePage() {
                       : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
                 >
-                  <div className="font-medium">Fyll i manuellt</div>
-                  <div className="text-xs mt-1 opacity-75">Mer kontroll över vad du delar</div>
+                  <div className="font-medium">{t("Fyll i manuellt", "Fill in manually")}</div>
+                  <div className="text-xs mt-1 opacity-75">{t("Mer kontroll över vad du delar", "More control over what you share")}</div>
                 </button>
               </div>
             </div>
@@ -315,7 +320,7 @@ export default function ProfilePage() {
             {/* CV Upload Mode */}
             {entryMode === 'cv_upload' && (
               <div className="space-y-2">
-                <Label htmlFor="cv-upload">Ladda upp ditt CV (PDF eller .txt)</Label>
+                <Label htmlFor="cv-upload">{t("Ladda upp ditt CV (PDF eller .txt)", "Upload your CV (PDF or .txt)")}</Label>
                 <div className="flex items-center gap-3">
                   <Input
                     id="cv-upload"
@@ -326,13 +331,13 @@ export default function ProfilePage() {
                   {profile.cv_file_url && (
                     <Button type="button" variant="outline" onClick={handleViewCv} disabled={cvViewLoading}>
                       <Eye className="h-4 w-4 mr-2" />
-                      {cvViewLoading ? "Laddar..." : "Visa nuvarande"}
+                      {cvViewLoading ? t("Laddar...", "Loading...") : t("Visa nuvarande", "View current")}
                     </Button>
                   )}
                 </div>
                 {cvViewError && <p className="text-xs text-red-600">{cvViewError}</p>}
                 <p className="text-xs text-slate-500">
-                  När du sparar ändringar kommer din matchningsprofil att regenereras automatiskt.
+                  {t("När du sparar ändringar kommer din matchningsprofil att regenereras automatiskt.", "When you save changes, your matching profile will be regenerated automatically.")}
                 </p>
               </div>
             )}
@@ -344,11 +349,11 @@ export default function ProfilePage() {
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-6">
                   <h3 className="font-bold text-lg text-blue-900 mb-4 flex items-center gap-2">
                     <span className="bg-blue-600 text-white rounded-full w-7 h-7 flex items-center justify-center text-sm font-bold">0</span>
-                    Välj din intention
+                    {t("Välj din intention", "Choose your intent")}
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="intent" className="text-sm font-medium text-slate-700">Vad letar du efter?</Label>
+                      <Label htmlFor="intent" className="text-sm font-medium text-slate-700">{t("Vad letar du efter?", "What are you looking for?")}</Label>
                       <select
                         id="intent"
                         name="intent"
@@ -356,16 +361,16 @@ export default function ProfilePage() {
                         onChange={handleInputChange}
                         className="w-full px-4 py-3 border-2 border-blue-200 bg-white rounded-lg text-sm font-medium focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
                       >
-                        <option value="">Välj...</option>
-                        <option value="match_current_role">Liknande min nuvarande roll</option>
-                        <option value="transition_to_target">Övergång till målroll</option>
-                        <option value="pick_categories">Välj kategorier själv</option>
-                        <option value="show_multiple_tracks">Visa flera karriärspår (rekommenderas)</option>
+                        <option value="">{t("Välj...", "Choose...")}</option>
+                        <option value="match_current_role">{t("Liknande min nuvarande roll", "Similar to my current role")}</option>
+                        <option value="transition_to_target">{t("Övergång till målroll", "Transition to target role")}</option>
+                        <option value="pick_categories">{t("Välj kategorier själv", "Choose categories manually")}</option>
+                        <option value="show_multiple_tracks">{t("Visa flera karriärspår (rekommenderas)", "Show multiple career tracks (recommended)")}</option>
                       </select>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="seniority_level" className="text-sm font-medium text-slate-700">Erfarenhetsnivå</Label>
+                      <Label htmlFor="seniority_level" className="text-sm font-medium text-slate-700">{t("Erfarenhetsnivå", "Experience level")}</Label>
                       <select
                         id="seniority_level"
                         name="seniority_level"
@@ -373,10 +378,10 @@ export default function ProfilePage() {
                         onChange={handleInputChange}
                         className="w-full px-4 py-3 border-2 border-blue-200 bg-white rounded-lg text-sm font-medium focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
                       >
-                        <option value="">Välj...</option>
-                        <option value="junior">Junior</option>
-                        <option value="mid">Mellan</option>
-                        <option value="senior">Senior</option>
+                        <option value="">{t("Välj...", "Choose...")}</option>
+                        <option value="junior">{t("Junior", "Junior")}</option>
+                        <option value="mid">{t("Mellan", "Mid")}</option>
+                        <option value="senior">{t("Senior", "Senior")}</option>
                       </select>
                     </div>
                   </div>
@@ -384,19 +389,19 @@ export default function ProfilePage() {
 
                 {/* Career Journey Section */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-6">
-                  <h3 className="font-bold text-base text-slate-800 mb-4">Din karriärresa</h3>
+                  <h3 className="font-bold text-base text-slate-800 mb-4">{t("Din karriärresa", "Your career journey")}</h3>
 
                   <div className="space-y-5">
                     {/* Past Roles */}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-1 h-6 bg-slate-400 rounded"></div>
-                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Tidigare roller</span>
+                        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{t("Tidigare roller", "Previous roles")}</span>
                       </div>
 
                       <div className="space-y-3 pl-3">
                         <div className="space-y-1.5">
-                          <Label htmlFor="persona_past_1_text" className="text-sm text-slate-600">Roll 1</Label>
+                          <Label htmlFor="persona_past_1_text" className="text-sm text-slate-600">{t("Roll 1", "Role 1")}</Label>
                           <textarea
                             id="persona_past_1_text"
                             name="persona_past_1_text"
@@ -404,12 +409,12 @@ export default function ProfilePage() {
                             onChange={handleInputChange}
                             rows={2}
                             className="w-full px-3 py-2.5 border border-slate-300 bg-white rounded-lg text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none"
-                            placeholder="T.ex. Transportledare på Schenker (2018-2020)"
+                            placeholder={t("T.ex. Transportledare på Schenker (2018-2020)", "E.g. Transport manager at Schenker (2018-2020)")}
                           />
                         </div>
 
                         <div className="space-y-1.5">
-                          <Label htmlFor="persona_past_2_text" className="text-sm text-slate-600">Roll 2 (valfritt)</Label>
+                          <Label htmlFor="persona_past_2_text" className="text-sm text-slate-600">{t("Roll 2 (valfritt)", "Role 2 (optional)")}</Label>
                           <textarea
                             id="persona_past_2_text"
                             name="persona_past_2_text"
@@ -417,12 +422,12 @@ export default function ProfilePage() {
                             onChange={handleInputChange}
                             rows={2}
                             className="w-full px-3 py-2.5 border border-slate-300 bg-white rounded-lg text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none"
-                            placeholder="T.ex. Lagerarbetare på PostNord (2016-2018)"
+                            placeholder={t("T.ex. Lagerarbetare på PostNord (2016-2018)", "E.g. Warehouse worker at PostNord (2016-2018)")}
                           />
                         </div>
 
                         <div className="space-y-1.5">
-                          <Label htmlFor="persona_past_3_text" className="text-sm text-slate-600">Roll 3 (valfritt)</Label>
+                          <Label htmlFor="persona_past_3_text" className="text-sm text-slate-600">{t("Roll 3 (valfritt)", "Role 3 (optional)")}</Label>
                           <textarea
                             id="persona_past_3_text"
                             name="persona_past_3_text"
@@ -430,7 +435,7 @@ export default function ProfilePage() {
                             onChange={handleInputChange}
                             rows={2}
                             className="w-full px-3 py-2.5 border border-slate-300 bg-white rounded-lg text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none"
-                            placeholder="T.ex. Truckförare på Skanska (2014-2016)"
+                            placeholder={t("T.ex. Truckförare på Skanska (2014-2016)", "E.g. Forklift driver at Skanska (2014-2016)")}
                           />
                         </div>
                       </div>
@@ -440,7 +445,7 @@ export default function ProfilePage() {
                     <div className="space-y-2 pt-3 border-t-2 border-slate-300">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-1 h-6 bg-green-500 rounded"></div>
-                        <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">Nuvarande roll</span>
+                        <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">{t("Nuvarande roll", "Current role")}</span>
                       </div>
                       <div className="pl-3">
                         <textarea
@@ -450,7 +455,7 @@ export default function ProfilePage() {
                           onChange={handleInputChange}
                           rows={3}
                           className="w-full px-3 py-2.5 border-2 border-green-200 bg-green-50 rounded-lg text-sm focus:border-green-500 focus:ring-2 focus:ring-green-100 resize-none"
-                          placeholder="T.ex. Logistikchef på DHL, ansvarig för lagerautomation och WMS-system"
+                          placeholder={t("T.ex. Logistikchef på DHL, ansvarig för lagerautomation och WMS-system", "E.g. Logistics Manager at DHL, responsible for warehouse automation and WMS systems")}
                         />
                       </div>
                     </div>
@@ -459,7 +464,7 @@ export default function ProfilePage() {
                     <div className="space-y-2 pt-3 border-t-2 border-slate-300">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-1 h-6 bg-blue-500 rounded"></div>
-                        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Målroll (vad du vill göra)</span>
+                        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">{t("Målroll (vad du vill göra)", "Target role (what you want to do)")}</span>
                       </div>
                       <div className="pl-3">
                         <textarea
@@ -469,7 +474,7 @@ export default function ProfilePage() {
                           onChange={handleInputChange}
                           rows={3}
                           className="w-full px-3 py-2.5 border-2 border-blue-200 bg-blue-50 rounded-lg text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none"
-                          placeholder="T.ex. Supply Chain Manager med fokus på automation och digital transformation"
+                          placeholder={t("T.ex. Supply Chain Manager med fokus på automation och digital transformation", "E.g. Supply Chain Manager focused on automation and digital transformation")}
                         />
                       </div>
                     </div>
@@ -481,7 +486,7 @@ export default function ProfilePage() {
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
                     <h4 className="font-bold text-sm text-amber-900 mb-3 flex items-center gap-2">
                       <span className="text-xl">🛠️</span>
-                      Kompetenser & Verktyg
+                      {t("Kompetenser & Verktyg", "Skills & Tools")}
                     </h4>
                     <textarea
                       id="skills_text"
@@ -490,14 +495,14 @@ export default function ProfilePage() {
                       onChange={handleInputChange}
                       rows={6}
                       className="w-full px-3 py-2.5 border border-amber-300 bg-white rounded-lg text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 resize-none"
-                      placeholder="T.ex. WMS, WCS, SAP, Python, Excel, PLC-programmering, Lean, Six Sigma..."
+                      placeholder={t("T.ex. WMS, WCS, SAP, Python, Excel, PLC-programmering, Lean, Six Sigma...", "E.g. WMS, WCS, SAP, Python, Excel, PLC programming, Lean, Six Sigma...")}
                     />
                   </div>
 
                   <div className="bg-purple-50 border border-purple-200 rounded-xl p-5">
                     <h4 className="font-bold text-sm text-purple-900 mb-3 flex items-center gap-2">
                       <span className="text-xl">🎓</span>
-                      Utbildning & Certifieringar
+                      {t("Utbildning & Certifieringar", "Education & Certifications")}
                     </h4>
                     <textarea
                       id="education_certifications_text"
@@ -506,7 +511,7 @@ export default function ProfilePage() {
                       onChange={handleInputChange}
                       rows={6}
                       className="w-full px-3 py-2.5 border border-purple-300 bg-white rounded-lg text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-100 resize-none"
-                      placeholder="T.ex. Civilingenjör i Maskinteknik, B-körkort, HLR-certifikat, ISO 9001 Lead Auditor..."
+                      placeholder={t("T.ex. Civilingenjör i Maskinteknik, B-körkort, HLR-certifikat, ISO 9001 Lead Auditor...", "E.g. MSc Mechanical Engineering, driver's license B, CPR certificate, ISO 9001 Lead Auditor...")}
                     />
                   </div>
                 </div>
@@ -524,12 +529,12 @@ export default function ProfilePage() {
               />
               <div className="grid gap-1.5 leading-none">
                 <label htmlFor="gdpr-check" className="text-sm font-medium leading-snug cursor-pointer text-slate-700">
-                  Jag godkänner att jobbnu.se behandlar och lagrar mina uppgifter för jobbanalys och matchning
+                  {t("Jag godkänner att jobbnu.se behandlar och lagrar mina uppgifter för jobbanalys och matchning", "I consent to jobbnu.se processing and storing my data for job analysis and matching")}
                 </label>
                 <p className="text-xs text-slate-500">
-                  Krävs för att kunna spara din profil och ge dig matchningar. Läs mer i vår{" "}
+                  {t("Krävs för att kunna spara din profil och ge dig matchningar. Läs mer i vår", "Required to save your profile and provide matches. Read more in our")}{" "}
                   <Link href="/integritetspolicy" target="_blank" className="text-blue-600 underline hover:text-blue-800">
-                    Integritetspolicy
+                    {t("Integritetspolicy", "Privacy Policy")}
                   </Link>
                   .
                 </p>
@@ -547,17 +552,16 @@ export default function ProfilePage() {
               />
               <div className="grid gap-1.5 leading-none">
                 <label htmlFor="job-offer-check" className="text-sm font-medium leading-snug cursor-pointer text-slate-700">
-                  Jag vill att jobbnu.se kontaktar mig om konkreta jobberbjudanden eller intervjuer som matchar min profil
+                  {t("Jag vill att jobbnu.se kontaktar mig om konkreta jobberbjudanden eller intervjuer som matchar min profil", "I want jobbnu.se to contact me about specific job offers or interviews that match my profile")}
                 </label>
                 <p className="text-xs text-slate-500">
-                  Valfritt. Vi kontaktar dig endast när vi har ett relevant jobberbjudande eller en intervju som matchar din profil.
-                  Du kan när som helst återkalla samtycket.
+                  {t("Valfritt. Vi kontaktar dig endast när vi har ett relevant jobberbjudande eller en intervju som matchar din profil. Du kan när som helst återkalla samtycket.", "Optional. We will only contact you when we have a relevant job offer or interview matching your profile. You can withdraw your consent at any time.")}
                 </p>
               </div>
             </div>
 
             <Button type="submit" disabled={loading || !gdprAccepted || isRateLimited} className="w-full">
-              {loading ? "Sparar..." : isRateLimited ? `Vänta innan du sparar igen (${countdown}s)` : "Spara ändringar"}
+              {loading ? t("Sparar...", "Saving...") : isRateLimited ? t(`Vänta innan du sparar igen (${countdown}s)`, `Wait before saving again (${countdown}s)`) : t("Spara ändringar", "Save changes")}
             </Button>
 
             {message && <p className="text-sm text-center text-green-600 mt-4">{message}</p>}

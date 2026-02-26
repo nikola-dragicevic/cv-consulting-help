@@ -296,6 +296,47 @@ _GROUP_KEYWORDS: dict[str, list[str]] = {
         "production manager", "produktionschef", "plant manager",
         "manufacturing director",
     ],
+    # ── Hotell, restaurang, storhushåll ───────────────────────────────────────
+    "Restaurang- och köksbiträden m.fl.": [
+        "restaurangbiträde", "köksbiträde", "kitchen aide", "kitchen assistant",
+        "restaurant assistant", "dishwashing", "diskare", "diskning", "diskrum",
+        "storkök", "large-scale kitchen", "meal service", "food preparation",
+        "haccp", "food hygiene", "allergen", "kitchen cleaning",
+    ],
+    "Hovmästare och servitörer": [
+        "servitör", "servitris", "servering", "serving", "waiter", "waitress",
+        "guest service", "cashier", "kassa", "orders",
+    ],
+    "Kafé- och konditoribiträden": [
+        "café", "kafé", "coffee shop", "barista", "bakery assistant", "konditori",
+    ],
+    "Kockar och kallskänkor": [
+        "cook", "chef", "kock", "matlagning", "food prep", "meal prep",
+    ],
+    # ── Sanering och renhållning ───────────────────────────────────────────────
+    "Städare": [
+        "städare", "lokalvård", "lokalvard", "cleaner", "cleaning", "home cleaning",
+        "office cleaning", "move-out cleaning", "professional cleaning", "checklists",
+        "cleaning schedules", "housekeeping", "custodian",
+    ],
+    "Övrig hemservicepersonal m.fl.": [
+        "household support", "home services", "household assistant", "hemservice",
+        "childcare", "garden tasks", "home helper",
+    ],
+    "Renhållnings- och återvinningsarbetare": [
+        "waste", "recycling", "waste sorting", "återvinning", "avfall",
+    ],
+    # ── Hälso- och sjukvård / socialt arbete ───────────────────────────────────
+    "Vårdbiträden": [
+        "home care assistant", "elderly care", "vårdbiträde", "omsorg", "hemtjänst",
+        "hygiene support", "care support", "daily support for elderly",
+    ],
+    "Undersköterskor, hemtjänst, hemsjukvård, äldreboende och habilitering": [
+        "undersköterska", "assistant nurse", "hemsjukvård", "äldreboende", "elderly home",
+    ],
+    "Personliga assistenter": [
+        "personal assistant care", "personlig assistent", "supportive interaction with children and adults",
+    ],
 }
 
 
@@ -328,7 +369,21 @@ def groups_to_fields(group_names: list[str]) -> list[str]:
     return fields
 
 
-def simple_categorize_cv(text: str, max_groups: int = 10) -> list[str]:
+def normalize_cv_text_for_storage(text: str) -> str:
+    """
+    Preserve line structure for downstream parsing/keyword extraction while removing
+    null bytes and noisy spacing.
+    """
+    if not text:
+        return ""
+    text = text.replace("\x00", "")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.strip() for ln in text.split("\n")]
+    lines = [ln for ln in lines if ln]
+    return "\n".join(lines).strip()
+
+
+def simple_categorize_cv_scored(text: str, max_groups: int = 10) -> list[tuple[str, int]]:
     """
     Keyword-based categorization at occupation_group_label level.
     Scores each group by keyword hit count, returns top N groups.
@@ -346,7 +401,36 @@ def simple_categorize_cv(text: str, max_groups: int = 10) -> list[str]:
 
     ranked = [(g, s) for g, s in scores.items() if s > 0]
     ranked.sort(key=lambda x: x[1], reverse=True)
-    return [g for g, _ in ranked[:max_groups]]
+    return ranked[:max_groups]
+
+
+def simple_categorize_cv(text: str, max_groups: int = 10) -> list[str]:
+    return [g for g, _ in simple_categorize_cv_scored(text, max_groups=max_groups)]
+
+
+async def resolve_cv_groups(cat_text: str) -> tuple[list[str], list[str], list[tuple[str, int]], str]:
+    """
+    Fast-first categorization:
+    - Run keyword scoring first (cheap)
+    - If strong signals exist, skip LLM for speed and stability
+    - Otherwise use LLM and merge keyword additions
+    Returns (final_groups, llm_groups, kw_ranked, source)
+    """
+    kw_ranked = simple_categorize_cv_scored(cat_text, max_groups=10)
+    kw_groups = [g for g, _ in kw_ranked]
+
+    # Strong enough lexical evidence -> skip slow LLM (huge latency win on common CVs)
+    # Example: kitchen/cleaning/care CVs with many explicit tokens.
+    strong_kw = bool(kw_ranked) and (
+        kw_ranked[0][1] >= 2 or sum(score for _, score in kw_ranked[:3]) >= 4
+    )
+    if strong_kw:
+        return kw_groups[:5], [], kw_ranked, "keyword"
+
+    llm_groups = await categorize_cv_text(cat_text)
+    merged = list(dict.fromkeys(llm_groups + [g for g in kw_groups if g not in llm_groups]))
+    final_groups = merged[:5]
+    return final_groups, llm_groups, kw_ranked, ("llm+keyword" if llm_groups else "keyword")
 
 
 async def categorize_cv_text(cv_text: str) -> list[str]:
@@ -371,7 +455,7 @@ async def categorize_cv_text(cv_text: str) -> list[str]:
 
     prompt = f"""You are categorizing a CV into Swedish job market occupation groups.
 
-Choose the 5-10 most relevant occupation groups from this EXACT list (use the names exactly as written):
+Choose the 1-5 most relevant occupation groups from this EXACT list (use the names exactly as written):
 
 {groups_list}
 
@@ -380,10 +464,12 @@ CV Text:
 
 Rules:
 - Pick only from the list above, using the exact Swedish names
-- Return 5-10 groups, most relevant first
+- Return 1-5 groups, most relevant first
+- If the CV clearly fits service/restaurant/cleaning/care work, prefer those groups over unrelated technical/transport groups
+- Do not guess broad unrelated groups just to fill the list
 - Return ONLY a JSON array, no explanation
 
-Example output: ["Övriga drifttekniker och processövervakare", "Flygmekaniker m.fl.", "Arbetsledare inom lager och terminal", "Drifttekniker, IT"]
+Example output: ["Kockar och kallskänkor", "Restaurang- och köksbiträden m.fl.", "Städare"]
 
 Your response (JSON array only):"""
 
@@ -451,7 +537,9 @@ async def categorize_cv(req: CVCategorizationRequest):
     if not req.cv_text or not req.cv_text.strip():
         raise HTTPException(400, "CV text cannot be empty")
 
-    subcategories = await categorize_cv_text(req.cv_text)
+    subcategories, _, kw_ranked, source = await resolve_cv_groups(req.cv_text)
+    if kw_ranked:
+        print(f"🔎 [CATEGORIZATION] keyword-ranked={kw_ranked[:5]} source={source}")
     return {"subcategory_ids": subcategories}
 
 @app.post("/extract-job-skills")
@@ -726,15 +814,11 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
                 raise HTTPException(500, "Failed to generate vector")
 
             # 5) Save to DB (store debug preview, not necessarily exact embed input)
-            debug_preview = (cv_text or "").replace("\x00", "")[:2000]
-            debug_text = (
-                f"search_document:\n"
-                f"Candidate: {profile.get('full_name')}\n"
-                f"CV Preview:\n{debug_preview}"
-            )
-
+            # Store full cleaned CV text (not a truncated preview). Downstream keyword
+            # matching, UI explanations and gap analysis depend on this field.
+            stored_cv_text = normalize_cv_text_for_storage(cv_text or "")
             update_data["profile_vector"] = vector
-            update_data["candidate_text_vector"] = debug_text
+            update_data["candidate_text_vector"] = stored_cv_text
 
         # 5) Categorize CV for Layer 1 matching
         # Choose text for categorization based on entry mode
@@ -748,20 +832,20 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
             cat_text = cv_text
 
         try:
-            # LLM returns validated occupation_group_label values (hallucinations already filtered).
-            # Always run keyword fallback too and merge — keywords are reliable for strong signals,
-            # LLM adds nuance. Union of both gives best coverage.
-            llm_groups = await categorize_cv_text(cat_text)
-            kw_groups = simple_categorize_cv(cat_text)
-
-            # Merge: LLM first (priority), then keyword additions, deduplicated
-            merged = list(dict.fromkeys(llm_groups + [g for g in kw_groups if g not in llm_groups]))
-            final_groups = merged[:10]
+            # Fast-first categorization to reduce webhook latency and avoid noisy LLM guesses
+            # on obvious CVs (e.g. kitchen/cleaning/care).
+            final_groups, llm_groups, kw_ranked, cat_source = await resolve_cv_groups(cat_text)
+            kw_groups = [g for g, _ in kw_ranked]
 
             if final_groups:
                 update_data["category_tags"] = final_groups
                 update_data["primary_occupation_field"] = groups_to_fields(final_groups)
-                print(f"🎯 [WEBHOOK] occupation groups (LLM={len(llm_groups)} kw={len(kw_groups)} merged={len(final_groups)}) = {final_groups}")
+                print(
+                    f"🎯 [WEBHOOK] occupation groups source={cat_source} "
+                    f"(LLM={len(llm_groups)} kw={len(kw_groups)} final={len(final_groups)}) = {final_groups}"
+                )
+                if kw_ranked:
+                    print(f"🔎 [WEBHOOK] keyword-ranked top={kw_ranked[:5]}")
             else:
                 print(f"⚠️ [WEBHOOK] No occupation groups found from LLM or keywords")
 

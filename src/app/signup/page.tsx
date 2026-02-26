@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
+import { useLanguage } from "@/components/i18n/LanguageProvider"
 
 export default function SignupPage() {
+  const { t } = useLanguage()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
@@ -34,14 +36,14 @@ export default function SignupPage() {
     })
 
     if (error) {
-      setError(`Registreringen misslyckades: ${error.message}`)
+      setError(`${t("Registreringen misslyckades", "Sign up failed")}: ${error.message}`)
       console.error("Signup error:", error.message)
     } else if (data.user) {
       // Check if email confirmation is required
       if (data.user.identities && data.user.identities.length === 0) {
-        setError("Den här e-postadressen är redan registrerad.")
+        setError(t("Den här e-postadressen är redan registrerad.", "This email address is already registered."))
       } else {
-        setMessage("Registrering lyckades! Vänligen kolla din e-post för att bekräfta ditt konto.")
+        setMessage(t("Registrering lyckades! Vänligen kolla din e-post för att bekräfta ditt konto.", "Sign-up successful! Please check your email to confirm your account."))
         // Redirect to login page after delay
         setTimeout(() => router.push('/login'), 3000)
       }
@@ -51,40 +53,40 @@ export default function SignupPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-sm">
-        <h2 className="text-2xl font-bold mb-6 text-center">Registrera konto</h2>
+        <h2 className="text-2xl font-bold mb-6 text-center">{t("Registrera konto", "Create account")}</h2>
         <form onSubmit={handleSignup} className="space-y-4">
           <div>
-            <Label htmlFor="email">E-post</Label>
+            <Label htmlFor="email">{t("E-post", "Email")}</Label>
             <Input
               id="email"
               type="email"
-              placeholder="din@epost.se"
+              placeholder={t("din@epost.se", "you@email.com")}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
             />
           </div>
           <div>
-            <Label htmlFor="password">Lösenord</Label>
+            <Label htmlFor="password">{t("Lösenord", "Password")}</Label>
             <Input
               id="password"
               type="password"
-              placeholder="Minst 6 tecken"
+              placeholder={t("Minst 6 tecken", "At least 6 characters")}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
             />
           </div>
           <Button type="submit" className="w-full">
-            Registrera
+            {t("Registrera", "Sign up")}
           </Button>
           {error && <p className="text-red-500 text-sm mt-3">{error}</p>}
           {message && <p className="text-green-600 text-sm mt-3">{message}</p>}
         </form>
         <p className="text-center text-sm text-gray-600 mt-4">
-          Har du redan ett konto?{" "}
+          {t("Har du redan ett konto?", "Already have an account?")}{" "}
           <Link href="/login" className="text-blue-600 hover:underline">
-            Logga in
+            {t("Logga in", "Log in")}
           </Link>
         </p>
       </div>

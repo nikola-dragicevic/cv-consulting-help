@@ -2,8 +2,23 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { cityToGeo } from "@/lib/city-geo";
+import { geocodeAddress } from "@/lib/geocoder";
 
 const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://worker:8000";
+
+function normalizeExtractedText(raw: string): string {
+  if (!raw) return "";
+
+  return raw
+    .replace(/\u0000/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
 
 async function parsePdf(buffer: Buffer): Promise<string> {
   try {
@@ -113,11 +128,24 @@ export async function POST(req: Request) {
       persona_past_3_vector: null,
     };
 
-    if (city) {
-      const geo = cityToGeo(city);
-      if (geo) {
-        profileData.location_lat = geo.lat;
-        profileData.location_lon = geo.lon;
+    // Geocode user address -> persist location_lat/location_lon for dashboard + matching.
+    // Try precise address first, then fall back to city lookup table.
+    profileData.location_lat = null;
+    profileData.location_lon = null;
+
+    if (city || street) {
+      const addressQuery = [street, city, "Sverige"].filter(Boolean).join(", ");
+      const geocoded = addressQuery ? await geocodeAddress(addressQuery, "se") : null;
+
+      if (geocoded) {
+        profileData.location_lat = geocoded.lat;
+        profileData.location_lon = geocoded.lon;
+      } else if (city) {
+        const geo = cityToGeo(city);
+        if (geo) {
+          profileData.location_lat = geo.lat;
+          profileData.location_lon = geo.lon;
+        }
       }
     }
 
@@ -151,7 +179,7 @@ export async function POST(req: Request) {
           extractedText = buffer.toString("utf-8");
         }
 
-        extractedText = extractedText.replace(/\s+/g, " ").trim();
+        extractedText = normalizeExtractedText(extractedText);
       } catch (err) {
         console.error("Text extraction failed:", err);
       }
@@ -181,7 +209,7 @@ export async function POST(req: Request) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           user_id: user.id,
-          cv_text: cvText ? `Kandidat: ${fullName}\nCV: ${cvText}` : ""
+          cv_text: cvText || ""
         })
       }).catch(err => console.error("Webhook trigger failed:", err));
     }

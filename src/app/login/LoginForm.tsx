@@ -8,8 +8,10 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
+import { useLanguage } from "@/components/i18n/LanguageProvider"
 
 export default function LoginForm() {
+  const { t } = useLanguage()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
@@ -25,9 +27,9 @@ export default function LoginForm() {
     if (error) {
       // Check if it's an email not confirmed error
       if (error.message.includes("Email not confirmed")) {
-        setError("Vänligen bekräfta din e-postadress först. Kontrollera din inkorg.")
+        setError(t("Vänligen bekräfta din e-postadress först. Kontrollera din inkorg.", "Please confirm your email address first. Check your inbox."))
       } else {
-        setError(`Inloggningen misslyckades: ${error.message}`)
+        setError(`${t("Inloggningen misslyckades", "Login failed")}: ${error.message}`)
       }
       console.error("Login error:", error.message)
     } else if (data.user) {
@@ -39,24 +41,24 @@ export default function LoginForm() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-sm">
-        <h2 className="text-2xl font-bold mb-6 text-center">Logga in</h2>
+        <h2 className="text-2xl font-bold mb-6 text-center">{t("Logga in", "Log in")}</h2>
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <Label htmlFor="email">E-post</Label>
-            <Input id="email" type="email" placeholder="din@epost.se"
+            <Label htmlFor="email">{t("E-post", "Email")}</Label>
+            <Input id="email" type="email" placeholder={t("din@epost.se", "you@email.com")}
               value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
           <div>
-            <Label htmlFor="password">Lösenord</Label>
+            <Label htmlFor="password">{t("Lösenord", "Password")}</Label>
             <Input id="password" type="password" placeholder="••••••••"
               value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
-          <Button type="submit" className="w-full">Logga in</Button>
+          <Button type="submit" className="w-full">{t("Logga in", "Log in")}</Button>
           {error && <p className="text-red-500 text-sm mt-3">{error}</p>}
         </form>
         <p className="text-center text-sm text-gray-600 mt-4">
-          Har du inget konto?{" "}
-          <Link href="/signup" className="text-blue-600 hover:underline">Registrera dig</Link>
+          {t("Har du inget konto?", "Don't have an account?")}{" "}
+          <Link href="/signup" className="text-blue-600 hover:underline">{t("Registrera dig", "Sign up")}</Link>
         </p>
       </div>
     </div>

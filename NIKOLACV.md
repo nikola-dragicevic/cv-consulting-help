@@ -117,4 +117,35 @@ Client–server and distributed systems (SOA, Java EE / Jakarta)
 Software development methodologies (Scrum, Kanban) 
 Arlandagymnasiet, Märsta - Aircraft Maintenance 
 2016 - 2019 
-AWARDS 
+
+
+-----------------------------------
+Nikola's CV — Taxonomy Analysis
+Based on your background against the Arbetsförmedlingen taxonomy:
+
+Primary matches (strongest fit)
+Installation, drift, underhåll
+
+Övriga drifttekniker och processövervakare — Your Control Room Operator role at Axfood/Witron is exactly this. You monitor automated systems, detect faults, manage process flows in real-time. This is your core title.
+Flygmekaniker m.fl. — Norwegian Air aircraft maintenance (2019–2020), compliance with aviation regulations, safety-critical fault detection.
+Transport
+
+Arbetsledare inom lager och terminal — You guide and coordinate operators across the warehouse, make production decisions, lead fault resolution. Leadership over warehouse operations maps here.
+Lager- och terminalpersonal — The logistics/warehouse context at both Axfood and Ceva Logistics.
+Secondary matches (strong supporting fit)
+Tekniskt arbete
+
+Ingenjörer och tekniker inom industri, logistik och produktionsplanering — Your Automation Technician role at Ceva/Zalando (EAE Flow, Vanderlande, MHS sorters), mechanical/electrical/system-level expertise.
+Data/IT
+
+Mjukvaru- och systemutvecklare m.fl. — You built the AI-based CV-Job Matching System at JOBBNU.SE, Java developer education (YrkesAkademin, 400 YH-poäng). Solid case for this.
+Drifttekniker, IT — IT-driven control systems, log analysis, detecting data-related issues affecting automation flows.
+Summary table
+Priority	Category	Subcategory
+1	Installation, drift, underhåll	Övriga drifttekniker och processövervakare
+2	Transport	Arbetsledare inom lager och terminal
+3	Tekniskt arbete	Ingenjörer och tekniker inom industri, logistik och produktionsplanering
+4	Data/IT	Mjukvaru- och systemutvecklare m.fl.
+5	Installation, drift, underhåll	Flygmekaniker m.fl.
+6	Data/IT	Drifttekniker, IT
+The system's Layer 1 filter should be sending: ["Installation, drift, underhåll", "Transport", "Tekniskt arbete", "Data/IT"] for your profile — which gives a strong category_bonus on the most relevant job ads.

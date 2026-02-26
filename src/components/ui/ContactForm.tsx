@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Loader2, CheckCircle, AlertCircle } from "lucide-react"
+import { useLanguage } from "@/components/i18n/LanguageProvider"
 
 export default function ContactForm() {
+  const { t } = useLanguage()
   const [email, setEmail] = useState("")
   const [message, setMessage] = useState("")
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle")
@@ -33,7 +35,7 @@ export default function ContactForm() {
       
       // Reset success message after 5 seconds
       setTimeout(() => setStatus("idle"), 5000)
-    } catch (error) {
+    } catch {
       setStatus("error")
     }
   }
@@ -41,7 +43,7 @@ export default function ContactForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
       <Input 
-        placeholder="Din e-post" 
+        placeholder={t("Din e-post", "Your email")} 
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -51,7 +53,7 @@ export default function ContactForm() {
       />
       
       <Textarea 
-        placeholder="Ditt meddelande" 
+        placeholder={t("Ditt meddelande", "Your message")} 
         rows={3}
         value={message}
         onChange={(e) => setMessage(e.target.value)}
@@ -69,10 +71,10 @@ export default function ContactForm() {
         {status === "success" && <CheckCircle className="mr-2 h-4 w-4" />}
         {status === "error" && <AlertCircle className="mr-2 h-4 w-4" />}
         
-        {status === "loading" ? "Skickar..." : 
-         status === "success" ? "Skickat!" : 
-         status === "error" ? "Försök igen" : 
-         "Skicka meddelande"}
+        {status === "loading" ? t("Skickar...", "Sending...") : 
+         status === "success" ? t("Skickat!", "Sent!") : 
+         status === "error" ? t("Försök igen", "Try again") : 
+         t("Skicka meddelande", "Send message")}
       </Button>
     </form>
   )

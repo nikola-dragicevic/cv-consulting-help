@@ -21,6 +21,7 @@ import { Mail, Phone, FileText, Users, Award, Wand2, MapPin, Upload, X, Eye, Loc
 import InteractiveJobMap from "@/components/ui/InteractiveJobMap"
 import JobCategoriesSection from "@/components/ui/JobCategoriesSection"
 import { format } from "date-fns"
+import { useLanguage, type SiteLanguage } from "@/components/i18n/LanguageProvider"
 
 /* ============================================================
    Types
@@ -38,6 +39,63 @@ type JobRow = {
   final_score?: number | null
   job_url?: string | null
   webpage_url?: string | null
+}
+
+type PackageChoice = {
+  name: string
+  amount: number
+  description: string
+  flow: "booking" | "cv_intake" | "cv_letter_intake"
+}
+
+type ExperienceEntry = {
+  title: string
+  company: string
+  city: string
+  start: string
+  end: string
+  current: boolean
+  tasks: string
+  achievements: string
+  tools: string
+}
+
+type EducationEntry = {
+  program: string
+  school: string
+  city: string
+  start: string
+  end: string
+  current: boolean
+  details: string
+}
+
+type CvIntakeDraft = {
+  fullName: string
+  address: string
+  phone: string
+  email: string
+  targetRole: string
+  profileSummary: string
+  experiences: [ExperienceEntry, ExperienceEntry, ExperienceEntry]
+  education: EducationEntry
+  skills: string
+  certifications: string
+  languages: string
+  driverLicense: string
+  additionalInfo: string
+  includeFullAddressInCv: boolean
+  // Personal letter fields (only used for CV + Personligt Brev)
+  jobTitle: string
+  companyName: string
+  adLink: string
+  jobAdText: string
+  whyThisRole: string
+  whyThisCompany: string
+  keyExamples: string
+  explainInLetter: string
+  tone: string
+  letterLanguage: string
 }
 
 export type Wish = {
@@ -102,7 +160,7 @@ function TagInput({ value, onChange, placeholder }: { value: string[]; onChange:
         <input
           className="flex-1 min-w-[160px] outline-none bg-transparent px-2 py-1 text-sm"
           value={draft}
-          placeholder={placeholder ?? "Lägg till och tryck Enter"}
+          placeholder={placeholder ?? "Add and press Enter"}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === ",") {
@@ -118,16 +176,109 @@ function TagInput({ value, onChange, placeholder }: { value: string[]; onChange:
 }
 
 function ScoreLegend() {
+  const { t } = useLanguage()
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-slate-600">
-      <span className="rounded bg-slate-100 px-2 py-1">Profilmatch = hur väl ditt CV passar</span>
-      <span className="rounded bg-slate-100 px-2 py-1">Önskemål = hur väl dina preferenser passar</span>
-      <span className="rounded bg-slate-100 px-2 py-1">Slutbetyg = 0.7*profil + 0.3*önskemål (+ ev. remote boost)</span>
+      <span className="rounded bg-slate-100 px-2 py-1">{t("Profilscore = hur väl ditt CV passar", "Profile score = how well your CV fits")}</span>
+      <span className="rounded bg-slate-100 px-2 py-1">{t("Önskemål = hur väl dina preferenser passar", "Preferences = how well your preferences fit")}</span>
+      <span className="rounded bg-slate-100 px-2 py-1">{t("Slutbetyg = 0.7*profil + 0.3*önskemål (+ ev. remote boost)", "Final score = 0.7*profile + 0.3*preferences (+ optional remote boost)")}</span>
     </div>
   )
 }
 
+function emptyExperience(): ExperienceEntry {
+  return {
+    title: "",
+    company: "",
+    city: "",
+    start: "",
+    end: "",
+    current: false,
+    tasks: "",
+    achievements: "",
+    tools: "",
+  }
+}
+
+function emptyEducation(): EducationEntry {
+  return {
+    program: "",
+    school: "",
+    city: "",
+    start: "",
+    end: "",
+    current: false,
+    details: "",
+  }
+}
+
+function createInitialCvIntakeDraft(email = ""): CvIntakeDraft {
+  return {
+    fullName: "",
+    address: "",
+    phone: "",
+    email,
+    targetRole: "",
+    profileSummary: "",
+    experiences: [emptyExperience(), emptyExperience(), emptyExperience()],
+    education: emptyEducation(),
+    skills: "",
+    certifications: "",
+    languages: "",
+    driverLicense: "",
+    additionalInfo: "",
+    includeFullAddressInCv: false,
+    jobTitle: "",
+    companyName: "",
+    adLink: "",
+    jobAdText: "",
+    whyThisRole: "",
+    whyThisCompany: "",
+    keyExamples: "",
+    explainInLetter: "",
+    tone: "",
+    letterLanguage: "svenska",
+  }
+}
+
+function validateCvIntakeForCheckout(
+  draft: CvIntakeDraft,
+  flow: PackageChoice["flow"],
+  lang: SiteLanguage
+): string | null {
+  const t = (sv: string, en: string) => (lang === "sv" ? sv : en)
+  if (!draft.fullName.trim()) return t("Fyll i fullständigt namn.", "Enter full name.")
+  if (!draft.address.trim()) return t("Fyll i adress.", "Enter address.")
+  if (!draft.phone.trim()) return t("Fyll i telefonnummer.", "Enter phone number.")
+  if (!draft.email.trim()) return t("Fyll i e-post.", "Enter email.")
+  if (!draft.targetRole.trim()) return t("Fyll i målroll / jobbtitel.", "Enter target role / job title.")
+  if (!draft.profileSummary.trim()) return t("Skriv en kort profiltext.", "Write a short profile summary.")
+
+  const exp1 = draft.experiences[0]
+  if (!exp1.title.trim() || !exp1.company.trim() || !exp1.tasks.trim()) {
+    return t(
+      "Fyll i minst Erfarenhet 1 (titel, företag och arbetsuppgifter).",
+      "Fill in at least Experience 1 (title, company and tasks)."
+    )
+  }
+
+  if (!draft.education.program.trim() || !draft.education.school.trim()) {
+    return t("Fyll i utbildning (utbildning/examen och skola).", "Fill in education (program/degree and school).")
+  }
+
+  if (!draft.skills.trim()) return t("Fyll i kompetenser / skills.", "Fill in skills.")
+
+  if (flow === "cv_letter_intake") {
+    if (!draft.jobTitle.trim()) return t("Fyll i vilket jobb du söker.", "Enter which job you are applying for.")
+    if (!draft.whyThisRole.trim()) return t("Beskriv varför du vill ha just detta jobb.", "Describe why you want this job.")
+    if (!draft.keyExamples.trim()) return t("Skriv 2–3 erfarenheter/resultat du vill lyfta i brevet.", "Write 2-3 experiences/results to highlight in the letter.")
+  }
+
+  return null
+}
+
 function CareerWishlistForm({ initial, onCancel, onSubmit, remoteBoost, setRemoteBoost }: { initial: Wish; onCancel: () => void; onSubmit: (wish: Wish) => void; remoteBoost: boolean; setRemoteBoost: (v: boolean) => void }) {
+  const { t } = useLanguage()
   const [titles, setTitles] = useState<string[]>(initial.titles ?? [])
   const [industries, setIndustries] = useState<string[]>(initial.industries ?? [])
   const [useSkills, setUseSkills] = useState<string[]>(initial.use_skills ?? [])
@@ -195,12 +346,12 @@ function CareerWishlistForm({ initial, onCancel, onSubmit, remoteBoost, setRemot
 
         <div className="mt-2 flex items-center gap-2 text-xs text-slate-600">
           <input id="nearby" type="checkbox" className="accent-blue-600" checked={includeNearbyMetro} onChange={(e) => setIncludeNearbyMetro(e.target.checked)} />
-          <Label htmlFor="nearby" className="text-xs">Inkludera närliggande storstadsområde</Label>
+          <Label htmlFor="nearby" className="text-xs">{t("Inkludera närliggande storstadsområde", "Include nearby metro area")}</Label>
         </div>
 
         <div className="mt-2 flex items-center gap-2 text-xs text-slate-600">
           <input id="remoteboost" type="checkbox" className="accent-blue-600" checked={remoteBoost} onChange={(e) => setRemoteBoost(e.target.checked)} />
-          <Label htmlFor="remoteboost" className="text-xs">Prioritera fjärr-/hybridjobb (+0.05)</Label>
+          <Label htmlFor="remoteboost" className="text-xs">{t("Prioritera fjärr-/hybridjobb (+0.05)", "Prioritize remote/hybrid jobs (+0.05)")}</Label>
         </div>
 
         <div className="mt-6 flex justify-end gap-3">
@@ -217,6 +368,13 @@ function CareerWishlistForm({ initial, onCancel, onSubmit, remoteBoost, setRemot
 ============================================================ */
 export default function UnifiedLandingPage() {
   const router = useRouter()
+  const { t, lang } = useLanguage()
+  const displayPackageName = (name: string) => {
+    if (lang === "sv") return name
+    if (name === "CV + Personligt Brev + Konsultation") return "CV + Cover Letter + Consultation"
+    if (name === "CV + Personligt Brev") return "CV + Cover Letter"
+    return name
+  }
 
   // Supabase session
   const [user, setUser] = useState<SupabaseUser | null>(null)
@@ -254,8 +412,12 @@ export default function UnifiedLandingPage() {
   const [lastRefinePayload, setLastRefinePayload] = useState<any>(null)
 
   // Booking State
-  const [selectedPackage, setSelectedPackage] = useState<{name: string, amount: number, description: string} | null>(null)
+  const [selectedPackage, setSelectedPackage] = useState<PackageChoice | null>(null)
   const [showCalendarModal, setShowCalendarModal] = useState(false)
+  const [showIntakeModal, setShowIntakeModal] = useState(false)
+  const [intakeSavedMessage, setIntakeSavedMessage] = useState("")
+  const [intakeSubmitting, setIntakeSubmitting] = useState(false)
+  const [cvIntakeDraft, setCvIntakeDraft] = useState<CvIntakeDraft>(() => createInitialCvIntakeDraft(""))
 
   // Freemium
   const jobLimit = user ? 50 : 20
@@ -280,7 +442,7 @@ export default function UnifiedLandingPage() {
 
     const geo = cityToGeo(city)
     
-    if (!geo) return setError("Okänd stad. Prova t.ex. Stockholm, Uppsala eller Göteborg.")
+    if (!geo) return setError(t("Okänd stad. Prova t.ex. Stockholm, Uppsala eller Göteborg.", "Unknown city. Try e.g. Stockholm, Uppsala or Gothenburg."))
 
     // LOGGED IN FLOW
     if (user) {
@@ -301,9 +463,9 @@ export default function UnifiedLandingPage() {
         if (!res.ok) {
           console.error("Match for user failed:", raw)
           if (res.status === 404 || res.status === 400) {
-            setError(data?.error || "Din profil verkar saknas eller vara ofullständig. Kontrollera 'Min profil'.")
+            setError(data?.error || t("Din profil verkar saknas eller vara ofullständig. Kontrollera 'Min profil'.", "Your profile seems missing or incomplete. Check 'My Profile'."))
           } else {
-            setError(data?.error || "Kunde inte hämta matchningar.")
+            setError(data?.error || t("Kunde inte hämta jobbförslag.", "Could not fetch job suggestions."))
           }
           setJobs([])
           return
@@ -314,7 +476,7 @@ export default function UnifiedLandingPage() {
         setFreeJobsShown(Math.min(jobResults.length, jobLimit))
       } catch (e) {
         console.error(e)
-        setError("Ett fel uppstod vid matchning.")
+        setError("Ett fel uppstod vid analysen.")
       } finally {
         setLoading(false)
       }
@@ -338,7 +500,7 @@ export default function UnifiedLandingPage() {
         const { data, raw } = await safeParseResponse(res)
         if (!res.ok) {
           console.error("Init failed:", raw)
-          setError(data?.error || "Kunde inte hämta matchningar.")
+          setError(data?.error || t("Kunde inte hämta jobbförslag.", "Could not fetch job suggestions."))
           setJobs([])
           return
         }
@@ -347,7 +509,7 @@ export default function UnifiedLandingPage() {
         setFreeJobsShown(Math.min(jobResults.length, jobLimit))
       } catch (e) {
         console.error(e)
-        setError("Kunde inte hämta matchningar.")
+        setError(t("Kunde inte hämta jobbförslag.", "Could not fetch job suggestions."))
       } finally {
         setLoading(false)
       }
@@ -365,13 +527,13 @@ export default function UnifiedLandingPage() {
       const { data, raw } = await safeParseResponse(res)
       if (!res.ok) {
         console.error("Refine failed:", raw)
-        setError(data?.error || "Kunde inte förfina matchningarna.")
+        setError(data?.error || t("Kunde inte förfina jobbförslagen.", "Could not refine job suggestions."))
         return
       }
       setJobs(data?.jobs || [])
     } catch (e) {
       console.error(e)
-      setError("Kunde inte förfina matchningarna.")
+      setError(t("Kunde inte förfina jobbförslagen.", "Could not refine job suggestions."))
     } finally {
       setLoading(false)
     }
@@ -389,7 +551,7 @@ export default function UnifiedLandingPage() {
     const isText = file.type === "text/plain" || fileName.endsWith(".txt")
 
     if (!isPdf && !isText) {
-      setError("Endast .txt och .pdf filer stöds.")
+      setError(t("Endast .txt och .pdf filer stöds.", "Only .txt and .pdf files are supported."))
       setLoading(false)
       if (target) target.value = ""
       return
@@ -403,13 +565,13 @@ export default function UnifiedLandingPage() {
         const formData = new FormData()
         formData.append("file", file)
         const response = await fetch("/api/parse-pdf", { method: "POST", body: formData })
-        if (!response.ok) throw new Error("Misslyckades att läsa PDF på servern.")
+        if (!response.ok) throw new Error(t("Misslyckades att läsa PDF på servern.", "Failed to parse PDF on the server."))
         const data = await response.json()
         setCvText(data.text || "")
       }
     } catch (err) {
       console.error("file read error", err)
-      setError("Kunde inte läsa filen.")
+      setError(t("Kunde inte läsa filen.", "Could not read the file."))
     } finally {
       setLoading(false)
       if (target) target.value = ""
@@ -422,14 +584,27 @@ export default function UnifiedLandingPage() {
   }
 
   // ===== BOOKING FLOW =====
-  const initiateBooking = (pkg: { name: string, amount: number, description: string }) => {
+  const initiateBooking = (pkg: PackageChoice) => {
     if (!user) {
-      const proceed = confirm("Du behöver vara inloggad för att boka. Vill du logga in nu?")
+      const proceed = confirm(t("Du behöver vara inloggad för att boka. Vill du logga in nu?", "You need to be logged in to continue. Do you want to log in now?"))
       if (proceed) router.push("/login")
       return
     }
     setSelectedPackage(pkg)
-    setShowCalendarModal(true)
+    setIntakeSavedMessage("")
+    setCvIntakeDraft((prev) => ({
+      ...prev,
+      email: user.email || prev.email,
+    }))
+
+    if (pkg.flow === "booking") {
+      setShowCalendarModal(true)
+      setShowIntakeModal(false)
+      return
+    }
+
+    setShowIntakeModal(true)
+    setShowCalendarModal(false)
   }
 
   const handleSlotSelected = async (date: Date, time: string) => {
@@ -460,11 +635,75 @@ export default function UnifiedLandingPage() {
         window.location.href = json.url
       } else {
         console.error("Checkout error:", json)
-        alert("Kunde inte starta betalning: " + (json.error || "Okänt fel"))
+        alert(t("Kunde inte starta betalning: ", "Could not start payment: ") + (json.error || t("Okänt fel", "Unknown error")))
       }
     } catch (e) {
       console.error(e)
-      alert("Ett anslutningsfel uppstod.")
+      alert(t("Ett anslutningsfel uppstod.", "A connection error occurred."))
+    }
+  }
+
+  const handleCvIntakeField = <K extends keyof CvIntakeDraft>(key: K, value: CvIntakeDraft[K]) => {
+    setCvIntakeDraft((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const handleExperienceField = (index: 0 | 1 | 2, key: keyof ExperienceEntry, value: ExperienceEntry[keyof ExperienceEntry]) => {
+    setCvIntakeDraft((prev) => {
+      const nextExperiences = [...prev.experiences] as [ExperienceEntry, ExperienceEntry, ExperienceEntry]
+      nextExperiences[index] = { ...nextExperiences[index], [key]: value }
+      return { ...prev, experiences: nextExperiences }
+    })
+  }
+
+  const handleEducationField = (key: keyof EducationEntry, value: EducationEntry[keyof EducationEntry]) => {
+    setCvIntakeDraft((prev) => ({ ...prev, education: { ...prev.education, [key]: value } }))
+  }
+
+  const saveCvIntake = async () => {
+    if (!selectedPackage) return
+    const validationError = validateCvIntakeForCheckout(cvIntakeDraft, selectedPackage.flow, lang)
+    if (validationError) {
+      setIntakeSavedMessage(validationError)
+      return
+    }
+
+    const payload = {
+      package: selectedPackage,
+      submittedAt: new Date().toISOString(),
+      data: cvIntakeDraft,
+    }
+
+    try {
+      setIntakeSubmitting(true)
+      localStorage.setItem("cv-intake-draft", JSON.stringify(payload))
+      setIntakeSavedMessage("")
+      console.log("CV intake draft saved", payload)
+
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          packageName: selectedPackage.name,
+          amount: selectedPackage.amount,
+          email: user?.email,
+          orderType: "document_intake",
+          intakeType: selectedPackage.flow,
+        })
+      })
+
+      const json = await res.json()
+      if (json?.url) {
+        window.location.href = json.url
+        return
+      }
+
+      console.error("Checkout error:", json)
+      setIntakeSavedMessage(t("Dina uppgifter är sparade. Kunde inte starta betalning just nu.", "Your details are saved. Could not start payment right now."))
+    } catch (e) {
+      console.error(e)
+      setIntakeSavedMessage(t("Dina uppgifter är sparade. Ett anslutningsfel uppstod vid betalning.", "Your details are saved. A connection error occurred during payment."))
+    } finally {
+      setIntakeSubmitting(false)
     }
   }
 
@@ -476,27 +715,26 @@ export default function UnifiedLandingPage() {
           <div className="grid gap-12 lg:grid-cols-2 items-center">
             <div className="space-y-6">
               <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 text-balance">
-                Hitta jobben som andra missar.
+                {t("Hitta det perfekta jobbet för dig med hjälp av en AI-manager", "Find the right job for you with the help of an AI manager")}
               </h1>
               
               <p className="text-xl text-slate-700">
-                Vår AI matchar inte bara nyckelord – den förstår din kompetens.
-              </p>
-              
-              <p className="text-lg text-slate-600">
-                Ladda upp ditt CV gratis, se din marknadsvärdering, och bli synlig för handplockade arbetsgivare.
+                {t("Ange dina kvalifikationer och din erfarenhet så hittar vi det perfekta jobbet för dig", "Share your qualifications and experience, and we will find the right jobs for you")}
               </p>
               
               <blockquote className="border-l-4 border-blue-600 pl-4 italic text-slate-700">
-                "Inga falska löften. Bara ren data och smartare matchning."
+                {t(
+                  '"I takt med den snabba automatiseringen och digitaliseringen har nya yrkesområden uppstått som ännu inte är tydligt definierade. Vi hjälper dig – ange dina önskemål och kvalifikationer så hittar vi jobb som passar dig."',
+                  '"As automation and digitalization accelerate, new job areas are emerging that are not yet clearly defined. We help you identify roles that fit your qualifications and goals."'
+                )}
               </blockquote>
 
               <div className="flex flex-wrap gap-4">
                 <Button size="lg" className="bg-blue-600 hover:bg-blue-700" asChild>
-                  <a href="#packages">🎯 Välj ditt paket</a>
+                  <a href="#packages">🎯 {t("Välj ditt paket", "Choose your package")}</a>
                 </Button>
                 <Button size="lg" variant="outline" asChild>
-                  <a href="#matcher">🔎 Matcha jobb nu</a>
+                  <Link href="/dashboard">📊 {t("Öppna dashboard", "Open dashboard")}</Link>
                 </Button>
               </div>
               
@@ -506,14 +744,14 @@ export default function UnifiedLandingPage() {
                     <Star key={i} className="h-4 w-4 fill-amber-400 text-amber-400" />
                   ))}
                 </div>
-                <span className="font-semibold">Högsta betyg</span>
-                <span>från verifierade kandidater</span>
+                <span className="font-semibold">{t("Högsta betyg", "Top rating")}</span>
+                <span>{t("från verifierade kandidater", "from verified candidates")}</span>
               </div>
             </div>
             <div className="flex justify-center lg:justify-end">
               <div className="relative">
                 <div className="absolute inset-0 bg-blue-200 rounded-full blur-3xl opacity-20" />
-                <Image src="/portrait.jpeg" alt="Nikola - CV Konsult" width={400} height={400} className="relative rounded-full shadow-2xl border-4 border-white object-cover aspect-square" priority />
+                <Image src="/portrait.jpeg" alt={t("Nikola - CV Konsult", "Nikola - CV Consultant")} width={400} height={400} className="relative rounded-full shadow-2xl border-4 border-white object-cover aspect-square" priority />
               </div>
             </div>
           </div>
@@ -527,30 +765,32 @@ export default function UnifiedLandingPage() {
       <section id="packages" className="py-20 bg-white">
         <div className="container mx-auto px-4">
           <div className="text-center space-y-4 mb-16">
-            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Välj ditt paket</h2>
-            <p className="text-lg text-slate-600 max-w-2xl mx-auto">Välj paket och boka din tid direkt i kalendern.</p>
+            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">{t("Välj ditt paket", "Choose your package")}</h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">{t("Välj paket och boka din tid direkt i kalendern.", "Choose a package and book your time directly in the calendar.")}</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
             {/* Premium */}
             <Card className="relative border-2 border-blue-600 shadow-xl">
               <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                <Badge className="bg-blue-600 text-white px-4 py-1"><Star className="h-3 w-3 mr-1 inline" /> Rekommenderas</Badge>
+                <Badge className="bg-blue-600 text-white px-4 py-1"><Star className="h-3 w-3 mr-1 inline" /> {t("Rekommenderas", "Recommended")}</Badge>
               </div>
               <CardHeader className="text-center pt-8">
-                <CardTitle className="text-2xl">CV + Personligt Brev + Konsultation</CardTitle>
-                <div className="mt-4"><span className="text-4xl font-bold">1300 kr</span></div>
-                <CardDescription className="mt-2">Fullständigt paket med personlig coaching</CardDescription>
+                <CardTitle className="text-2xl">{t("CV + Personligt Brev + Konsultation", "CV + Cover Letter + Consultation")}</CardTitle>
+                <div className="mt-4"><span className="text-4xl font-bold">999 kr</span></div>
+                <CardDescription className="mt-2">{t("Fullständigt paket med personlig coaching", "Complete package with personal coaching")}</CardDescription>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-3 mb-6">
-                  {["Professionellt CV","Personligt brev","45 min personlig konsultation","Jobbsökningsstrategier","Intervjuförberedelse","Personlig coaching","Leverans inom 7-10 dagar"].map((item) => (
+                  {(lang === "sv"
+                    ? ["Professionellt CV","Personligt brev","45 min personlig konsultation","Jobbsökningsstrategier","Intervjuförberedelse","Personlig coaching"]
+                    : ["Professional CV","Cover letter","45 min personal consultation","Job search strategies","Interview preparation","Personal coaching"]).map((item) => (
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
                 <Button className="w-full bg-blue-600 hover:bg-blue-700" size="lg" 
-                  onClick={() => initiateBooking({ name: "CV + Personligt Brev + Konsultation", amount: 1300, description: "Fullständigt paket med coaching" })}>
-                  Välj & Boka
+                  onClick={() => initiateBooking({ name: "CV + Personligt Brev + Konsultation", amount: 999, description: "Fullständigt paket med coaching", flow: "booking" })}>
+                  {t("Välj & Boka", "Choose & Book")}
                 </Button>
               </CardContent>
             </Card>
@@ -558,19 +798,19 @@ export default function UnifiedLandingPage() {
             {/* Standard */}
             <Card className="border-2">
               <CardHeader className="text-center">
-                <CardTitle className="text-2xl">CV + Personligt Brev</CardTitle>
-                <div className="mt-4"><span className="text-4xl font-bold">1000 kr</span></div>
-                <CardDescription className="mt-2">Ett paket med CV och skräddarsytt personligt brev</CardDescription>
+                <CardTitle className="text-2xl">{t("CV + Personligt Brev", "CV + Cover Letter")}</CardTitle>
+                <div className="mt-4"><span className="text-4xl font-bold">199 kr</span></div>
+                <CardDescription className="mt-2">{t("Ett paket med CV och skräddarsytt personligt brev", "A package with CV and tailored cover letter")}</CardDescription>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-3 mb-6">
-                  {["Professionellt CV","Skräddarsytt personligt brev","Matchat till specifik tjänst","Leverans inom 5-7 dagar"].map((item) => (
+                  {(lang === "sv" ? ["Professionellt CV","Skräddarsytt personligt brev","Anpassat till specifik tjänst"] : ["Professional CV","Tailored cover letter","Adapted to a specific role"]).map((item) => (
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
                 <Button className="w-full" variant="outline" size="lg" 
-                  onClick={() => initiateBooking({ name: "CV + Personligt Brev", amount: 1000, description: "CV och brev matchat mot tjänst" })}>
-                  Välj & Boka
+                  onClick={() => initiateBooking({ name: "CV + Personligt Brev", amount: 199, description: "CV och brev anpassat mot tjänst", flow: "cv_letter_intake" })}>
+                  {t("Välj & Boka", "Choose & Continue")}
                 </Button>
               </CardContent>
             </Card>
@@ -579,255 +819,80 @@ export default function UnifiedLandingPage() {
             <Card className="border-2">
               <CardHeader className="text-center">
                 <CardTitle className="text-2xl">CV</CardTitle>
-                <div className="mt-4"><span className="text-4xl font-bold">750 kr</span></div>
-                <CardDescription className="mt-2">Professionellt skrivet CV</CardDescription>
+                <div className="mt-4"><span className="text-4xl font-bold">119 kr</span></div>
+                <CardDescription className="mt-2">{t("Professionellt skrivet CV", "Professionally written CV")}</CardDescription>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-3 mb-6">
-                  {["Skräddarsytt CV","Professionell layout","ATS-optimerat","Leverans inom 3-5 dagar"].map((item) => (
+                  {(lang === "sv" ? ["Skräddarsytt CV","Professionell layout","ATS-optimerat"] : ["Tailored CV","Professional layout","ATS-optimized"]).map((item) => (
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
                 <Button className="w-full" variant="outline" size="lg" 
-                  onClick={() => initiateBooking({ name: "CV", amount: 750, description: "Professionellt CV" })}>
-                  Välj & Boka
+                  onClick={() => initiateBooking({ name: "CV", amount: 119, description: "Professionellt CV", flow: "cv_intake" })}>
+                  {t("Välj & Boka", "Choose & Continue")}
                 </Button>
               </CardContent>
             </Card>
           </div>
 
           {!user && (
-            <p className="mt-6 text-center text-sm text-slate-600">Inte registrerad än? <Link href="/login" className="text-blue-700 hover:underline inline-flex items-center gap-1"><LogIn className="h-4 w-4" /> Skapa konto eller logga in</Link> för att slutföra köp.</p>
+            <p className="mt-6 text-center text-sm text-slate-600">{t("Inte registrerad än?", "Not registered yet?")} <Link href="/login" className="text-blue-700 hover:underline inline-flex items-center gap-1"><LogIn className="h-4 w-4" /> {t("Skapa konto eller logga in", "Create an account or log in")}</Link> {t("för att slutföra köp.", "to complete your purchase.")}</p>
           )}
         </div>
       </section>
 
-      {/* === MATCHER === */}
-      <section id="matcher" className="py-20 bg-slate-50">
+      <section className="py-16 bg-slate-50 border-y border-slate-200">
         <div className="container mx-auto px-4">
-          <div className="text-center space-y-4 mb-12">
-            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Hitta jobb som matchar dig</h2>
-            <p className="text-lg text-slate-600 max-w-2xl mx-auto">AI‑driven matchning mot ditt CV och dina önskemål.</p>
-          </div>
-
-          <div className="max-w-5xl mx-auto">
-            <Card className="border-2 border-blue-100">
-              <CardHeader className="bg-gradient-to-r from-blue-50 to-amber-50">
-                <CardTitle className="flex items-center gap-2"><Wand2 className="h-6 w-6 text-blue-600" /> Steg 1: Lägg in ditt CV och plats</CardTitle>
-                <CardDescription>Vi analyserar ditt CV och visar direkt roller du är kvalificerad för</CardDescription>
+          <div className="max-w-4xl mx-auto">
+            <Card className="border-blue-100 shadow-sm">
+              <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50">
+                <CardTitle className="flex items-center gap-2">
+                  <Wand2 className="h-5 w-5 text-blue-600" />
+                  {t("Jobbdashboard", "Job dashboard")}
+                </CardTitle>
+                <CardDescription>
+                  {t("Alla jobbförslag och analyser finns nu i din dashboard.", "All job suggestions and analyses are now in your dashboard.")}
+                </CardDescription>
               </CardHeader>
               <CardContent className="pt-6">
-                {user ? (
-                  <div className="space-y-6">
-                    <p className="text-slate-600">Välkommen tillbaka! Ditt CV och dina preferenser kan sparas på ditt konto.</p>
-                    <div className="grid gap-6 md:grid-cols-2">
-                      <div>
-                        <Label htmlFor="city">Stad / Postort</Label>
-                        <div className="mt-2 flex items-center gap-2">
-                          <MapPin className="h-4 w-4 text-blue-600" />
-                          <Input id="city" placeholder="t.ex. Uppsala" value={city} onChange={(e) => setCity(e.target.value)} />
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">Uppsala/Bålsta räknas mot Stockholmsområdet om du vill.</p>
-                      </div>
-                      <div>
-                        <Label htmlFor="radius">Pendlingsradie (km)</Label>
-                        <Input 
-                          id="radius" 
-                          type="number" 
-                          min={5} 
-                          max={100} 
-                          value={radiusKm} 
-                          onChange={(e) => setRadiusKm(Number(e.target.value || 0))} 
-                          className="mt-2" 
-                          disabled={isCountryWide}
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="rounded-md bg-blue-50 p-4 mt-4 border border-blue-100">
-                      <div className="flex items-center gap-3">
-                         <FileText className="h-5 w-5 text-blue-600" />
-                         <div>
-                            <p className="text-sm font-medium text-blue-900">Ditt profil-CV används för matchning</p>
-                            <p className="text-xs text-blue-700">Vill du ändra ditt CV? Gå till <Link href="/profile" className="underline font-semibold hover:text-blue-900">Min Profil</Link>.</p>
-                         </div>
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col sm:flex-row gap-3 mt-4">
-                      <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={onFindMatches} disabled={loading}>{loading ? "Söker…" : "🔎 Hitta matchningar"}</Button>
-                      <Button variant="outline" className="flex-1 bg-transparent" onClick={() => setShowWishlist(true)}><Wand2 className="h-4 w-4 mr-2" /> Förfina med önskemål</Button>
-                      <Button variant="outline" className="flex-1" asChild>
-                        <Link href="/profile"><User className="h-4 w-4 mr-2" /> Till min profil</Link>
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="grid gap-6 md:grid-cols-2">
-                      <div>
-                        <Label htmlFor="city">Stad / Postort</Label>
-                        <div className="mt-2 flex items-center gap-2">
-                          <MapPin className="h-4 w-4 text-blue-600" />
-                          <Input id="city" placeholder="t.ex. Uppsala" value={city} onChange={(e) => setCity(e.target.value)} />
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">Uppsala/Bålsta räknas mot Stockholmsområdet om du vill.</p>
-                      </div>
-                      <div>
-                        <Label htmlFor="radius">Pendlingsradie (km)</Label>
-                        <Input 
-                          id="radius" 
-                          type="number" 
-                          min={5} 
-                          max={100} 
-                          value={radiusKm} 
-                          onChange={(e) => setRadiusKm(Number(e.target.value || 0))} 
-                          className="mt-2" 
-                          disabled={isCountryWide}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <Label htmlFor="cvtext">Ditt CV</Label>
-                      <Textarea id="cvtext" rows={6} className="mt-2 resize-none" placeholder="Klistra in ditt CV här (text) eller ladda upp en fil nedan..." value={cvText} onChange={(e) => setCvText(e.target.value)} />
-                      <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                        <Upload className="h-3.5 w-3.5" /> Du kan även ladda upp PDF eller .txt:
-                        <Input type="file" accept=".txt,.pdf" onChange={handleFileUpload} className="max-w-[240px]" />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={onFindMatches} disabled={loading}>{loading ? "Söker…" : "🔎 Hitta matchningar"}</Button>
-                      <Button variant="outline" className="flex-1 bg-transparent" onClick={() => setShowWishlist(true)}><Wand2 className="h-4 w-4 mr-2" /> Förfina med önskemål</Button>
-                      <Button variant="outline" asChild className="flex-1">
-                        <Link href="/login"><LogIn className="h-4 w-4 mr-2" /> Registrera dig för att spara</Link>
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {error && <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{error}</div>}
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-slate-600">
+                    {t("Öppna dashboarden för att se dina jobbkort, ATS-score, grade-skala och detaljerad analys.", "Open the dashboard to see your job cards, ATS score, grade scale and detailed analysis.")}
+                  </p>
+                  <Button asChild className="bg-blue-600 hover:bg-blue-700">
+                    <Link href="/dashboard">📊 {t("Gå till dashboard", "Go to dashboard")}</Link>
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
         </div>
       </section>
 
-      {/* === RESULTS === */}
-      <section className="container mx-auto px-4 pb-10">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-2xl font-semibold">Dina matchningar</h3>
-          <div className="flex items-center gap-4">
-            {jobs.length > 0 && (
-              <div className="flex items-center gap-2 rounded-lg border bg-white p-1">
-                <button onClick={() => setViewMode('list')} className={`flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${viewMode === 'list' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:text-gray-900'}`}>
-                  <Eye className="h-4 w-4" /> Lista
-                </button>
-                <button onClick={() => setViewMode('map')} className={`flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${viewMode === 'map' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:text-gray-900'}`}>
-                  <MapPin className="h-4 w-4" /> Karta
-                </button>
-              </div>
-            )}
-            {jobs.length > 0 && <span className="text-sm text-slate-500">{jobs.length} jobb</span>}
-          </div>
-        </div>
-
-        <ScoreLegend />
-
-        {jobs.length === 0 ? (
-          <p className="text-slate-600">Inga resultat ännu. Sök först, eller justera plats/CV.</p>
-        ) : viewMode === 'map' ? (
-          <InteractiveJobMap onLocationChange={handleMapLocationChange} initialCenter={cityToGeo(city) ? { lat: cityToGeo(city)!.lat, lon: cityToGeo(city)!.lon } : undefined} initialRadius={radiusKm} />
-        ) : (
-          <>
-            {jobs.length > jobLimit && (
-              <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <div className="flex items-start gap-3">
-                  <Lock className="h-5 w-5 text-amber-600 mt-0.5" />
-                  <div>
-                    <h4 className="font-semibold text-amber-800">Visar {jobLimit} av {jobs.length} jobb gratis</h4>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="grid gap-4 md:grid-cols-2">
-              {jobs.slice(0, freeJobsShown).map((j) => (
-                <Card key={j.id} className="hover:shadow-lg transition-shadow">
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <CardTitle className="text-lg">{j.headline}</CardTitle>
-                        <CardDescription className="mt-1 flex items-center gap-2"><MapPin className="h-4 w-4 text-slate-500" /> {j.location ?? "—"}</CardDescription>
-                      </div>
-                      <Badge variant="outline">{j.work_modality ?? "—"}</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between"><span className="text-slate-600">Profilmatch:</span><span className="font-medium">{pct(j.s_profile)}</span></div>
-                      {j.s_wish != null && (
-                        <div className="flex justify-between"><span className="text-slate-600">Önskemål:</span><span className="font-medium">{pct(j.s_wish)}</span></div>
-                      )}
-                      <div className="flex justify-between pt-2 border-t"><span className="text-slate-600 font-semibold">Slutbetyg:</span><span className="text-xl font-bold text-blue-700">{pct(j.final_score ?? j.s_profile)}</span></div>
-                    </div>
-                    <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
-                      <span>
-                        {j.company_size === "small" ? "Litet företag" : j.company_size === "medium" ? "Medelstort företag" : j.company_size === "large" ? "Stort företag" : "—"}
-                      </span>
-                      {j.job_url || j.webpage_url ? (
-                        <a href={j.job_url || j.webpage_url || "#"} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline font-medium">Öppna annons →</a>
-                      ) : (
-                        <span className="text-slate-400">Ingen länk</span>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-             
-             {freeJobsShown > 0 && (
-              <div className="mt-8 rounded-lg border border-blue-200 bg-blue-50 p-6">
-                <h4 className="text-lg font-semibold text-blue-900 mb-2">Vill du ha hjälp att sticka ut?</h4>
-                <p className="text-sm text-blue-800 mb-4">Jag hjälper dig att skapa ett CV och personligt brev som får dig till intervju. Boka en konsultation eller välj ett paket.</p>
-                <div className="flex flex-wrap gap-3">
-                  <Button className="bg-blue-600 hover:bg-blue-700" asChild>
-                    <a href="#packages">📋 Se paket & priser</a>
-                  </Button>
-                  <Button variant="outline" asChild>
-                    <a href="#contact">📞 Boka gratis konsultation</a>
-                  </Button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </section>
-
       <section id="about" className="py-20 bg-slate-50">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto text-center space-y-8">
-            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Varför välja mig?</h2>
+            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">{t("Varför välja mig?", "Why choose me?")}</h2>
             <div className="grid md:grid-cols-3 gap-8 mt-12">
               <div className="text-center space-y-4">
                 <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
                   <BrainCircuit className="h-8 w-8 text-blue-600" />
                 </div>
-                <h3 className="text-xl font-semibold">Smart AI-Matchning</h3>
+                <h3 className="text-xl font-semibold">{t("Smart AI-analys", "Smart AI analysis")}</h3>
                 <p className="text-slate-600">
-                  Systemet förstår innebörden i ditt CV – inte bara nyckelord. Vi matchar din unika profil semantiskt mot tusentals annonser för att hitta dolda möjligheter.
+                  {t("Systemet förstår innebörden i ditt CV – inte bara nyckelord. Vi analyserar din unika profil semantiskt mot tusentals annonser för att hitta dolda möjligheter.", "The system understands the meaning of your CV, not just keywords. We analyze your profile semantically against thousands of ads to find hidden opportunities.")}
                 </p>
               </div>
               <div className="text-center space-y-4">
                 <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto"><FileText className="h-8 w-8 text-blue-600" /></div>
-                <h3 className="text-xl font-semibold">Svenska & Engelska</h3>
-                <p className="text-slate-600">Alla tjänster levereras på svenska som standard, med möjlighet till engelska vid behov.</p>
+                <h3 className="text-xl font-semibold">{t("Svenska & Engelska", "Swedish & English")}</h3>
+                <p className="text-slate-600">{t("Alla tjänster levereras på svenska som standard, med möjlighet till engelska vid behov.", "All services are delivered in Swedish by default, with English available when needed.")}</p>
               </div>
               <div className="text-center space-y-4">
                 <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto"><Award className="h-8 w-8 text-blue-600" /></div>
-                <h3 className="text-xl font-semibold">Personlig Coaching</h3>
-                <p className="text-slate-600">Fokus på verktyg och strategier som fungerar långsiktigt – inte bara en engångstext.</p>
+                <h3 className="text-xl font-semibold">{t("Personlig Coaching", "Personal Coaching")}</h3>
+                <p className="text-slate-600">{t("Fokus på verktyg och strategier som fungerar långsiktigt – inte bara en engångstext.", "Focus on tools and strategies that work long term, not just a one-off document.")}</p>
               </div>
             </div>
           </div>
@@ -837,21 +902,21 @@ export default function UnifiedLandingPage() {
       <section className="py-20 bg-white">
         <div className="container mx-auto px-4">
           <div className="text-center space-y-4 mb-16">
-            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Vanliga frågor</h2>
+            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">{t("Vanliga frågor", "Frequently asked questions")}</h2>
           </div>
           <div className="max-w-3xl mx-auto">
             <Accordion type="single" collapsible>
               <AccordionItem value="item-1">
-                <AccordionTrigger>Vad ingår i konsultationen?</AccordionTrigger>
-                <AccordionContent>Konsultationen är ett 45‑minuters personligt möte (video eller telefon) där vi går igenom din karriär, diskuterar dina mål, och skapar en konkret jobbsökningsstrategi.</AccordionContent>
+                <AccordionTrigger>{t("Vad ingår i konsultationen?", "What is included in the consultation?")}</AccordionTrigger>
+                <AccordionContent>{t("Konsultationen är ett 45‑minuters personligt möte (video eller telefon) där vi går igenom din karriär, diskuterar dina mål, och skapar en konkret jobbsökningsstrategi.", "The consultation is a 45-minute personal meeting (video or phone) where we review your career, discuss your goals, and create a concrete job search strategy.")}</AccordionContent>
               </AccordionItem>
               <AccordionItem value="item-2">
-                <AccordionTrigger>Hur lång tid tar leverans?</AccordionTrigger>
-                <AccordionContent>CV inom 3‑5 dagar, CV + Brev 5‑7 dagar, paket med konsultation 7‑10 dagar.</AccordionContent>
+                <AccordionTrigger>{t("Hur lång tid tar leverans?", "How long is the delivery time?")}</AccordionTrigger>
+                <AccordionContent>{t("CV inom 3‑5 dagar, CV + Brev 5‑7 dagar, paket med konsultation 7‑10 dagar.", "CV within 3-5 days, CV + letter in 5-7 days, consultation package in 7-10 days.")}</AccordionContent>
               </AccordionItem>
               <AccordionItem value="item-3">
-                <AccordionTrigger>Kan jag få dokument på engelska?</AccordionTrigger>
-                <AccordionContent>Ja, alla tjänster kan levereras på svenska eller engelska.</AccordionContent>
+                <AccordionTrigger>{t("Kan jag få dokument på engelska?", "Can I get the documents in English?")}</AccordionTrigger>
+                <AccordionContent>{t("Ja, alla tjänster kan levereras på svenska eller engelska.", "Yes, all services can be delivered in Swedish or English.")}</AccordionContent>
               </AccordionItem>
             </Accordion>
           </div>
@@ -862,7 +927,7 @@ export default function UnifiedLandingPage() {
         <div className="container mx-auto px-4">
           <div className="grid md:grid-cols-3 gap-8">
             <div>
-              <h3 className="text-xl font-bold mb-4">Kontakta Nikola</h3>
+              <h3 className="text-xl font-bold mb-4">{t("Kontakta Nikola", "Contact Nikola")}</h3>
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <Mail className="h-5 w-5" />
@@ -870,28 +935,25 @@ export default function UnifiedLandingPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <MessageSquareText className="h-5 w-5" />
-                  <span>076-173 34 73 (Endast SMS)</span>
+                  <span>{t("076-173 34 73 (Endast SMS)", "076-173 34 73 (SMS only)")}</span>
                 </div>
               </div>
             </div>
             <div>
-              <h3 className="text-xl font-bold mb-4">Snabbkontakt</h3>
+              <h3 className="text-xl font-bold mb-4">{t("Snabbkontakt", "Quick contact")}</h3>
               <ContactForm />
             </div>
             <div>
-              <h3 className="text-xl font-bold mb-4">Tjänster</h3>
+              <h3 className="text-xl font-bold mb-4">{t("Tjänster", "Services")}</h3>
               <div className="space-y-2 text-slate-300">
-                <p>Professionell CV‑skrivning</p>
-                <p>Personliga brev</p>
-                <p>Jobbkonsultation & coaching</p>
-                <p>Intervjuförberedelse</p>
-                <p>Jobbsökningsstrategier</p>
-                <p>AI‑driven jobbmatchning</p>
+                {(lang === "sv"
+                  ? ["Professionell CV‑skrivning","Personliga brev","Jobbkonsultation & coaching","Intervjuförberedelse","Jobbsökningsstrategier","AI‑drivna jobbförslag"]
+                  : ["Professional CV writing","Cover letters","Career consultation & coaching","Interview preparation","Job search strategies","AI-driven job suggestions"]).map((item) => <p key={item}>{item}</p>)}
               </div>
             </div>
           </div>
           <div className="border-t border-slate-700 mt-12 pt-8 text-center text-slate-400">
-            <p>&copy; 2025 Nikola - CV & Jobbkonsultation. Alla rättigheter förbehållna.</p>
+            <p>{t("© 2025 Nikola - CV & Jobbkonsultation. Alla rättigheter förbehållna.", "© 2025 Nikola - CV & Career Consulting. All rights reserved.")}</p>
           </div>
         </div>
       </footer>
@@ -908,11 +970,352 @@ export default function UnifiedLandingPage() {
             </button>
             
             <div className="mb-6 pr-8">
-              <h2 className="text-2xl font-bold text-slate-900">Boka tid för {selectedPackage.name}</h2>
-              <p className="text-slate-600">Välj en tid som passar dig. Betalning sker i nästa steg.</p>
+              <h2 className="text-2xl font-bold text-slate-900">{t("Boka tid för", "Book time for")} {displayPackageName(selectedPackage.name)}</h2>
+              <p className="text-slate-600">{t("Välj en tid som passar dig. Betalning sker i nästa steg.", "Choose a time that suits you. Payment happens in the next step.")}</p>
             </div>
 
             <BookingCalendar onSelectSlot={handleSlotSelected} />
+          </div>
+        </div>
+      )}
+
+      {/* === MODAL: CV / LETTER INTAKE === */}
+      {showIntakeModal && selectedPackage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-5xl bg-white rounded-xl shadow-2xl p-6 max-h-[92vh] overflow-y-auto my-8">
+            <button
+              onClick={() => setShowIntakeModal(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 z-10"
+              type="button"
+            >
+              <X className="h-6 w-6" />
+            </button>
+
+            <div className="mb-6 pr-8">
+              <h2 className="text-2xl font-bold text-slate-900">{displayPackageName(selectedPackage.name)} • {t("Underlag", "Details")}</h2>
+              <p className="text-slate-600 mt-1">
+                {t("Fyll i informationen nedan så vi kan ta fram ett starkt CV", "Fill in the information below so we can prepare a strong CV")}
+                {selectedPackage.flow === "cv_letter_intake" ? t(" och personligt brev", " and cover letter") : ""} {t("utifrån dina uppgifter.", "based on your information.")}
+              </p>
+            </div>
+
+            {intakeSavedMessage && (
+              <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                {intakeSavedMessage}
+              </div>
+            )}
+
+            <div className="space-y-8">
+              <section className="rounded-xl border border-slate-200 p-5">
+                <h3 className="text-lg font-semibold text-slate-900">{t("1. Kontaktuppgifter", "1. Contact details")}</h3>
+                <p className="mt-1 text-sm text-slate-600">{t("Detta används i CV:t. Skriv korrekt och komplett information.", "This is used in the CV. Enter correct and complete information.")}</p>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>{t("Fullständigt namn", "Full name")}</Label>
+                    <Input value={cvIntakeDraft.fullName} onChange={(e) => handleCvIntakeField("fullName", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("E-post", "Email")}</Label>
+                    <Input value={cvIntakeDraft.email} onChange={(e) => handleCvIntakeField("email", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("Telefonnummer", "Phone number")}</Label>
+                    <Input value={cvIntakeDraft.phone} onChange={(e) => handleCvIntakeField("phone", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("Målroll / Jobbtitel", "Target role / Job title")}</Label>
+                    <Input
+                      placeholder={t("t.ex. Butikssäljare, Redovisningsekonom, Frontendutvecklare", "e.g. Sales Associate, Accountant, Frontend Developer")}
+                      value={cvIntakeDraft.targetRole}
+                      onChange={(e) => handleCvIntakeField("targetRole", e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>{t("Adress", "Address")}</Label>
+                    <Input
+                      placeholder={t("Gatuadress, postnummer, ort", "Street address, postal code, city")}
+                      value={cvIntakeDraft.address}
+                      onChange={(e) => handleCvIntakeField("address", e.target.value)}
+                    />
+                    <p className="text-xs text-slate-500">{t("Tips: Full adress behövs i underlaget. CV kan senare visas med endast ort om du vill.", "Tip: Full address is needed in the details. The CV can later show only the city if you prefer.")}</p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-slate-200 p-5">
+                <h3 className="text-lg font-semibold text-slate-900">{t("2. Kort profiltext (viktig)", "2. Short profile summary (important)")}</h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  {t("Skriv fritt: vad du har arbetat med, vad du är bra på, vilken typ av jobb du söker, och gärna konkreta resultat.", "Write freely: what you have worked with, what you are good at, what kind of job you want, and ideally concrete results.")}
+                </p>
+                <Textarea
+                  className="mt-4 min-h-[130px]"
+                  placeholder={t("Exempel: Jag har arbetat 4 år inom kundservice och administration... Jag är särskilt stark på...", "Example: I have worked 4 years in customer service and administration... I am especially strong in...")}
+                  value={cvIntakeDraft.profileSummary}
+                  onChange={(e) => handleCvIntakeField("profileSummary", e.target.value)}
+                />
+              </section>
+
+              <section className="rounded-xl border border-slate-200 p-5">
+                <h3 className="text-lg font-semibold text-slate-900">{t("3. Arbetslivserfarenhet (3 fält)", "3. Work experience (3 fields)")}</h3>
+                <p className="mt-1 text-sm text-slate-600">{t("Erfarenhet 1 är obligatorisk. Erfarenhet 2 och 3 är valfria.", "Experience 1 is required. Experience 2 and 3 are optional.")}</p>
+
+                <div className="mt-4 space-y-5">
+                  {[0, 1, 2].map((idx) => {
+                    const exp = cvIntakeDraft.experiences[idx as 0 | 1 | 2]
+                    const isRequired = idx === 0
+                    return (
+                      <div key={idx} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                          <h4 className="font-semibold text-slate-900">
+                            {t("Erfarenhet", "Experience")} {idx + 1} {isRequired ? t("(obligatorisk)", "(required)") : t("(valfri)", "(optional)")}
+                          </h4>
+                          <label className="flex items-center gap-2 text-sm text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={exp.current}
+                              onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "current", e.target.checked)}
+                            />
+                            {t("Pågående", "Current")}
+                          </label>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>{t("Titel", "Title")}</Label>
+                            <Input value={exp.title} onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "title", e.target.value)} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>{t("Företag", "Company")}</Label>
+                            <Input value={exp.company} onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "company", e.target.value)} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>{t("Ort", "City")}</Label>
+                            <Input value={exp.city} onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "city", e.target.value)} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                              <Label>{t("Startdatum", "Start date")}</Label>
+                              <Input placeholder="YYYY-MM" value={exp.start} onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "start", e.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>{t("Slutdatum", "End date")}</Label>
+                              <Input placeholder={exp.current ? t("Pågående", "Current") : "YYYY-MM"} value={exp.end} onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "end", e.target.value)} disabled={exp.current} />
+                            </div>
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>{t("Arbetsuppgifter (fri text)", "Tasks (free text)")}</Label>
+                            <Textarea
+                              rows={4}
+                              placeholder={t("Vad gjorde du? Ansvar, arbetsuppgifter, team, kundkontakt, system...", "What did you do? Responsibilities, tasks, teams, customer contact, systems...")}
+                              value={exp.tasks}
+                              onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "tasks", e.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>{t("Resultat / prestationer (fri text)", "Results / achievements (free text)")}</Label>
+                            <Textarea
+                              rows={3}
+                              placeholder={t("Skriv konkreta resultat: förbättringar, försäljning, effektivisering, kundnöjdhet, projektleveranser...", "Write concrete results: improvements, sales, efficiency gains, customer satisfaction, project deliveries...")}
+                              value={exp.achievements}
+                              onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "achievements", e.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>{t("Verktyg / teknik (valfritt)", "Tools / technology (optional)")}</Label>
+                            <Input
+                              placeholder={t("t.ex. Excel, SAP, React, Jira, truckkort", "e.g. Excel, SAP, React, Jira, forklift license")}
+                              value={exp.tools}
+                              onChange={(e) => handleExperienceField(idx as 0 | 1 | 2, "tools", e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-slate-200 p-5">
+                <h3 className="text-lg font-semibold text-slate-900">{t("4. Utbildning (viktig)", "4. Education (important)")}</h3>
+                <p className="mt-1 text-sm text-slate-600">{t("Minst en utbildning. Lägg till det viktigaste och relevanta kurser/inriktningar.", "At least one education entry. Add the most important details and relevant courses/specialization.")}</p>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>{t("Utbildning / Examen", "Education / Degree")}</Label>
+                    <Input value={cvIntakeDraft.education.program} onChange={(e) => handleEducationField("program", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("Skola / Lärosäte", "School / Institution")}</Label>
+                    <Input value={cvIntakeDraft.education.school} onChange={(e) => handleEducationField("school", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("Ort", "City")}</Label>
+                    <Input value={cvIntakeDraft.education.city} onChange={(e) => handleEducationField("city", e.target.value)} />
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-sm text-slate-600">
+                      <input type="checkbox" checked={cvIntakeDraft.education.current} onChange={(e) => handleEducationField("current", e.target.checked)} />
+                      {t("Pågående utbildning", "Ongoing education")}
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("Startdatum", "Start date")}</Label>
+                    <Input placeholder="YYYY-MM" value={cvIntakeDraft.education.start} onChange={(e) => handleEducationField("start", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("Slutdatum", "End date")}</Label>
+                    <Input placeholder={cvIntakeDraft.education.current ? t("Pågående", "Current") : "YYYY-MM"} value={cvIntakeDraft.education.end} onChange={(e) => handleEducationField("end", e.target.value)} disabled={cvIntakeDraft.education.current} />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>{t("Relevant inriktning / kurser / examensarbete (fri text)", "Relevant specialization / courses / thesis (free text)")}</Label>
+                    <Textarea
+                      rows={3}
+                      placeholder={t("Vad är viktigt att lyfta? Kurser, inriktning, projekt, examensarbete...", "What is important to highlight? Courses, specialization, projects, thesis...")}
+                      value={cvIntakeDraft.education.details}
+                      onChange={(e) => handleEducationField("details", e.target.value)}
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-slate-200 p-5">
+                <h3 className="text-lg font-semibold text-slate-900">{t("5. Kompetenser / Skills", "5. Skills")}</h3>
+                <p className="mt-1 text-sm text-slate-600">{t("Skriv både tekniska skills, verktyg, arbetssätt och det du är extra bra på.", "Include technical skills, tools, ways of working, and what you are especially good at.")}</p>
+                <div className="mt-4 grid gap-4">
+                  <div className="space-y-2">
+                    <Label>{t("Skills (fri text)", "Skills (free text)")}</Label>
+                    <Textarea
+                      rows={4}
+                      placeholder={t("Exempel: Kundservice, administration, Excel, CRM, projektledning, truckkort, PLC, JavaScript...", "Example: Customer service, administration, Excel, CRM, project management, forklift license, PLC, JavaScript...")}
+                      value={cvIntakeDraft.skills}
+                      onChange={(e) => handleCvIntakeField("skills", e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>{t("Certifikat (valfritt)", "Certificates (optional)")}</Label>
+                      <Textarea rows={3} value={cvIntakeDraft.certifications} onChange={(e) => handleCvIntakeField("certifications", e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t("Språk (valfritt)", "Languages (optional)")}</Label>
+                      <Textarea rows={3} value={cvIntakeDraft.languages} onChange={(e) => handleCvIntakeField("languages", e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>{t("Körkort (valfritt)", "Driver's license (optional)")}</Label>
+                      <Input placeholder={t("t.ex. B-körkort", "e.g. Category B driver's license")} value={cvIntakeDraft.driverLicense} onChange={(e) => handleCvIntakeField("driverLicense", e.target.value)} />
+                    </div>
+                    <div className="flex items-end">
+                      <label className="flex items-center gap-2 text-sm text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={cvIntakeDraft.includeFullAddressInCv}
+                          onChange={(e) => handleCvIntakeField("includeFullAddressInCv", e.target.checked)}
+                        />
+                        {t("Visa full adress i CV (annars endast ort)", "Show full address in CV (otherwise city only)")}
+                      </label>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("Övrigt (valfritt)", "Additional info (optional)")}</Label>
+                    <Textarea rows={3} value={cvIntakeDraft.additionalInfo} onChange={(e) => handleCvIntakeField("additionalInfo", e.target.value)} />
+                  </div>
+                </div>
+              </section>
+
+              {selectedPackage.flow === "cv_letter_intake" && (
+                <section className="rounded-xl border border-blue-200 bg-blue-50/40 p-5">
+                  <h3 className="text-lg font-semibold text-slate-900">{t("6. Underlag för personligt brev", "6. Cover letter details")}</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {t("Skriv fritt och konkret. Målet är att kunna skapa ett brev som känns personligt och träffsäkert.", "Write freely and concretely. The goal is to create a letter that feels personal and precise.")}
+                  </p>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>{t("Vilket jobb söker du?", "Which job are you applying for?")}</Label>
+                      <Input value={cvIntakeDraft.jobTitle} onChange={(e) => handleCvIntakeField("jobTitle", e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t("Företag", "Company")}</Label>
+                      <Input value={cvIntakeDraft.companyName} onChange={(e) => handleCvIntakeField("companyName", e.target.value)} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>{t("Annonslänk (valfritt)", "Job ad link (optional)")}</Label>
+                      <Input placeholder="https://..." value={cvIntakeDraft.adLink} onChange={(e) => handleCvIntakeField("adLink", e.target.value)} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>{t("Kopiera in jobbannonsen (rekommenderas)", "Paste the job ad (recommended)")}</Label>
+                      <Textarea
+                        rows={6}
+                        placeholder={t("Klistra in annonsens text här. Detta hjälper oss att anpassa både CV och brev mot rätt krav och nyckelord.", "Paste the job ad text here. This helps us tailor both the CV and letter to the right requirements and keywords.")}
+                        value={cvIntakeDraft.jobAdText}
+                        onChange={(e) => handleCvIntakeField("jobAdText", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>{t("Varför vill du ha just detta jobb?", "Why do you want this specific job?")}</Label>
+                      <Textarea
+                        rows={4}
+                        placeholder={t("Beskriv motivationen: vad lockar i rollen, arbetsuppgifterna och utvecklingsmöjligheterna?", "Describe your motivation: what attracts you in the role, tasks and growth opportunities?")}
+                        value={cvIntakeDraft.whyThisRole}
+                        onChange={(e) => handleCvIntakeField("whyThisRole", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>{t("Varför just detta företag?", "Why this company?")}</Label>
+                      <Textarea
+                        rows={4}
+                        placeholder={t("Vad gillar du med företaget? Bransch, värderingar, produkter, kultur, uppdrag...", "What do you like about the company? Industry, values, products, culture, mission...")}
+                        value={cvIntakeDraft.whyThisCompany}
+                        onChange={(e) => handleCvIntakeField("whyThisCompany", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>{t("Vilka 2–3 erfarenheter/resultat vill du lyfta i brevet?", "Which 2-3 experiences/results should be highlighted in the letter?")}</Label>
+                      <Textarea
+                        rows={4}
+                        placeholder={t("Skriv konkreta exempel som visar att du passar. Gärna siffror/resultat.", "Write concrete examples showing why you fit. Numbers/results are great.")}
+                        value={cvIntakeDraft.keyExamples}
+                        onChange={(e) => handleCvIntakeField("keyExamples", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>{t("Finns något brevet ska förklara?", "Is there anything the letter should explain?")}</Label>
+                      <Textarea
+                        rows={3}
+                        placeholder={t("Exempel: karriärbyte, glapp i CV, flytt, deltidsarbete, begränsad erfarenhet men stark motivation...", "Example: career change, CV gap, relocation, part-time work, limited experience but strong motivation...")}
+                        value={cvIntakeDraft.explainInLetter}
+                        onChange={(e) => handleCvIntakeField("explainInLetter", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t("Ton i brevet", "Letter tone")}</Label>
+                      <Input
+                        placeholder={t("t.ex. professionell, varm, självsäker", "e.g. professional, warm, confident")}
+                        value={cvIntakeDraft.tone}
+                        onChange={(e) => handleCvIntakeField("tone", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t("Språk", "Language")}</Label>
+                      <Input
+                        placeholder={t("svenska / engelska", "Swedish / English")}
+                        value={cvIntakeDraft.letterLanguage}
+                        onChange={(e) => handleCvIntakeField("letterLanguage", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </section>
+              )}
+            </div>
+
+            <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => setShowIntakeModal(false)}>
+                {t("Stäng", "Close")}
+              </Button>
+              <Button type="button" className="bg-blue-600 hover:bg-blue-700" onClick={saveCvIntake} disabled={intakeSubmitting}>
+                {intakeSubmitting ? t("Startar betalning...", "Starting payment...") : t("Fortsätt till betalning", "Continue to payment")}
+              </Button>
+            </div>
           </div>
         </div>
       )}

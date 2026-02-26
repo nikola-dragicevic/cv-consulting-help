@@ -16,11 +16,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { packageName, amount, bookingDate, bookingTime } = await req.json();
+    const { packageName, amount, bookingDate, bookingTime, orderType, intakeType } = await req.json();
 
-    if (!amount || !bookingDate || !bookingTime) {
-        return NextResponse.json({ error: 'Missing booking details (Date, Time or Amount)' }, { status: 400 });
+    if (!amount) {
+        return NextResponse.json({ error: 'Missing amount' }, { status: 400 });
     }
+
+    const isBookingOrder = Boolean(bookingDate && bookingTime);
+    const productDescription = isBookingOrder
+      ? `Bokning: ${bookingDate} kl ${bookingTime}`
+      : `Beställning mottagen${intakeType ? ` (${intakeType})` : ''}`;
 
     // Create Stripe Session with Dynamic Price Data
     const session = await stripe.checkout.sessions.create({
@@ -31,7 +36,7 @@ export async function POST(req: Request) {
             currency: 'sek',
             product_data: {
               name: packageName || 'Konsultation',
-              description: `Bokning: ${bookingDate} kl ${bookingTime}`,
+              description: productDescription,
             },
             unit_amount: amount * 100, // Stripe expects Öre (cents)
           },
@@ -46,14 +51,19 @@ export async function POST(req: Request) {
       // Save metadata for the Webhook to read later
       metadata: {
         user_id: user.id,
-        booking_date: bookingDate,
-        booking_time: bookingTime,
+        order_type: orderType || (isBookingOrder ? 'booking' : 'document_order'),
+        intake_type: intakeType || '',
+        booking_date: bookingDate || '',
+        booking_time: bookingTime || '',
       },
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Stripe error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Unknown error' },
+      { status: 500 }
+    );
   }
 }
