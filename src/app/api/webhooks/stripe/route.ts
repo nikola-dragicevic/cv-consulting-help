@@ -2,8 +2,9 @@ import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
+import { getStripeClient } from '@/lib/stripeServer';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+const stripe = getStripeClient();
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 // Initiera Supabase Admin (för att kunna skriva till DB utan inloggad användare)
@@ -24,9 +25,10 @@ if (!signature) {
 
   try {
     event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-  } catch (err: any) {
-    console.error(`Webhook Error: ${err.message}`);
-    return NextResponse.json({ error: `Webhook Error: ${err.message}` }, { status: 400 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown webhook error";
+    console.error(`Webhook Error: ${message}`);
+    return NextResponse.json({ error: `Webhook Error: ${message}` }, { status: 400 });
   }
 
   // ✅ Hantera lyckad betalning
@@ -34,7 +36,7 @@ if (!signature) {
     const session = event.data.object as Stripe.Checkout.Session;
 
     // Hämta metadatan vi skickade i steg 4
-    const { user_id, booking_date, booking_time } = session.metadata || {};
+    const { user_id, booking_date, booking_time, document_order_id } = session.metadata || {};
 
     if (user_id && booking_date && booking_time) {
         console.log(`💰 Betalning klar! Bokar tid för ${user_id} den ${booking_date} kl ${booking_time}`);
@@ -56,6 +58,30 @@ if (!signature) {
             console.error('Fel vid sparande av bokning:', error);
             return NextResponse.json({ error: 'DB Insert Failed' }, { status: 500 });
         }
+    }
+
+    if (document_order_id) {
+      const paymentIntentId =
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : session.payment_intent?.id ?? null;
+
+      const { error: orderUpdateError } = await supabaseAdmin
+        .from("document_orders")
+        .update({
+          status: "paid",
+          stripe_checkout_session_id: session.id,
+          stripe_payment_intent_id: paymentIntentId,
+          stripe_customer_email: session.customer_details?.email ?? session.customer_email ?? null,
+          stripe_status: session.payment_status ?? null,
+          paid_at: new Date().toISOString(),
+        })
+        .eq("id", document_order_id);
+
+      if (orderUpdateError) {
+        console.error("Fel vid uppdatering av document_orders:", orderUpdateError);
+        return NextResponse.json({ error: "Document order update failed" }, { status: 500 });
+      }
     }
   }
 

@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { getStripeClient } from "@/lib/stripeServer";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2025-06-30.basil",
-});
+const stripe = getStripeClient();
+const dashboardPremiumPriceId = process.env.STRIPE_PRICE_ID_DASHBOARD_PREMIUM?.trim();
 
 export async function POST() {
   try {
@@ -18,21 +17,19 @@ export async function POST() {
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://jobbnu.se";
+    if (!dashboardPremiumPriceId) {
+      return NextResponse.json(
+        { error: "Missing STRIPE_PRICE_ID_DASHBOARD_PREMIUM" },
+        { status: 500 }
+      );
+    }
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [
         {
-          price_data: {
-            currency: "sek",
-            recurring: { interval: "month" },
-            product_data: {
-              name: "Jobbnu Dashboard Premium",
-              description: "Full åtkomst till alla jobb i dashboarden",
-            },
-            unit_amount: 9900, // 99 kr/month
-          },
+          price: dashboardPremiumPriceId,
           quantity: 1,
         },
       ],

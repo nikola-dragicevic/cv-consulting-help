@@ -75,10 +75,13 @@ type CvIntakeDraft = {
   address: string
   phone: string
   email: string
-  targetRole: string
+  targetJobLink: string
   profileSummary: string
   experiences: [ExperienceEntry, ExperienceEntry, ExperienceEntry]
+  includeExperience3: boolean
   education: EducationEntry
+  includeAdditionalEducation: boolean
+  education2: EducationEntry
   skills: string
   certifications: string
   languages: string
@@ -88,7 +91,6 @@ type CvIntakeDraft = {
   // Personal letter fields (only used for CV + Personligt Brev)
   jobTitle: string
   companyName: string
-  adLink: string
   jobAdText: string
   whyThisRole: string
   whyThisCompany: string
@@ -218,10 +220,13 @@ function createInitialCvIntakeDraft(email = ""): CvIntakeDraft {
     address: "",
     phone: "",
     email,
-    targetRole: "",
+    targetJobLink: "",
     profileSummary: "",
     experiences: [emptyExperience(), emptyExperience(), emptyExperience()],
+    includeExperience3: false,
     education: emptyEducation(),
+    includeAdditionalEducation: false,
+    education2: emptyEducation(),
     skills: "",
     certifications: "",
     languages: "",
@@ -230,7 +235,6 @@ function createInitialCvIntakeDraft(email = ""): CvIntakeDraft {
     includeFullAddressInCv: false,
     jobTitle: "",
     companyName: "",
-    adLink: "",
     jobAdText: "",
     whyThisRole: "",
     whyThisCompany: "",
@@ -251,7 +255,16 @@ function validateCvIntakeForCheckout(
   if (!draft.address.trim()) return t("Fyll i adress.", "Enter address.")
   if (!draft.phone.trim()) return t("Fyll i telefonnummer.", "Enter phone number.")
   if (!draft.email.trim()) return t("Fyll i e-post.", "Enter email.")
-  if (!draft.targetRole.trim()) return t("Fyll i målroll / jobbtitel.", "Enter target role / job title.")
+  if (draft.targetJobLink.trim()) {
+    try {
+      const url = new URL(draft.targetJobLink.trim())
+      if (!["http:", "https:"].includes(url.protocol)) {
+        return t("Jobblänken måste börja med http:// eller https://.", "Job link must start with http:// or https://.")
+      }
+    } catch {
+      return t("Ange en giltig jobblänk.", "Enter a valid job link.")
+    }
+  }
   if (!draft.profileSummary.trim()) return t("Skriv en kort profiltext.", "Write a short profile summary.")
 
   const exp1 = draft.experiences[0]
@@ -264,6 +277,14 @@ function validateCvIntakeForCheckout(
 
   if (!draft.education.program.trim() || !draft.education.school.trim()) {
     return t("Fyll i utbildning (utbildning/examen och skola).", "Fill in education (program/degree and school).")
+  }
+  if (draft.includeAdditionalEducation) {
+    if (!draft.education2.program.trim() || !draft.education2.school.trim()) {
+      return t(
+        "Fyll i den extra utbildningen (utbildning/examen och skola) eller avmarkera rutan.",
+        "Fill in the extra education (program/degree and school) or uncheck the box."
+      )
+    }
   }
 
   if (!draft.skills.trim()) return t("Fyll i kompetenser / skills.", "Fill in skills.")
@@ -659,6 +680,10 @@ export default function UnifiedLandingPage() {
     setCvIntakeDraft((prev) => ({ ...prev, education: { ...prev.education, [key]: value } }))
   }
 
+  const handleEducation2Field = (key: keyof EducationEntry, value: EducationEntry[keyof EducationEntry]) => {
+    setCvIntakeDraft((prev) => ({ ...prev, education2: { ...prev.education2, [key]: value } }))
+  }
+
   const saveCvIntake = async () => {
     if (!selectedPackage) return
     const validationError = validateCvIntakeForCheckout(cvIntakeDraft, selectedPackage.flow, lang)
@@ -688,6 +713,8 @@ export default function UnifiedLandingPage() {
           email: user?.email,
           orderType: "document_intake",
           intakeType: selectedPackage.flow,
+          targetJobLink: cvIntakeDraft.targetJobLink || null,
+          intakePayload: payload,
         })
       })
 
@@ -710,9 +737,9 @@ export default function UnifiedLandingPage() {
   return (
     <div className="min-h-screen bg-white">
       {/* === HERO === */}
-      <section className="relative bg-gradient-to-br from-blue-50 via-white to-amber-50 py-20 lg:py-32">
+      <section className="relative bg-gradient-to-br from-blue-50 via-white to-amber-50 py-14 lg:py-20">
         <div className="container mx-auto px-4">
-          <div className="grid gap-12 lg:grid-cols-2 items-center">
+          <div className="grid gap-12 lg:grid-cols-[1fr_1.45fr] items-center">
             <div className="space-y-6">
               <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 text-balance">
                 {t("Hitta det perfekta jobbet för dig med hjälp av en AI-manager", "Find the right job for you with the help of an AI manager")}
@@ -734,7 +761,7 @@ export default function UnifiedLandingPage() {
                   <a href="#packages">🎯 {t("Välj ditt paket", "Choose your package")}</a>
                 </Button>
                 <Button size="lg" variant="outline" asChild>
-                  <Link href="/dashboard">📊 {t("Öppna dashboard", "Open dashboard")}</Link>
+                  <Link href="/dashboard">📊 {t("Matcha jobb", "Find job")}</Link>
                 </Button>
               </div>
               
@@ -751,15 +778,19 @@ export default function UnifiedLandingPage() {
             <div className="flex justify-center lg:justify-end">
               <div className="relative">
                 <div className="absolute inset-0 bg-blue-200 rounded-full blur-3xl opacity-20" />
-                <Image src="/portrait.jpeg" alt={t("Nikola - CV Konsult", "Nikola - CV Consultant")} width={400} height={400} className="relative rounded-full shadow-2xl border-4 border-white object-cover aspect-square" priority />
+                <Image
+                  src="/award-new-jobbnu-5287 (1).png"
+                  alt={t("Jobbnu utmärkelse", "Jobbnu award")}
+                  width={1400}
+                  height={604}
+                  className="relative w-full max-w-[1100px] rounded-3xl shadow-2xl border-4 border-white bg-white object-contain p-4"
+                  priority
+                />
               </div>
             </div>
           </div>
         </div>
       </section>
-
-      {/* === JOB CATEGORIES === */}
-      <JobCategoriesSection />
 
       {/* === PACKAGES === */}
       <section id="packages" className="py-20 bg-white">
@@ -842,6 +873,9 @@ export default function UnifiedLandingPage() {
         </div>
       </section>
 
+      {/* === JOB CATEGORIES === */}
+      <JobCategoriesSection />
+
       <section className="py-16 bg-slate-50 border-y border-slate-200">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
@@ -861,7 +895,7 @@ export default function UnifiedLandingPage() {
                     {t("Öppna dashboarden för att se dina jobbkort, ATS-score, grade-skala och detaljerad analys.", "Open the dashboard to see your job cards, ATS score, grade scale and detailed analysis.")}
                   </p>
                   <Button asChild className="bg-blue-600 hover:bg-blue-700">
-                    <Link href="/dashboard">📊 {t("Gå till dashboard", "Go to dashboard")}</Link>
+                    <Link href="/dashboard">📊 {t("Matcha Jobb", "Find Job")}</Link>
                   </Button>
                 </div>
               </CardContent>
@@ -1022,13 +1056,21 @@ export default function UnifiedLandingPage() {
                     <Label>{t("Telefonnummer", "Phone number")}</Label>
                     <Input value={cvIntakeDraft.phone} onChange={(e) => handleCvIntakeField("phone", e.target.value)} />
                   </div>
-                  <div className="space-y-2">
-                    <Label>{t("Målroll / Jobbtitel", "Target role / Job title")}</Label>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>{t("Har du redan ett jobb du är intresserad av? Skicka länken (valfritt)", "Already have a job you're interested in? Share the link (optional)")}</Label>
                     <Input
-                      placeholder={t("t.ex. Butikssäljare, Redovisningsekonom, Frontendutvecklare", "e.g. Sales Associate, Accountant, Frontend Developer")}
-                      value={cvIntakeDraft.targetRole}
-                      onChange={(e) => handleCvIntakeField("targetRole", e.target.value)}
+                      type="url"
+                      inputMode="url"
+                      placeholder="https://..."
+                      value={cvIntakeDraft.targetJobLink}
+                      onChange={(e) => handleCvIntakeField("targetJobLink", e.target.value)}
                     />
+                    <p className="text-xs text-slate-500">
+                      {t(
+                        "Vi använder länken för att anpassa CV (och personligt brev om du beställer det) mot annonsen. Den används som underlag, inte som din nuvarande jobbtitel.",
+                        "We use the link to tailor the CV (and cover letter if ordered) to the job ad. It is used as input, not as your current job title."
+                      )}
+                    </p>
                   </div>
                   <div className="space-y-2 md:col-span-2">
                     <Label>{t("Adress", "Address")}</Label>
@@ -1058,9 +1100,18 @@ export default function UnifiedLandingPage() {
               <section className="rounded-xl border border-slate-200 p-5">
                 <h3 className="text-lg font-semibold text-slate-900">{t("3. Arbetslivserfarenhet (3 fält)", "3. Work experience (3 fields)")}</h3>
                 <p className="mt-1 text-sm text-slate-600">{t("Erfarenhet 1 är obligatorisk. Erfarenhet 2 och 3 är valfria.", "Experience 1 is required. Experience 2 and 3 are optional.")}</p>
+                <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={cvIntakeDraft.includeExperience3}
+                    onChange={(e) => handleCvIntakeField("includeExperience3", e.target.checked)}
+                  />
+                  {t("Jag vill lägga till Erfarenhet 3 (extra erfarenhet)", "I want to add Experience 3 (additional experience)")}
+                </label>
 
                 <div className="mt-4 space-y-5">
                   {[0, 1, 2].map((idx) => {
+                    if (idx === 2 && !cvIntakeDraft.includeExperience3) return null
                     const exp = cvIntakeDraft.experiences[idx as 0 | 1 | 2]
                     const isRequired = idx === 0
                     return (
@@ -1173,7 +1224,64 @@ export default function UnifiedLandingPage() {
                       onChange={(e) => handleEducationField("details", e.target.value)}
                     />
                   </div>
+                  <div className="md:col-span-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={cvIntakeDraft.includeAdditionalEducation}
+                        onChange={(e) => handleCvIntakeField("includeAdditionalEducation", e.target.checked)}
+                      />
+                      {t("Jag har fler utbildningar och vill lägga till en till", "I have multiple educations and want to add one more")}
+                    </label>
+                  </div>
                 </div>
+
+                {cvIntakeDraft.includeAdditionalEducation && (
+                  <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <h4 className="font-semibold text-slate-900">{t("Extra utbildning", "Additional education")}</h4>
+                    <div className="mt-3 grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>{t("Utbildning / Examen", "Education / Degree")}</Label>
+                        <Input value={cvIntakeDraft.education2.program} onChange={(e) => handleEducation2Field("program", e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t("Skola / Lärosäte", "School / Institution")}</Label>
+                        <Input value={cvIntakeDraft.education2.school} onChange={(e) => handleEducation2Field("school", e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t("Ort", "City")}</Label>
+                        <Input value={cvIntakeDraft.education2.city} onChange={(e) => handleEducation2Field("city", e.target.value)} />
+                      </div>
+                      <div className="flex items-end">
+                        <label className="flex items-center gap-2 text-sm text-slate-600">
+                          <input type="checkbox" checked={cvIntakeDraft.education2.current} onChange={(e) => handleEducation2Field("current", e.target.checked)} />
+                          {t("Pågående utbildning", "Ongoing education")}
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t("Startdatum", "Start date")}</Label>
+                        <Input placeholder="YYYY-MM" value={cvIntakeDraft.education2.start} onChange={(e) => handleEducation2Field("start", e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t("Slutdatum", "End date")}</Label>
+                        <Input
+                          placeholder={cvIntakeDraft.education2.current ? t("Pågående", "Current") : "YYYY-MM"}
+                          value={cvIntakeDraft.education2.end}
+                          onChange={(e) => handleEducation2Field("end", e.target.value)}
+                          disabled={cvIntakeDraft.education2.current}
+                        />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <Label>{t("Relevant inriktning / kurser / examensarbete (fri text)", "Relevant specialization / courses / thesis (free text)")}</Label>
+                        <Textarea
+                          rows={3}
+                          value={cvIntakeDraft.education2.details}
+                          onChange={(e) => handleEducation2Field("details", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </section>
 
               <section className="rounded-xl border border-slate-200 p-5">
@@ -1237,10 +1345,6 @@ export default function UnifiedLandingPage() {
                     <div className="space-y-2">
                       <Label>{t("Företag", "Company")}</Label>
                       <Input value={cvIntakeDraft.companyName} onChange={(e) => handleCvIntakeField("companyName", e.target.value)} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Annonslänk (valfritt)", "Job ad link (optional)")}</Label>
-                      <Input placeholder="https://..." value={cvIntakeDraft.adLink} onChange={(e) => handleCvIntakeField("adLink", e.target.value)} />
                     </div>
                     <div className="space-y-2 md:col-span-2">
                       <Label>{t("Kopiera in jobbannonsen (rekommenderas)", "Paste the job ad (recommended)")}</Label>

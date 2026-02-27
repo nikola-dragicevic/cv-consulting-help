@@ -1,10 +1,9 @@
 "use client"
 
 import React, { useState, useEffect } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { Briefcase, ChevronDown } from "lucide-react"
+import { Briefcase } from "lucide-react"
 
 type CategoryData = {
   name: string
@@ -473,7 +472,6 @@ const CATEGORY_STRUCTURE: Record<string, string[]> = {
 export default function JobCategoriesSection() {
   const [totalJobs, setTotalJobs] = useState<number>(0)
   const [categories, setCategories] = useState<CategoryData[]>([])
-  const [subcategoryCounts, setSubcategoryCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -493,7 +491,6 @@ export default function JobCategoriesSection() {
       const data = await response.json()
       setTotalJobs(data.total)
       setCategories(data.categories)
-      setSubcategoryCounts(data.subcategoryCounts || {})
     } catch (err) {
       console.error("Error fetching job categories:", err)
       setError("Kunde inte hämta jobbkategorier")
@@ -544,9 +541,11 @@ export default function JobCategoriesSection() {
         <div className="max-w-5xl mx-auto">
           <Accordion type="single" collapsible className="space-y-4">
             {categories.map((category, index) => {
-              // Use mapping to get the correct key for CATEGORY_STRUCTURE
               const mappedName = CATEGORY_NAME_MAP[category.name] || category.name
-              const subcategories = CATEGORY_STRUCTURE[mappedName]
+              const fallbackSubcategories = (CATEGORY_STRUCTURE[mappedName] || []).map((name) => ({ name, count: 0 }))
+              const subcategories = (category.subcategories && category.subcategories.length > 0)
+                ? category.subcategories
+                : fallbackSubcategories
 
               return (
               <AccordionItem
@@ -561,7 +560,7 @@ export default function JobCategoriesSection() {
                         <Briefcase className="h-5 w-5 text-blue-600" />
                       </div>
                       <h2 className="text-xl font-semibold text-slate-900 text-left">
-                        {category.name}
+                        {mappedName}
                       </h2>
                     </div>
                     <Badge variant="secondary" className="ml-4 text-base px-4 py-1">
@@ -574,19 +573,18 @@ export default function JobCategoriesSection() {
                     <h3 className="text-sm font-semibold text-slate-600 mb-3 uppercase tracking-wide">
                       Underkategorier
                     </h3>
-                    {subcategories ? (
+                    {subcategories.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                       {subcategories.map((subcategory) => {
-                        const count = subcategoryCounts[subcategory] || 0
                         return (
                           <div
-                            key={subcategory}
+                            key={subcategory.name}
                             className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
                           >
-                            <span className="text-sm text-slate-700 flex-1">{subcategory}</span>
-                            {count > 0 && (
+                            <span className="text-sm text-slate-700 flex-1">{subcategory.name}</span>
+                            {subcategory.count > 0 && (
                               <Badge variant="outline" className="ml-2 text-xs">
-                                {count}
+                                {subcategory.count}
                               </Badge>
                             )}
                           </div>

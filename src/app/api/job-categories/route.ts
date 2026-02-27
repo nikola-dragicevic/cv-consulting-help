@@ -17,15 +17,28 @@ const createSupabaseRouteHandlerClient = async () => {
 }
 
 // In-memory cache for job categories
-let cachedData: any = null
+type CategoryResponse = {
+  total: number
+  categories: {
+    name: string
+    count: number
+    subcategories: { name: string; count: number }[]
+  }[]
+  subcategoryCounts: Record<string, number>
+  cached: boolean
+  cacheAge: number
+}
+
+let cachedData: CategoryResponse | null = null
 let cacheTimestamp: number = 0
 const CACHE_TTL_MS = 3600000 // 1 hour (3600 seconds * 1000 milliseconds)
 
-export async function GET() {
+export async function GET(req: Request) {
   const now = Date.now()
+  const forceRefresh = new URL(req.url).searchParams.get("refresh") === "1"
 
   // Return cached data if still valid (within 1 hour)
-  if (cachedData && (now - cacheTimestamp) < CACHE_TTL_MS) {
+  if (!forceRefresh && cachedData && (now - cacheTimestamp) < CACHE_TTL_MS) {
     console.log("Returning cached job categories data")
     return NextResponse.json({
       ...cachedData,
@@ -38,60 +51,71 @@ export async function GET() {
   const supabase = await createSupabaseRouteHandlerClient()
 
   try {
-    // Get total count of jobs
-    const { count: totalCount, error: countError } = await supabase
-      .from('job_ads')
-      .select('id', { count: 'exact', head: true })
+    // Fetch active, non-expired jobs with embedding and aggregate in memory.
+    // This guarantees that total/category/subcategory counts come from the exact same dataset.
+    const PAGE_SIZE = 10000
+    let from = 0
+    const rows: { occupation_field_label: string | null; occupation_group_label: string | null }[] = []
 
-    if (countError) {
-      throw new Error(`Failed to count jobs: ${countError.message}`)
+    while (true) {
+      const to = from + PAGE_SIZE - 1
+      const { data, error } = await supabase
+        .from("job_ads")
+        .select("occupation_field_label, occupation_group_label")
+        .eq("is_active", true)
+        .not("embedding", "is", null)
+        .or("application_deadline.is.null,application_deadline.gte.now()")
+        .range(from, to)
+
+      if (error) {
+        throw new Error(`Failed to fetch job categories: ${error.message}`)
+      }
+
+      const batch = data || []
+      rows.push(...batch)
+
+      if (batch.length < PAGE_SIZE) break
+      from += PAGE_SIZE
     }
 
-    // Use RPC to get aggregated counts efficiently for main categories
-    const { data: categoryData, error: categoryError } = await supabase
-      .rpc('get_occupation_field_counts')
+    const totalCount = rows.length
 
-    if (categoryError) {
-      console.error("Category aggregation error:", categoryError)
-      // Fallback: return just total if aggregation fails
-      return NextResponse.json({
-        total: totalCount || 0,
-        categories: []
-      })
-    }
+    const fieldCounts = new Map<string, number>()
+    const fieldGroupCounts = new Map<string, Map<string, number>>()
+    const globalSubcategoryCounts = new Map<string, number>()
 
-    // Get subcategory counts (occupation_group_label)
-    const { data: subcategoryData, error: subcategoryError } = await supabase
-      .rpc('get_occupation_group_counts')
+    for (const row of rows) {
+      const field = row.occupation_field_label?.trim()
+      const group = row.occupation_group_label?.trim()
+      if (!field) continue
 
-    if (subcategoryError) {
-      console.error("Subcategory aggregation error:", subcategoryError)
-    }
+      fieldCounts.set(field, (fieldCounts.get(field) || 0) + 1)
 
-    // Create a map of subcategory counts
-    const subcategoryCounts = new Map<string, number>()
-    if (subcategoryData) {
-      subcategoryData.forEach((row: any) => {
-        if (row.occupation_group_label) {
-          subcategoryCounts.set(row.occupation_group_label, row.count)
+      if (group) {
+        let groupMap = fieldGroupCounts.get(field)
+        if (!groupMap) {
+          groupMap = new Map<string, number>()
+          fieldGroupCounts.set(field, groupMap)
         }
-      })
+        groupMap.set(group, (groupMap.get(group) || 0) + 1)
+        globalSubcategoryCounts.set(group, (globalSubcategoryCounts.get(group) || 0) + 1)
+      }
     }
 
-    // categoryData should be an array of { occupation_field_label: string, count: number }
-    const categories = (categoryData || [])
-      .filter((row: any) => row.occupation_field_label) // Filter out nulls
-      .map((row: any) => ({
-        name: row.occupation_field_label,
-        count: row.count,
-        subcategoryCounts // Include the full map so frontend can look up counts
-      }))
+    const categories = Array.from(fieldCounts.entries())
+      .map(([name, count]) => {
+        const groupMap = fieldGroupCounts.get(name) || new Map<string, number>()
+        const subcategories = Array.from(groupMap.entries())
+          .map(([subName, subCount]) => ({ name: subName, count: subCount }))
+          .sort((a, b) => b.count - a.count)
+        return { name, count, subcategories }
+      })
       .sort((a, b) => b.count - a.count)
 
     const result = {
       total: totalCount || 0,
       categories,
-      subcategoryCounts: Object.fromEntries(subcategoryCounts),
+      subcategoryCounts: Object.fromEntries(globalSubcategoryCounts),
       cached: false,
       cacheAge: 0
     }
@@ -102,8 +126,9 @@ export async function GET() {
     console.log("Job categories data cached successfully")
 
     return NextResponse.json(result)
-  } catch (e: any) {
-    console.error("Job categories error:", e.message)
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error"
+    console.error("Job categories error:", message)
 
     // If we have cached data and DB fails, return stale cache as fallback
     if (cachedData) {
@@ -116,6 +141,6 @@ export async function GET() {
       })
     }
 
-    return NextResponse.json({ error: e.message }, { status: 500 })
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

@@ -9,11 +9,17 @@ import { Button } from "@/components/ui/button"
 import { useLanguage } from "@/components/i18n/LanguageProvider"
 
 // Enkla tider för demo (du kan justera dessa)
-const TIME_SLOTS = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00"]
+const TIME_SLOTS = ["09:00", "10:00", "11:00", "13:00"]
 
 export default function BookingCalendar({ onSelectSlot }: { onSelectSlot: (date: Date, time: string) => void }) {
   const { t, lang } = useLanguage()
-  const [date, setDate] = React.useState<Date | undefined>(new Date())
+  const [minBookingDate] = React.useState<Date>(() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setDate(d.getDate() + 2)
+    return d
+  })
+  const [date, setDate] = React.useState<Date | undefined>(minBookingDate)
   const [selectedTime, setSelectedTime] = React.useState<string | null>(null)
   const [busySlots, setBusySlots] = React.useState<string[]>([])
 
@@ -64,7 +70,7 @@ export default function BookingCalendar({ onSelectSlot }: { onSelectSlot: (date:
           selected={date}
           onSelect={setDate}
           locale={lang === "sv" ? sv : enUS}
-          disabled={{ before: new Date() }} // Kan inte boka bakåt i tiden
+          disabled={{ before: minBookingDate }} // Kan boka tidigast om 2 dagar
           className="border rounded-md p-2"
         />
       </div>

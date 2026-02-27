@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { isAdminUser } from "@/lib/admin";
+import { getStripeClient } from "@/lib/stripeServer";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2025-06-30.basil",
-});
+const stripe = getStripeClient();
 
 const ACTIVE_STATUSES = new Set<Stripe.Subscription.Status>([
   "active",
@@ -25,6 +25,15 @@ export async function GET() {
 
     if (!user.email) {
       return NextResponse.json({ hasActiveSubscription: false }, { status: 200 });
+    }
+
+    if (isAdminUser(user)) {
+      return NextResponse.json({
+        hasActiveSubscription: true,
+        status: "admin_override",
+        currentPeriodEnd: null,
+        isAdmin: true,
+      });
     }
 
     const customers = await stripe.customers.list({

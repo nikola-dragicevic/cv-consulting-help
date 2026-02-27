@@ -55,7 +55,7 @@ export default function Header() {
 
   return (
     <header className="bg-white/80 backdrop-blur-md sticky top-0 z-40 border-b">
-      <div className="container mx-auto grid grid-cols-[auto_1fr_auto] items-center gap-3 p-4">
+      <div className="container mx-auto grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-2.5">
         <Link href="/" className="text-xl font-bold">
           Jobb Nu
         </Link>

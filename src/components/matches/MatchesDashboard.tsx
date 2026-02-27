@@ -93,8 +93,10 @@ export function MatchesDashboard() {
   const [showWishlist, setShowWishlist] = useState(false);
   const [profileLocation, setProfileLocation] = useState<DashboardProfileLocation | null>(null);
   const [radiusKm, setRadiusKm] = useState(40);
+  const [radiusInput, setRadiusInput] = useState("40");
   const [wholeSweden, setWholeSweden] = useState(false);
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [subscriptionCheckoutLoading, setSubscriptionCheckoutLoading] = useState(false);
 
@@ -125,8 +127,10 @@ export function MatchesDashboard() {
       if (!res.ok) return;
       const data = await res.json();
       setHasActiveSubscription(Boolean(data?.hasActiveSubscription));
+      setIsAdmin(Boolean(data?.isAdmin || data?.status === "admin_override"));
     } catch {
       setHasActiveSubscription(false);
+      setIsAdmin(false);
     } finally {
       setSubscriptionLoading(false);
     }
@@ -147,11 +151,26 @@ export function MatchesDashboard() {
       });
 
       if (typeof data.commute_radius_km === "number" && Number.isFinite(data.commute_radius_km)) {
-        setRadiusKm(Math.max(5, Math.round(data.commute_radius_km)));
+        const normalized = Math.max(1, Math.min(300, Math.round(data.commute_radius_km)));
+        setRadiusKm(normalized);
+        setRadiusInput(String(normalized));
       }
     } catch {
       // non-blocking
     }
+  }
+
+  function normalizeRadiusValue(raw: string) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return radiusKm;
+    return Math.max(1, Math.min(300, Math.round(parsed)));
+  }
+
+  function commitRadiusInput() {
+    const normalized = normalizeRadiusValue(radiusInput);
+    setRadiusKm(normalized);
+    setRadiusInput(String(normalized));
+    return normalized;
   }
 
   async function refreshMatches() {
@@ -237,6 +256,8 @@ export function MatchesDashboard() {
         return;
       }
 
+      const radiusForQuery = wholeSweden ? 9999 : commitRadiusInput();
+
       const res = await fetch("/api/match/for-user", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -246,7 +267,7 @@ export function MatchesDashboard() {
             : {
                 lat: profileLocation!.location_lat,
                 lon: profileLocation!.location_lon,
-                radius_km: radiusKm,
+                radius_km: radiusForQuery,
               }
         ),
       });
@@ -291,11 +312,12 @@ export function MatchesDashboard() {
       setError(null);
       setEmptyStateMessage(null);
       setShowWishlist(false);
+      const radiusForQuery = wholeSweden ? 9999 : commitRadiusInput();
 
       const res = await fetch("/api/match/refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildRefinePayload(user.id, wish, { profileLocation, radiusKm, wholeSweden })),
+        body: JSON.stringify(buildRefinePayload(user.id, wish, { profileLocation, radiusKm: radiusForQuery, wholeSweden })),
       });
       const { data, raw } = await safeParseResponse(res);
 
@@ -394,10 +416,11 @@ export function MatchesDashboard() {
                 <Input
                   id="dashboard-radius"
                   type="number"
-                  min={5}
+                  min={1}
                   max={300}
-                  value={radiusKm}
-                  onChange={(e) => setRadiusKm(Math.max(5, Number(e.target.value || 40)))}
+                  value={radiusInput}
+                  onChange={(e) => setRadiusInput(e.target.value)}
+                  onBlur={commitRadiusInput}
                   disabled={wholeSweden}
                 />
               </div>
@@ -431,6 +454,11 @@ export function MatchesDashboard() {
                   value={topMatch?.final_score !== undefined ? `${Math.round(topMatch.final_score * 100)}%` : "-"}
                 />
                 <MetricPill label={t("Plan", "Plan")} value={subscriptionLoading ? "..." : hasActiveSubscription ? "Premium" : "Free"} />
+                {isAdmin && (
+                  <Badge className="border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-50">
+                    {t("Admin", "Admin")} • override
+                  </Badge>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
