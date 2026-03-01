@@ -11,6 +11,12 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  async rewrites() {
+    return [
+      { source: "/cv&pb", destination: "/cv-pb" },
+      { source: "/cvpb&konsult", destination: "/cvpb-konsult" },
+    ];
+  },
 };
 
 export default nextConfig;

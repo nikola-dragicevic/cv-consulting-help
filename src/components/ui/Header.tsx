@@ -90,6 +90,24 @@ export default function Header() {
                 EN
               </button>
             </div>
+            <Link
+              href="/cv"
+              className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
+            >
+              CV
+            </Link>
+            <Link
+              href="/cv&pb"
+              className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
+            >
+              CV + PB
+            </Link>
+            <Link
+              href="/cvpb&konsult"
+              className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
+            >
+              CV + PB + Konsult
+            </Link>
           </div>
         </div>
 

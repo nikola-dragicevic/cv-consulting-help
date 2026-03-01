@@ -786,11 +786,11 @@ export default function UnifiedLandingPage() {
               <div className="relative">
                 <div className="absolute inset-0 bg-blue-200 rounded-full blur-3xl opacity-20" />
                 <Image
-                  src="/award-new-jobbnu-5287 (1).png"
-                  alt={t("Jobbnu utmärkelse", "Jobbnu award")}
-                  width={1400}
-                  height={604}
-                  className="relative w-full max-w-[1100px] rounded-3xl shadow-2xl border-4 border-white bg-white object-contain p-4"
+                  src="/star-business-award-2026-masked.png"
+                  alt={t("Star Business Awards utmärkelse", "Star Business Awards certificate")}
+                  width={443}
+                  height={626}
+                  className="relative w-full max-w-[420px] rounded-3xl shadow-2xl border-4 border-white bg-white object-contain p-3"
                   priority
                 />
               </div>
@@ -826,9 +826,8 @@ export default function UnifiedLandingPage() {
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700" size="lg" 
-                  onClick={() => initiateBooking({ name: "CV + Personligt Brev + Konsultation", amount: 999, description: "Fullständigt paket med coaching", flow: "booking" })}>
-                  {t("Välj & Boka", "Choose & Book")}
+                <Button className="w-full bg-blue-600 hover:bg-blue-700" size="lg" asChild>
+                  <Link href="/cvpb&konsult">{t("Välj & Boka", "Choose & Book")}</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -846,9 +845,8 @@ export default function UnifiedLandingPage() {
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
-                <Button className="w-full" variant="outline" size="lg" 
-                  onClick={() => initiateBooking({ name: "CV + Personligt Brev", amount: 199, description: "CV och brev anpassat mot tjänst", flow: "cv_letter_intake" })}>
-                  {t("Välj & Boka", "Choose & Continue")}
+                <Button className="w-full" variant="outline" size="lg" asChild>
+                  <Link href="/cv&pb">{t("Välj & Boka", "Choose & Continue")}</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -866,9 +864,8 @@ export default function UnifiedLandingPage() {
                     <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
                   ))}
                 </ul>
-                <Button className="w-full" variant="outline" size="lg" 
-                  onClick={() => initiateBooking({ name: "CV", amount: 119, description: "Professionellt CV", flow: "cv_intake" })}>
-                  {t("Välj & Boka", "Choose & Continue")}
+                <Button className="w-full" variant="outline" size="lg" asChild>
+                  <Link href="/cv">{t("Välj & Boka", "Choose & Continue")}</Link>
                 </Button>
               </CardContent>
             </Card>
