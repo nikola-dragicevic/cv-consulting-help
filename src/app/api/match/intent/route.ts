@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { extractKeywordsFromCV } from "@/lib/categorization";
+import { isAdminUser } from "@/lib/admin";
 import {
   checkMatchRateLimit,
   updateLastMatchTime,
@@ -20,6 +21,7 @@ export async function GET(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const adminOverride = isAdminUser(user);
 
   // Fetch cached matches
   const cached = await getCachedMatches(user.id, supabase);
@@ -36,7 +38,9 @@ export async function GET(req: Request) {
   }
 
   // Check rate limit status for UI display
-  const rateLimit = await checkMatchRateLimit(user.id, supabase);
+  const rateLimit = adminOverride
+    ? { allowed: true, hoursRemaining: 0, minutesRemaining: 0 }
+    : await checkMatchRateLimit(user.id, supabase);
 
   return NextResponse.json({
     ...cached.data,
@@ -60,9 +64,12 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const adminOverride = isAdminUser(user);
 
   // Check if user is allowed to match (24h cooldown)
-  const rateLimit = await checkMatchRateLimit(user.id, supabase);
+  const rateLimit = adminOverride
+    ? { allowed: true, hoursRemaining: 0, minutesRemaining: 0 }
+    : await checkMatchRateLimit(user.id, supabase);
 
   if (!rateLimit.allowed) {
     return NextResponse.json(
@@ -103,7 +110,9 @@ export async function POST(req: Request) {
     await saveMatchCache(user.id, intent, response, supabase);
 
     // Update last match time
-    await updateLastMatchTime(user.id, supabase);
+    if (!adminOverride) {
+      await updateLastMatchTime(user.id, supabase);
+    }
 
     return NextResponse.json(response);
   } catch (error: any) {

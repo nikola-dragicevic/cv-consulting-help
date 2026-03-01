@@ -37,6 +37,9 @@ type AdminDocumentOrderRow = {
   amount_sek: number
   target_role: string | null
   target_job_link: string | null
+  intake_full_name: string | null
+  intake_email: string | null
+  letter_job_title: string | null
   stripe_customer_email: string | null
   stripe_checkout_session_id: string | null
   paid_at: string | null
@@ -334,10 +337,19 @@ export default function AdminDashboard() {
                     {order.stripe_checkout_session_id && (
                       <p className="text-xs text-slate-500">Stripe Session: {order.stripe_checkout_session_id}</p>
                     )}
+                    {order.intake_full_name && (
+                      <p className="text-sm text-slate-700">Kund: {order.intake_full_name}</p>
+                    )}
+                    {order.intake_email && (
+                      <p className="text-sm text-slate-700">Intake e-post: {order.intake_email}</p>
+                    )}
                     <p className="text-xs text-slate-500">
                       {order.stripe_customer_email || "Ingen e-post"} • {order.created_at ? new Date(order.created_at).toLocaleString() : ""}
                     </p>
                     {order.target_role && <p className="text-sm text-slate-700">Målroll: {order.target_role}</p>}
+                    {!order.target_role && order.letter_job_title && (
+                      <p className="text-sm text-slate-700">Målroll: {order.letter_job_title}</p>
+                    )}
                     {order.target_job_link && (
                       <a className="text-sm text-blue-700 underline break-all" href={order.target_job_link} target="_blank" rel="noreferrer">
                         {order.target_job_link}

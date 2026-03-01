@@ -1,9 +1,12 @@
+import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { extractKeywordsFromCV } from "@/lib/categorization";
 
-type RawJobRow = Record<string, unknown>;
+type ScoreMode = "jobbnu" | "ats" | "taxonomy";
+type MatchAction = "base_pool" | "score_sort";
+
 type ProfileRow = {
   profile_vector: number[] | null;
   location_lat: number | null;
@@ -14,30 +17,66 @@ type ProfileRow = {
   occupation_field_candidates: string[] | null;
   candidate_text_vector: string | null;
 };
-type JobMetaRow = {
-  id: string;
-  location: string | null;
-  location_lat: number | null;
-  location_lon: number | null;
-  company_size: string | null;
-  work_modality: string | null;
-  job_url: string | null;
-  webpage_url: string | null;
+
+type RawJobRow = {
+  id?: string;
+  title?: string;
+  company?: string;
+  city?: string;
+  description?: string;
+  job_url?: string | null;
+  webpage_url?: string | null;
+  occupation_field_label?: string | null;
+  occupation_group_label?: string | null;
+  occupation_label?: string | null;
+  distance_m?: number | null;
+  vector_similarity?: number | null;
+  keyword_hit_count?: number | null;
+  keyword_total_count?: number | null;
+  keyword_hit_rate?: number | null;
+  keyword_miss_rate?: number | null;
+  jobbnu_score?: number | null;
+  ats_score?: number | null;
+  taxonomy_score?: number | null;
+  display_score?: number | null;
+  skills_data?: {
+    required_skills?: string[];
+    preferred_skills?: string[];
+  } | null;
+};
+
+type DashboardStateRow = {
+  base_job_ids: string[] | null;
+};
+
+type DashboardCacheRow = {
+  match_results: {
+    jobs?: ReturnType<typeof normalizeJobRow>[];
+    score_mode?: ScoreMode;
+    matchedAt?: string;
+    base_ready?: boolean;
+  } | null;
+  updated_at: string;
 };
 
 const OCCUPATION_FIELD_ALIASES: Record<string, string[]> = {
-  // Legacy/internal labels -> current job_ads labels
   Transport: ["Transport, distribution, lager"],
   "Tekniskt arbete": ["Yrken med teknisk inriktning", "Installation, drift, underhåll"],
   "Socialt arbete": ["Yrken med social inriktning"],
   "Pedagogiskt arbete": ["Pedagogik"],
 };
 
-function asNumber(value: unknown): number | null {
-  if (typeof value === "number") return value;
-  if (value == null) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+const DASHBOARD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const DASHBOARD_POOL_LIMIT = 2000;
+
+function toScoreMode(value: unknown): ScoreMode {
+  if (value === "ats" || value === "taxonomy") return value;
+  return "jobbnu";
+}
+
+function toMatchAction(value: unknown): MatchAction {
+  if (value === "base_pool") return "base_pool";
+  return "score_sort";
 }
 
 function normalizeOccupationFields(value: unknown): string[] | null {
@@ -48,11 +87,7 @@ function normalizeOccupationFields(value: unknown): string[] | null {
     if (typeof raw !== "string") continue;
     const label = raw.trim();
     if (!label) continue;
-
-    // Keep original label as-is to preserve exact matches where available.
     normalized.add(label);
-
-    // Add mapped labels for taxonomy drift compatibility.
     for (const mapped of OCCUPATION_FIELD_ALIASES[label] ?? []) {
       normalized.add(mapped);
     }
@@ -77,51 +112,34 @@ function buildKeywords(profile: ProfileRow): string[] | null {
   return keywords.length > 0 ? keywords : null;
 }
 
-function normalizeGraniteJob(
-  row: RawJobRow,
-  metaById: Map<string, JobMetaRow>
-) {
-  const id = String(row.id ?? "");
-  const meta = metaById.get(id);
-  const profileScore = asNumber(row.vector_similarity ?? row.s_profile ?? row.similarity);
-  const finalScore = asNumber(row.final_score ?? profileScore);
-
-  return {
-    id,
-    headline: (row.title as string) ?? (row.headline as string) ?? "",
-    location: meta?.location ?? (row.city as string) ?? (row.location as string) ?? null,
-    location_lat: meta?.location_lat ?? asNumber(row.location_lat ?? row.lat),
-    location_lon: meta?.location_lon ?? asNumber(row.location_lon ?? row.lon),
-    company_size: meta?.company_size ?? null,
-    work_modality: meta?.work_modality ?? null,
-    job_url: meta?.job_url ?? null,
-    webpage_url: meta?.webpage_url ?? null,
-    s_profile: profileScore,
-    s_wish: asNumber(row.s_wish),
-    final_score: finalScore,
-  };
+function hashJobIds(ids: string[]) {
+  return createHash("sha1").update(ids.join("|")).digest("hex");
 }
 
-function normalizeJob(row: RawJobRow) {
-  const profileScore = asNumber(row.s_profile ?? row.similarity);
-  const finalScore = asNumber(row.final_score ?? row.s_profile ?? row.similarity);
+function normalizeJobRow(row: RawJobRow) {
   return {
     id: String(row.id ?? ""),
-    headline: (row.headline as string) ?? (row.title as string) ?? "",
-    location: (row.location as string) ?? (row.city as string) ?? null,
-    location_lat: asNumber(row.location_lat ?? row.lat),
-    location_lon: asNumber(row.location_lon ?? row.lon),
-    company_size: (row.company_size as string) ?? null,
-    work_modality: (row.work_modality as string) ?? null,
-    job_url: (row.job_url as string) ?? null,
-    webpage_url: (row.webpage_url as string) ?? null,
-    s_profile: profileScore,
-    s_wish: asNumber(row.s_wish),
-    final_score: finalScore,
+    headline: row.title ?? "",
+    location: row.city ?? null,
+    job_url: row.job_url ?? null,
+    webpage_url: row.webpage_url ?? null,
+    occupation_field_label: row.occupation_field_label ?? null,
+    occupation_group_label: row.occupation_group_label ?? null,
+    distance_m: row.distance_m ?? null,
+    vector_similarity: row.vector_similarity ?? null,
+    keyword_hit_count: row.keyword_hit_count ?? null,
+    keyword_total_count: row.keyword_total_count ?? null,
+    keyword_hit_rate: row.keyword_hit_rate ?? null,
+    keyword_miss_rate: row.keyword_miss_rate ?? null,
+    jobbnu_score: row.jobbnu_score ?? null,
+    ats_score: row.ats_score ?? null,
+    taxonomy_score: row.taxonomy_score ?? null,
+    display_score: row.display_score ?? null,
+    final_score: row.display_score ?? null,
+    skills_data: row.skills_data ?? null,
   };
 }
 
-// Helper to create client
 const createSupabaseRouteHandlerClient = async () => {
   const cookieStore = await cookies();
   return createServerClient(
@@ -135,9 +153,64 @@ const createSupabaseRouteHandlerClient = async () => {
   );
 };
 
+async function getDashboardCache(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string,
+  scoreMode: ScoreMode,
+  cacheKey: string
+) {
+  const { data } = await supabase
+    .from("dashboard_match_cache")
+    .select("match_results, updated_at")
+    .eq("user_id", userId)
+    .eq("score_mode", scoreMode)
+    .eq("cache_key", cacheKey)
+    .maybeSingle();
+
+  const row = data as DashboardCacheRow | null;
+  if (!row?.match_results || !row.updated_at) return null;
+  const updatedAtMs = new Date(row.updated_at).getTime();
+  if (!Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs > DASHBOARD_CACHE_TTL_MS) {
+    return null;
+  }
+  return {
+    ...row.match_results,
+    cached: true,
+    cachedAt: row.updated_at,
+  };
+}
+
+async function saveDashboardCache(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string,
+  scoreMode: ScoreMode,
+  cacheKey: string,
+  payload: {
+    jobs: ReturnType<typeof normalizeJobRow>[];
+    score_mode: ScoreMode;
+    matchedAt: string;
+    base_ready: boolean;
+  }
+) {
+  await supabase
+    .from("dashboard_match_cache")
+    .upsert(
+      {
+        user_id: userId,
+        score_mode: scoreMode,
+        cache_key: cacheKey,
+        match_results: payload,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,score_mode,cache_key" }
+    );
+}
+
 export async function POST(req: Request) {
   const supabase = await createSupabaseRouteHandlerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const body = await req.json().catch(() => ({}));
 
   if (!user) {
@@ -145,7 +218,6 @@ export async function POST(req: Request) {
   }
 
   try {
-    // 1. Fetch the user's profile to get vector + filters
     const { data: profile, error: profileError } = await supabase
       .from("candidate_profiles")
       .select(
@@ -155,7 +227,6 @@ export async function POST(req: Request) {
       .single();
 
     const typedProfile = profile as ProfileRow | null;
-
     if (profileError || !typedProfile) {
       return NextResponse.json(
         { error: "Profil hittades inte. Vänligen ladda upp ett CV på din profilsida." },
@@ -163,24 +234,17 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!typedProfile.profile_vector) {
-      return NextResponse.json(
-        { error: "Din profil har uppdaterats och analyseras nu. Vänligen vänta 10-30 sekunder och försök igen." },
-        { status: 400 }
-      );
-    }
+    const matchAction = toMatchAction(body?.match_action);
+    const scoreMode = toScoreMode(body?.score_mode);
 
-    // Allow request payload to override profile geo (UI city picker)
     const lat = typeof body?.lat === "number" ? body.lat : typedProfile.location_lat;
     const lon = typeof body?.lon === "number" ? body.lon : typedProfile.location_lon;
     const radiusKm = Number(body?.radius_km ?? typedProfile.commute_radius_km ?? 40);
+    const radiusM = Math.max(1, Math.round(radiusKm * 1000));
     const normalizedOccupationFields = mergeOccupationFields(
       typedProfile.primary_occupation_field,
       typedProfile.occupation_field_candidates
     );
-    const cvKeywords = buildKeywords(typedProfile);
-    // category_tags now holds occupation_group_label values (set by webhook after group expansion).
-    // Pass as group_names for a hard SQL filter; falls back gracefully if null or empty.
     const groupNames =
       typedProfile.category_tags && typedProfile.category_tags.length > 0
         ? typedProfile.category_tags
@@ -193,130 +257,134 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2) CV-only Granite scoring (vector + keyword + group hard-filter)
-    const graniteBaseParams = {
-      candidate_vector: typedProfile.profile_vector,
-      candidate_lat: lat,
-      candidate_lon: lon,
-      radius_m: Math.max(1, Math.round(radiusKm * 1000)),
-      category_names: normalizedOccupationFields,
-      cv_keywords: cvKeywords,
-      limit_count: 100,
-    };
-
-    // Tier 1: group-level hard filter (occupation_group_label exact match)
-    const granitePrimary = await supabase.rpc("match_jobs_granite", {
-      ...graniteBaseParams,
-      group_names: groupNames,
-    });
-
-    let graniteRows = (granitePrimary.data as RawJobRow[] | null) ?? null;
-    if (granitePrimary.error) {
-      console.warn("match_jobs_granite failed, falling back to legacy matcher:", granitePrimary.error.message);
-    }
-
-    // Tier 2: group filter too few results (< 10) → drop group, keep field-level soft boost
-    if (!granitePrimary.error && (graniteRows ?? []).length < 10 && groupNames) {
-      const graniteFieldOnly = await supabase.rpc("match_jobs_granite", {
-        ...graniteBaseParams,
-        group_names: null,
-      });
-      if (!graniteFieldOnly.error) {
-        graniteRows = (graniteFieldOnly.data as RawJobRow[] | null) ?? graniteRows;
-      }
-    }
-
-    // Tier 3: field filter also empty → fully open vector search
-    if (!granitePrimary.error && (graniteRows ?? []).length === 0 && normalizedOccupationFields) {
-      const graniteBroad = await supabase.rpc("match_jobs_granite", {
-        ...graniteBaseParams,
-        category_names: null,
-        group_names: null,
-      });
-      if (!graniteBroad.error) {
-        graniteRows = (graniteBroad.data as RawJobRow[] | null) ?? graniteRows;
-      }
-    }
-
-    if (!granitePrimary.error && (graniteRows ?? []).length > 0) {
-      const ids = (graniteRows ?? []).map((row) => String(row.id ?? "")).filter(Boolean);
-      const metaById = new Map<string, JobMetaRow>();
-
-      if (ids.length > 0) {
-        const { data: metaRows } = await supabase
-          .from("job_ads")
-          .select("id, location, location_lat, location_lon, company_size, work_modality, job_url, webpage_url")
-          .in("id", ids);
-
-        for (const row of (metaRows ?? []) as JobMetaRow[]) {
-          metaById.set(String(row.id), row);
-        }
-      }
-
-      const jobs = (graniteRows ?? [])
-        .map((row) => normalizeGraniteJob(row, metaById))
-        .slice(0, 50);
-      return NextResponse.json({ jobs });
-    }
-
-    // 3) Legacy fallback chain
-    const primary = await supabase.rpc("match_jobs_with_occupation_filter", {
-      candidate_vector: typedProfile.profile_vector,
-      candidate_lat: lat,
-      candidate_lon: lon,
-      radius_m: Math.max(1, Math.round(radiusKm * 1000)),
-      occupation_fields: normalizedOccupationFields,
-      limit_count: 50,
-    });
-
-    let rows = (primary.data as RawJobRow[] | null) ?? null;
-    if (primary.error) {
-      console.warn("match_jobs_with_occupation_filter failed, falling back to match_jobs_initial:", primary.error.message);
-
-      const fallback = await supabase.rpc("match_jobs_initial", {
-        v_profile: typedProfile.profile_vector,
-        u_lat: lat,
-        u_lon: lon,
-        radius_km: radiusKm,
-        top_k: 50,
-        candidate_tags: typedProfile.category_tags,
-        filter_occupation_fields: normalizedOccupationFields,
-      });
-
-      if (fallback.error) {
-        throw new Error(
-          `RPC failed: ${primary.error.message}; fallback failed: ${fallback.error.message}`
-        );
-      }
-
-      rows = (fallback.data as RawJobRow[] | null) ?? [];
-    }
-
-    // If strict occupation filtering yields no rows, retry without occupation filter.
-    if ((rows ?? []).length === 0 && normalizedOccupationFields) {
-      const broad = await supabase.rpc("match_jobs_with_occupation_filter", {
-        candidate_vector: typedProfile.profile_vector,
+    if (matchAction === "base_pool") {
+      const { data, error } = await supabase.rpc("fetch_dashboard_taxonomy_pool", {
         candidate_lat: lat,
         candidate_lon: lon,
-        radius_m: Math.max(1, Math.round(radiusKm * 1000)),
-        occupation_fields: null,
-        limit_count: 50,
+        radius_m: radiusM,
+        group_names: groupNames,
+        category_names: normalizedOccupationFields,
+        limit_count: DASHBOARD_POOL_LIMIT,
       });
 
-      if (!broad.error) {
-        rows = (broad.data as RawJobRow[] | null) ?? rows;
-      } else {
-        console.warn(
-          "Unfiltered fallback failed:",
-          broad.error.message
-        );
+      if (error) {
+        return NextResponse.json({ error: `fetch_dashboard_taxonomy_pool failed: ${error.message}` }, { status: 500 });
       }
+
+      const rows = ((data as RawJobRow[] | null) ?? []).map(normalizeJobRow);
+      const baseIds = rows.map((row) => row.id).filter(Boolean);
+
+      await supabase
+        .from("dashboard_match_state")
+        .upsert(
+          {
+            user_id: user.id,
+            base_job_ids: baseIds,
+            ai_manager_job_ids: [],
+            ats_job_ids: [],
+            taxonomy_job_ids: [],
+            query_meta: {
+              lat,
+              lon,
+              radius_km: radiusKm,
+              group_names: groupNames ?? [],
+              category_names: normalizedOccupationFields ?? [],
+            },
+            base_updated_at: new Date().toISOString(),
+            ai_manager_updated_at: null,
+            ats_updated_at: null,
+            taxonomy_updated_at: null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
+
+      return NextResponse.json({
+        jobs: rows,
+        matchedAt: new Date().toISOString(),
+        base_ready: true,
+      });
     }
 
-    const jobs = (rows ?? []).map(normalizeJob);
-    return NextResponse.json({ jobs });
-  } catch (e: any) {
-    console.error("Match for-user error:", e.message);
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    if (!typedProfile.profile_vector) {
+      return NextResponse.json(
+        { error: "Din profil har uppdaterats och analyseras nu. Vänligen vänta 10-30 sekunder och försök igen." },
+        { status: 400 }
+      );
+    }
+
+    const { data: state } = await supabase
+      .from("dashboard_match_state")
+      .select("base_job_ids")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const typedState = state as DashboardStateRow | null;
+    const baseJobIds = typedState?.base_job_ids ?? [];
+    if (baseJobIds.length === 0) {
+      return NextResponse.json(
+        { error: "Klicka på 'Matcha jobb' först för att bygga jobbpools-listan." },
+        { status: 400 }
+      );
+    }
+
+    const baseHash = hashJobIds(baseJobIds);
+    const cacheKey = JSON.stringify({ baseHash, scoreMode });
+    const cached = await getDashboardCache(supabase, user.id, scoreMode, cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
+    }
+
+    const cvKeywords = buildKeywords(typedProfile);
+    const { data: sortedData, error: sortedError } = await supabase.rpc("sort_dashboard_pool_by_mode", {
+      candidate_vector: typedProfile.profile_vector,
+      cv_keywords: cvKeywords,
+      job_ids: baseJobIds,
+      group_names: groupNames,
+      category_names: normalizedOccupationFields,
+      limit_count: DASHBOARD_POOL_LIMIT,
+      score_mode: scoreMode,
+    });
+
+    if (sortedError) {
+      return NextResponse.json({ error: `sort_dashboard_pool_by_mode failed: ${sortedError.message}` }, { status: 500 });
+    }
+
+    const rows = ((sortedData as RawJobRow[] | null) ?? []).map(normalizeJobRow);
+    const sortedIds = rows.map((row) => row.id).filter(Boolean);
+    const nowIso = new Date().toISOString();
+
+    const statePatch: Record<string, unknown> = {
+      updated_at: nowIso,
+    };
+    if (scoreMode === "jobbnu") {
+      statePatch.ai_manager_job_ids = sortedIds;
+      statePatch.ai_manager_updated_at = nowIso;
+    } else if (scoreMode === "ats") {
+      statePatch.ats_job_ids = sortedIds;
+      statePatch.ats_updated_at = nowIso;
+    } else {
+      statePatch.taxonomy_job_ids = sortedIds;
+      statePatch.taxonomy_updated_at = nowIso;
+    }
+
+    await supabase
+      .from("dashboard_match_state")
+      .update(statePatch)
+      .eq("user_id", user.id);
+
+    const payload = {
+      jobs: rows,
+      score_mode: scoreMode,
+      matchedAt: nowIso,
+      base_ready: true,
+    };
+    await saveDashboardCache(supabase, user.id, scoreMode, cacheKey, payload);
+
+    return NextResponse.json(payload);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    console.error("Match for-user error:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

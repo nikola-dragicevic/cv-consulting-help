@@ -22,6 +22,7 @@ import InteractiveJobMap from "@/components/ui/InteractiveJobMap"
 import JobCategoriesSection from "@/components/ui/JobCategoriesSection"
 import { format } from "date-fns"
 import { useLanguage, type SiteLanguage } from "@/components/i18n/LanguageProvider"
+import { isAdminUser } from "@/lib/admin"
 
 /* ============================================================
    Types
@@ -439,6 +440,7 @@ export default function UnifiedLandingPage() {
   const [intakeSavedMessage, setIntakeSavedMessage] = useState("")
   const [intakeSubmitting, setIntakeSubmitting] = useState(false)
   const [cvIntakeDraft, setCvIntakeDraft] = useState<CvIntakeDraft>(() => createInitialCvIntakeDraft(""))
+  const canBypassPayment = isAdminUser(user)
 
   // Freemium
   const jobLimit = user ? 50 : 20
@@ -684,7 +686,7 @@ export default function UnifiedLandingPage() {
     setCvIntakeDraft((prev) => ({ ...prev, education2: { ...prev.education2, [key]: value } }))
   }
 
-  const saveCvIntake = async () => {
+  const saveCvIntake = async (bypassPayment = false) => {
     if (!selectedPackage) return
     const validationError = validateCvIntakeForCheckout(cvIntakeDraft, selectedPackage.flow, lang)
     if (validationError) {
@@ -715,10 +717,15 @@ export default function UnifiedLandingPage() {
           intakeType: selectedPackage.flow,
           targetJobLink: cvIntakeDraft.targetJobLink || null,
           intakePayload: payload,
+          bypassPayment,
         })
       })
 
       const json = await res.json()
+      if (json?.bypassed) {
+        setIntakeSavedMessage(t("Testorder skapad utan betalning.", "Test order created without payment."))
+        return
+      }
       if (json?.url) {
         window.location.href = json.url
         return
@@ -1416,7 +1423,12 @@ export default function UnifiedLandingPage() {
               <Button type="button" variant="outline" onClick={() => setShowIntakeModal(false)}>
                 {t("Stäng", "Close")}
               </Button>
-              <Button type="button" className="bg-blue-600 hover:bg-blue-700" onClick={saveCvIntake} disabled={intakeSubmitting}>
+              {canBypassPayment && (
+                <Button type="button" variant="secondary" onClick={() => saveCvIntake(true)} disabled={intakeSubmitting}>
+                  {intakeSubmitting ? t("Skapar testorder...", "Creating test order...") : t("Admin: Skapa testorder utan betalning", "Admin: Create test order without payment")}
+                </Button>
+              )}
+              <Button type="button" className="bg-blue-600 hover:bg-blue-700" onClick={() => saveCvIntake(false)} disabled={intakeSubmitting}>
                 {intakeSubmitting ? t("Startar betalning...", "Starting payment...") : t("Fortsätt till betalning", "Continue to payment")}
               </Button>
             </div>

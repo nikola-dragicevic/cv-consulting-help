@@ -526,6 +526,38 @@ export default function JobCategoriesSection() {
     )
   }
 
+  const apiCategoriesByDisplayName = new Map(
+    categories.map((category) => [CATEGORY_NAME_MAP[category.name] || category.name, category])
+  )
+
+  const taxonomyCategories: CategoryData[] = Object.entries(CATEGORY_STRUCTURE).map(([name, taxonomySubcategories]) => {
+    const apiCategory = apiCategoriesByDisplayName.get(name)
+    const subcategoryCounts = new Map(
+      (apiCategory?.subcategories || []).map((subcategory) => [subcategory.name, subcategory.count])
+    )
+
+    const mergedSubcategories = taxonomySubcategories.map((subcategoryName) => ({
+      name: subcategoryName,
+      count: subcategoryCounts.get(subcategoryName) || 0
+    }))
+
+    const extraSubcategories = (apiCategory?.subcategories || []).filter(
+      (subcategory) => !taxonomySubcategories.includes(subcategory.name)
+    )
+
+    return {
+      name,
+      count: apiCategory?.count || 0,
+      subcategories: [...mergedSubcategories, ...extraSubcategories]
+    }
+  })
+
+  const extraCategories: CategoryData[] = categories
+    .map((category) => ({ ...category, name: CATEGORY_NAME_MAP[category.name] || category.name }))
+    .filter((category) => !(category.name in CATEGORY_STRUCTURE))
+
+  const visibleCategories = [...taxonomyCategories, ...extraCategories]
+
   return (
     <section className="py-20 bg-white">
       <div className="container mx-auto px-4">
@@ -540,13 +572,8 @@ export default function JobCategoriesSection() {
 
         <div className="max-w-5xl mx-auto">
           <Accordion type="single" collapsible className="space-y-4">
-            {categories.map((category, index) => {
-              const mappedName = CATEGORY_NAME_MAP[category.name] || category.name
-              const fallbackSubcategories = (CATEGORY_STRUCTURE[mappedName] || []).map((name) => ({ name, count: 0 }))
-              const subcategories = (category.subcategories && category.subcategories.length > 0)
-                ? category.subcategories
-                : fallbackSubcategories
-
+            {visibleCategories.map((category, index) => {
+              const subcategories = category.subcategories || []
               return (
               <AccordionItem
                 key={category.name}
@@ -560,7 +587,7 @@ export default function JobCategoriesSection() {
                         <Briefcase className="h-5 w-5 text-blue-600" />
                       </div>
                       <h2 className="text-xl font-semibold text-slate-900 text-left">
-                        {mappedName}
+                        {category.name}
                       </h2>
                     </div>
                     <Badge variant="secondary" className="ml-4 text-base px-4 py-1">
@@ -582,11 +609,9 @@ export default function JobCategoriesSection() {
                             className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
                           >
                             <span className="text-sm text-slate-700 flex-1">{subcategory.name}</span>
-                            {subcategory.count > 0 && (
-                              <Badge variant="outline" className="ml-2 text-xs">
-                                {subcategory.count}
-                              </Badge>
-                            )}
+                            <Badge variant="outline" className="ml-2 text-xs">
+                              {subcategory.count}
+                            </Badge>
                           </div>
                         )
                       })}

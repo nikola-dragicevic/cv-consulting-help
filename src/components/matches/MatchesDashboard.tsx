@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Building2, Briefcase, ChevronDown, ChevronRight, Crown, MapPin, RefreshCw, Sparkles, User as UserIcon, X } from "lucide-react";
+import { Bookmark, BookmarkCheck, Building2, Briefcase, ChevronDown, ChevronRight, Crown, MapPin, RefreshCw, Sparkles, User as UserIcon, X } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 
 import { analyzeSkillGap, extractCandidateSkills } from "@/lib/gapAnalysis";
@@ -29,8 +29,13 @@ interface Job {
   matchReasons?: string[];
   vector_similarity?: number;
   keyword_score?: number;
+  keyword_hit_rate?: number;
   category_bonus?: number;
   final_score?: number;
+  display_score?: number;
+  jobbnu_score?: number;
+  ats_score?: number;
+  taxonomy_score?: number;
   manager_score?: number;
   manager_explanation?: string;
   job_url?: string | null;
@@ -70,6 +75,10 @@ const EMPTY_DASHBOARD_RESULTS: MatchResults = {
   },
 };
 
+type ScoreMode = "jobbnu" | "ats" | "taxonomy";
+
+const SCORE_MODE_STORAGE_KEY = "dashboard-score-mode";
+
 export function MatchesDashboard() {
   const { t } = useLanguage();
   const [user, setUser] = useState<User | null>(null);
@@ -99,6 +108,9 @@ export function MatchesDashboard() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [subscriptionCheckoutLoading, setSubscriptionCheckoutLoading] = useState(false);
+  const [savedJobIds, setSavedJobIds] = useState<Set<string>>(new Set());
+  const [selectedScoreMode, setSelectedScoreMode] = useState<ScoreMode>("jobbnu");
+  const [hasRunMatchOnce, setHasRunMatchOnce] = useState(false);
 
   useEffect(() => {
     const supabase = getBrowserSupabase();
@@ -119,6 +131,34 @@ export function MatchesDashboard() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    const key = user?.id ? `saved-jobs:${user.id}` : "saved-jobs:guest";
+    try {
+      const raw = window.localStorage.getItem(key);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      const ids = Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+      setSavedJobIds(new Set(ids));
+    } catch {
+      setSavedJobIds(new Set());
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    const key = user?.id ? `saved-jobs:${user.id}` : "saved-jobs:guest";
+    window.localStorage.setItem(key, JSON.stringify(Array.from(savedJobIds)));
+  }, [savedJobIds, user?.id]);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(SCORE_MODE_STORAGE_KEY);
+    if (raw === "jobbnu" || raw === "ats" || raw === "taxonomy") {
+      setSelectedScoreMode(raw);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SCORE_MODE_STORAGE_KEY, selectedScoreMode);
+  }, [selectedScoreMode]);
 
   async function fetchSubscriptionStatus() {
     try {
@@ -242,7 +282,9 @@ export function MatchesDashboard() {
     }
   }
 
-  async function runLegacyMatch() {
+  async function runLegacyMatch(params?: { action?: "base_pool" | "score_sort"; scoreMode?: ScoreMode }) {
+    const action = params?.action ?? "base_pool";
+    const scoreMode = params?.scoreMode ?? selectedScoreMode;
     try {
       setLegacyActionLoading(true);
       setError(null);
@@ -263,11 +305,19 @@ export function MatchesDashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           wholeSweden
-            ? { lat: 62, lon: 15, radius_km: 9999 }
+            ? {
+                lat: 62,
+                lon: 15,
+                radius_km: 9999,
+                match_action: action,
+                ...(action === "score_sort" ? { score_mode: scoreMode } : {}),
+              }
             : {
                 lat: profileLocation!.location_lat,
                 lon: profileLocation!.location_lon,
                 radius_km: radiusForQuery,
+                match_action: action,
+                ...(action === "score_sort" ? { score_mode: scoreMode } : {}),
               }
         ),
       });
@@ -290,8 +340,9 @@ export function MatchesDashboard() {
           adjacent: [],
         },
       }));
-      setCached(false);
-      setCachedAt(new Date().toISOString());
+      setCached(Boolean(data?.cached));
+      setCachedAt(data?.cachedAt || data?.matchedAt || new Date().toISOString());
+      setHasRunMatchOnce(true);
     } catch (err) {
       console.error(err);
       setError("Kunde inte hämta jobbförslag.");
@@ -366,10 +417,20 @@ export function MatchesDashboard() {
   if (!results) return null;
 
   const { buckets } = results;
+  const allJobs = dedupeJobsById([...buckets.current, ...buckets.target, ...buckets.adjacent]).sort(
+    (a, b) => (getDisplayScore(b, selectedScoreMode) ?? 0) - (getDisplayScore(a, selectedScoreMode) ?? 0)
+  );
+  const savedJobs = allJobs.filter((job) => savedJobIds.has(job.id));
   const totalMatches = (buckets.current?.length || 0) + (buckets.target?.length || 0) + (buckets.adjacent?.length || 0);
-  const topMatch = [buckets.current?.[0], buckets.target?.[0], buckets.adjacent?.[0]]
+  const topMatch = [allJobs?.[0]]
     .filter(Boolean)
-    .sort((a, b) => (b?.final_score || 0) - (a?.final_score || 0))[0];
+    .sort((a, b) => (getDisplayScore(b, selectedScoreMode) ?? 0) - (getDisplayScore(a, selectedScoreMode) ?? 0))[0];
+  const topMatchScore = topMatch ? getDisplayScore(topMatch, selectedScoreMode) : null;
+  const scoreModeLabel = selectedScoreMode === "jobbnu"
+    ? "JobbNu"
+    : selectedScoreMode === "ats"
+      ? "ATS"
+      : "Taxonomy";
   const hasProfileGeo =
     typeof profileLocation?.location_lat === "number" &&
     typeof profileLocation?.location_lon === "number";
@@ -377,6 +438,22 @@ export function MatchesDashboard() {
   const primaryMatchLabel = legacyActionLoading ? t("Söker...", "Searching...") : canRunMatch ? t("Matcha jobb", "Match jobs") : t("Välj ort", "Choose area");
   const profileAddressLabel = [profileLocation?.street, profileLocation?.city].filter(Boolean).join(", ");
   const visibleJobLimit = hasActiveSubscription ? null : 4;
+  const toggleSavedJob = (jobId: string) => {
+    setSavedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) {
+        next.delete(jobId);
+      } else {
+        next.add(jobId);
+      }
+      return next;
+    });
+  };
+  const handleScoreModeChange = (mode: ScoreMode) => {
+    setSelectedScoreMode(mode);
+    if (!canRunMatch || legacyActionLoading || !hasRunMatchOnce) return;
+    void runLegacyMatch({ action: "score_sort", scoreMode: mode });
+  };
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_#dbeafe_0%,_#f8fafc_38%,_#f8fafc_100%)]">
@@ -450,8 +527,8 @@ export function MatchesDashboard() {
               <div className="flex flex-wrap items-center gap-2">
                 <MetricPill label={t("Totalt", "Total")} value={String(totalMatches)} />
                 <MetricPill
-                  label={t("Top ATS", "Top ATS")}
-                  value={topMatch?.final_score !== undefined ? `${Math.round(topMatch.final_score * 100)}%` : "-"}
+                  label={t(`Top ${scoreModeLabel}`, `Top ${scoreModeLabel}`)}
+                  value={topMatchScore !== null ? `${Math.round(topMatchScore)}%` : "-"}
                 />
                 <MetricPill label={t("Plan", "Plan")} value={subscriptionLoading ? "..." : hasActiveSubscription ? "Premium" : "Free"} />
                 {isAdmin && (
@@ -463,7 +540,9 @@ export function MatchesDashboard() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  onClick={runLegacyMatch}
+                  onClick={() => {
+                    void runLegacyMatch({ action: "base_pool" });
+                  }}
                   disabled={legacyActionLoading || !canRunMatch}
                   className="min-w-[132px]"
                 >
@@ -508,6 +587,30 @@ export function MatchesDashboard() {
             </div>
           )}
 
+          <div className="border-t border-slate-200 bg-white px-5 py-4">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {t("Visningsläge för matchscore", "Match score view mode")}
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {[
+                { mode: "jobbnu" as const, label: "AI Manager sortering" },
+                { mode: "ats" as const, label: "ATS score" },
+                { mode: "taxonomy" as const, label: "Taxonomy fit" },
+              ].map((option) => (
+                <Button
+                  key={option.mode}
+                  type="button"
+                  variant={selectedScoreMode === option.mode ? "default" : "outline"}
+                  className={`h-11 text-sm font-semibold ${selectedScoreMode === option.mode ? "bg-slate-900 text-white hover:bg-slate-800" : "border-slate-300"}`}
+                  onClick={() => handleScoreModeChange(option.mode)}
+                  disabled={legacyActionLoading || !hasRunMatchOnce}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
           {cachedAt && (
             <div className="border-t border-slate-200 bg-slate-50/90 px-5 py-3 text-sm text-slate-700">
               <span className="font-medium">{cached ? t("Cache", "Cache") : t("Senast uppdaterad", "Last updated")}:</span>{" "}
@@ -535,27 +638,39 @@ export function MatchesDashboard() {
           )}
         </div>
 
-        <Tabs defaultValue="current" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 rounded-xl bg-slate-100 p-2 sm:grid-cols-3">
-            <TabsTrigger value="current" className="rounded-lg py-2">
-              {t("Liknande nuvarande", "Similar current")} ({buckets.current?.length || 0})
+        <Tabs defaultValue="all" className="w-full">
+          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 rounded-xl bg-slate-100 p-2 sm:grid-cols-2">
+            <TabsTrigger value="all" className="rounded-lg py-2">
+              {t("Matchade jobb", "Matched jobs")} ({allJobs.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="target" className="rounded-lg py-2">
-              {t("Karriärutveckling", "Career growth")} ({buckets.target?.length || 0})
-            </TabsTrigger>
-            <TabsTrigger value="adjacent" className="rounded-lg py-2">
-              {t("Relaterade områden", "Related areas")} ({buckets.adjacent?.length || 0})
+            <TabsTrigger value="saved" className="rounded-lg py-2">
+              {t("Sparade jobb", "Saved jobs")} ({savedJobs.length || 0})
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="current" className="mt-4">
-            <JobLane jobs={buckets.current} type="current" candidateCvText={candidateCvText} visibleLimit={visibleJobLimit} hasSubscription={hasActiveSubscription} />
+          <TabsContent value="all" className="mt-4">
+            <JobLane
+              jobs={allJobs}
+              type="all"
+              scoreMode={selectedScoreMode}
+              candidateCvText={candidateCvText}
+              visibleLimit={visibleJobLimit}
+              hasSubscription={hasActiveSubscription}
+              savedJobIds={savedJobIds}
+              onToggleSavedJob={toggleSavedJob}
+            />
           </TabsContent>
-          <TabsContent value="target" className="mt-4">
-            <JobLane jobs={buckets.target} type="target" candidateCvText={candidateCvText} visibleLimit={visibleJobLimit} hasSubscription={hasActiveSubscription} />
-          </TabsContent>
-          <TabsContent value="adjacent" className="mt-4">
-            <JobLane jobs={buckets.adjacent} type="adjacent" candidateCvText={candidateCvText} visibleLimit={visibleJobLimit} hasSubscription={hasActiveSubscription} />
+          <TabsContent value="saved" className="mt-4">
+            <JobLane
+              jobs={savedJobs}
+              type="saved"
+              scoreMode={selectedScoreMode}
+              candidateCvText={candidateCvText}
+              visibleLimit={visibleJobLimit}
+              hasSubscription={hasActiveSubscription}
+              savedJobIds={savedJobIds}
+              onToggleSavedJob={toggleSavedJob}
+            />
           </TabsContent>
         </Tabs>
       </div>
@@ -600,15 +715,21 @@ export function MatchesDashboard() {
 function JobLane({
   jobs,
   type,
+  scoreMode,
   candidateCvText,
   visibleLimit,
   hasSubscription,
+  savedJobIds,
+  onToggleSavedJob,
 }: {
   jobs: Job[];
   type: string;
+  scoreMode: ScoreMode;
   candidateCvText?: string;
   visibleLimit: number | null;
   hasSubscription: boolean;
+  savedJobIds: Set<string>;
+  onToggleSavedJob: (jobId: string) => void;
 }) {
   const { t } = useLanguage();
   if (!jobs || jobs.length === 0) {
@@ -619,6 +740,8 @@ function JobLane({
             {type === "current" && t("Inga matchningar för din nuvarande roll än. Fyll i mer information i din profil.", "No matches for your current role yet. Add more information to your profile.")}
             {type === "target" && t("Inga matchningar för din målroll. Fyll i din målroll i profilen för att se resultat.", "No matches for your target role. Fill in your target role in your profile to see results.")}
             {type === "adjacent" && t("Inga matchningar i relaterade områden.", "No matches in related areas.")}
+            {type === "all" && t("Inga jobb hittades ännu.", "No jobs found yet.")}
+            {type === "saved" && t("Du har inga sparade jobb ännu.", "You do not have any saved jobs yet.")}
           </p>
         </CardContent>
       </Card>
@@ -648,9 +771,12 @@ function JobLane({
         <SlimMatchCard
           key={job.id}
           job={job}
+          scoreMode={scoreMode}
           index={index}
           candidateCvText={candidateCvText}
           locked={!hasSubscription && visibleLimit !== null && index >= visibleLimit}
+          saved={savedJobIds.has(job.id)}
+          onToggleSavedJob={onToggleSavedJob}
         />
       ))}
     </div>
@@ -659,14 +785,20 @@ function JobLane({
 
 function SlimMatchCard({
   job,
+  scoreMode,
   index,
   candidateCvText,
   locked = false,
+  saved = false,
+  onToggleSavedJob,
 }: {
   job: Job;
+  scoreMode: ScoreMode;
   index: number;
   candidateCvText?: string;
   locked?: boolean;
+  saved?: boolean;
+  onToggleSavedJob: (jobId: string) => void;
 }) {
   const { t } = useLanguage();
   const [showInsights, setShowInsights] = useState(false);
@@ -677,14 +809,23 @@ function SlimMatchCard({
     return analyzeSkillGap(candidateSkills, job.skills_data);
   }, [showInsights, candidateCvText, job.skills_data]);
 
-  const ats = job.final_score !== undefined ? Math.round(job.final_score * 100) : null;
+  const primaryScore = getDisplayScore(job, scoreMode);
+  const roundedPrimaryScore = primaryScore === null ? null : Math.round(primaryScore);
+  const primaryLabel = scoreMode === "jobbnu" ? "JobbNu Score" : scoreMode === "ats" ? "ATS Score" : "Taxonomy Fit";
+  const primaryCaption = scoreMode === "jobbnu"
+    ? "Semantic + keyword weighted fit"
+    : scoreMode === "ats"
+      ? "Keyword-forward ATS-style fit"
+      : "Taxonomy proximity in your selected scope";
   const managerScore = job.manager_score ?? null;
   const grade = getManagerGrade(managerScore);
   const managerPct = managerScore !== null ? Math.max(0, Math.min(100, Math.round((managerScore / 10) * 100))) : null;
 
   return (
     <Card
-      className={`gap-0 overflow-hidden border-slate-200 bg-white/90 py-0 shadow-sm transition-all ${
+      className={`gap-0 overflow-hidden py-0 shadow-sm transition-all ${
+        saved ? "border-amber-300 bg-amber-50/70" : "border-slate-200 bg-white/90"
+      } ${
         locked ? "opacity-55" : "hover:border-slate-300 hover:shadow-md"
       }`}
       style={{ animationDelay: `${index * 40}ms` }}
@@ -711,9 +852,9 @@ function SlimMatchCard({
                         Grade {grade}
                       </Badge>
                     )}
-                    {ats !== null && (
+                    {roundedPrimaryScore !== null && (
                       <Badge variant="secondary" className="border border-sky-200 bg-sky-50 text-sky-800">
-                        ATS {ats}%
+                        {scoreMode === "jobbnu" ? "JobbNu" : scoreMode === "ats" ? "ATS" : "Taxonomy"} {roundedPrimaryScore}%
                       </Badge>
                     )}
                   </div>
@@ -770,12 +911,12 @@ function SlimMatchCard({
           <div className="border-t border-slate-200 bg-slate-50/90 p-4 lg:border-t-0 lg:border-l">
             <div className="grid gap-3">
               <ScoreScale
-                label="ATS Score"
-                value={ats}
+                label={primaryLabel}
+                value={roundedPrimaryScore}
                 max={100}
                 suffix="%"
                 tone="sky"
-                caption={ats !== null ? ats >= 75 ? "Strong CV-to-job alignment" : ats >= 55 ? "Promising fit" : "Needs review" : "No ATS score yet"}
+                caption={primaryCaption}
               />
               <ScoreScale
                 label="Grade"
@@ -807,6 +948,18 @@ function SlimMatchCard({
                 >
                   {t("Öppna jobb", "Open job")}
                 </Link>
+              </div>
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={locked}
+                  onClick={() => onToggleSavedJob(job.id)}
+                  className={saved ? "border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-200" : ""}
+                >
+                  {saved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
+                  {saved ? t("Sparad", "Saved") : t("Spara jobb", "Save job")}
+                </Button>
               </div>
               {managerPct !== null && (
                 <div className="text-xs text-slate-500">
@@ -928,10 +1081,35 @@ function normalizeLegacyJobs(rows: unknown[] | undefined): Job[] {
       city: typeof row.location === "string" ? row.location : typeof row.city === "string" ? row.city : "",
       final_score: finalScore,
       vector_similarity: typeof row.s_profile === "number" ? row.s_profile : undefined,
+      keyword_score: typeof row.keyword_score === "number" ? row.keyword_score : undefined,
+      category_bonus: typeof row.category_bonus === "number" ? row.category_bonus : undefined,
+      keyword_hit_rate: typeof row.keyword_hit_rate === "number" ? row.keyword_hit_rate : undefined,
+      display_score: typeof row.display_score === "number" ? row.display_score : undefined,
+      jobbnu_score: typeof row.jobbnu_score === "number" ? row.jobbnu_score : undefined,
+      ats_score: typeof row.ats_score === "number" ? row.ats_score : undefined,
+      taxonomy_score: typeof row.taxonomy_score === "number" ? row.taxonomy_score : undefined,
+      occupation_field_label: typeof row.occupation_field_label === "string" ? row.occupation_field_label : undefined,
+      occupation_group_label: typeof row.occupation_group_label === "string" ? row.occupation_group_label : undefined,
       job_url: typeof row.job_url === "string" ? row.job_url : null,
       webpage_url: typeof row.webpage_url === "string" ? row.webpage_url : null,
     };
   });
+}
+
+function getDisplayScore(job: Job, mode: ScoreMode): number | null {
+  const norm = (value: number | undefined) => {
+    if (value === undefined || !Number.isFinite(value)) return null;
+    if (value <= 1) return Math.max(0, Math.min(100, value * 100));
+    return Math.max(0, Math.min(100, value));
+  };
+
+  if (mode === "jobbnu") {
+    return norm(job.display_score) ?? norm(job.jobbnu_score) ?? norm(job.final_score);
+  }
+  if (mode === "ats") {
+    return norm(job.ats_score) ?? norm(job.keyword_hit_rate) ?? norm(job.keyword_score) ?? norm(job.final_score);
+  }
+  return norm(job.taxonomy_score) ?? (job.category_bonus && job.category_bonus > 0 ? 100 : norm(job.final_score));
 }
 
 function buildRefinePayload(
@@ -982,4 +1160,15 @@ function getIntentLabel(intent: string): string {
   };
 
   return labels[intent] || intent;
+}
+
+function dedupeJobsById(rows: Job[]) {
+  const seen = new Map<string, Job>();
+  for (const row of rows) {
+    if (!row.id) continue;
+    if (!seen.has(row.id)) {
+      seen.set(row.id, row);
+    }
+  }
+  return Array.from(seen.values());
 }

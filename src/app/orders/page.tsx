@@ -13,6 +13,8 @@ type DocumentOrder = {
   amount_sek: number
   target_role: string | null
   target_job_link: string | null
+  intake_full_name: string | null
+  intake_email: string | null
   stripe_checkout_session_id: string | null
   paid_at: string | null
   delivery_notes: string | null
@@ -41,7 +43,7 @@ export default function OrdersPage() {
 
       const { data, error } = await supabase
         .from("document_orders")
-        .select("id,status,package_name,package_flow,amount_sek,target_role,target_job_link,stripe_checkout_session_id,paid_at,delivery_notes,delivered_at,created_at")
+        .select("id,status,package_name,package_flow,amount_sek,target_role,target_job_link,intake_full_name,intake_email,stripe_checkout_session_id,paid_at,delivery_notes,delivered_at,created_at")
         .order("created_at", { ascending: false })
 
       if (error) {
@@ -81,6 +83,8 @@ export default function OrdersPage() {
                     <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{order.status}</span>
                   </div>
                   <p className="text-sm text-slate-600">{order.package_flow} • {order.amount_sek} SEK</p>
+                  {order.intake_full_name && <p className="text-sm text-slate-700">Namn: {order.intake_full_name}</p>}
+                  {order.intake_email && <p className="text-sm text-slate-700">E-post: {order.intake_email}</p>}
                   <p className="text-xs text-slate-500">Beställd: {new Date(order.created_at).toLocaleString()}</p>
                   {order.target_role && <p className="text-sm text-slate-700">Målroll: {order.target_role}</p>}
                   {order.target_job_link && (

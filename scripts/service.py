@@ -183,6 +183,10 @@ _GROUP_KEYWORDS: dict[str, list[str]] = {
     "Underhållsmekaniker och maskinreparatörer": [
         "underhållsmekaniker", "maintenance mechanic", "maskinreparatör",
         "preventive maintenance", "corrective maintenance", "predictive maintenance",
+        "traktormekaniker", "tractor mechanic", "maskinunderhåll",
+        "montering", "demontering", "inspektion", "kvalitetskontroll",
+        "bromssystem", "axlar", "verktygshantering", "manual",
+        "rullbana", "bandtransportör",
     ],
     "Industrielektriker": [
         "industrielektriker", "industrial electrician", "panel builder",
@@ -198,6 +202,7 @@ _GROUP_KEYWORDS: dict[str, list[str]] = {
     "Motorfordonsmekaniker och fordonsreparatörer": [
         "bilmekaniker", "fordonsreparatör", "vehicle mechanic", "motor mechanic",
         "fordonsteknik",
+        "tractor mechanic", "traktormekaniker",
     ],
     "Drifttekniker vid värme- och vattenverk": [
         "fjärrvärme", "district heating", "vattenverk", "water treatment",
@@ -208,6 +213,7 @@ _GROUP_KEYWORDS: dict[str, list[str]] = {
         "warehouse manager", "lagerchef", "lageransvarig", "warehouse supervisor",
         "terminal manager", "arbetsledare lager", "lagerledare",
         "warehouse operations", "WMS", "WCS",
+        "godsmottagning", "varumottagning", "inleverans", "utleverans",
     ],
     "Transportledare och transportsamordnare": [
         "transport coordinator", "transportledare", "transportsamordnare",
@@ -216,11 +222,15 @@ _GROUP_KEYWORDS: dict[str, list[str]] = {
     ],
     "Truckförare": [
         "truckförare", "truck operator", "forklift", "truckkort",
-        "gaffeltruckförare",
+        "gaffeltruckförare", "truckkörning", "truckforning",
     ],
     "Lager- och terminalpersonal": [
         "lagerpersonal", "lagerarbetare", "warehouse worker", "lagermedarbetare",
         "terminalarbetare",
+        "godsmottagare", "godsmottagning", "varumottagning",
+        "inventering", "varuförteckning", "varuforteckning",
+        "inleverans", "utleverans", "orderplock", "plock", "pack",
+        "intern reklamation", "reklamation", "o2", "m2",
     ],
     "Speditörer och transportmäklare": [
         "speditör", "freight forwarder", "transportmäklare", "spedition",
@@ -465,7 +475,7 @@ CV Text:
 Rules:
 - Pick only from the list above, using the exact Swedish names
 - Return 1-5 groups, most relevant first
-- If the CV clearly fits service/restaurant/cleaning/care work, prefer those groups over unrelated technical/transport groups
+- Prioritize explicit role evidence from experience/job titles before broad assumptions
 - Do not guess broad unrelated groups just to fill the list
 - Return ONLY a JSON array, no explanation
 

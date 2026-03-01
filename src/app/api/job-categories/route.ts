@@ -51,20 +51,27 @@ export async function GET(req: Request) {
   const supabase = await createSupabaseRouteHandlerClient()
 
   try {
-    // Fetch active, non-expired jobs with embedding and aggregate in memory.
+    // Fetch all jobs and aggregate in memory.
     // This guarantees that total/category/subcategory counts come from the exact same dataset.
-    const PAGE_SIZE = 10000
+    const PAGE_SIZE = 1000
     let from = 0
     const rows: { occupation_field_label: string | null; occupation_group_label: string | null }[] = []
 
-    while (true) {
+    const { count: totalRows, error: countError } = await supabase
+      .from("job_ads")
+      .select("id", { count: "exact", head: true })
+
+    if (countError) {
+      throw new Error(`Failed to count jobs: ${countError.message}`)
+    }
+
+    const expectedTotal = totalRows ?? 0
+
+    while (from < expectedTotal) {
       const to = from + PAGE_SIZE - 1
       const { data, error } = await supabase
         .from("job_ads")
         .select("occupation_field_label, occupation_group_label")
-        .eq("is_active", true)
-        .not("embedding", "is", null)
-        .or("application_deadline.is.null,application_deadline.gte.now()")
         .range(from, to)
 
       if (error) {
@@ -74,11 +81,11 @@ export async function GET(req: Request) {
       const batch = data || []
       rows.push(...batch)
 
-      if (batch.length < PAGE_SIZE) break
-      from += PAGE_SIZE
+      if (batch.length === 0) break
+      from += batch.length
     }
 
-    const totalCount = rows.length
+    const totalCount = expectedTotal
 
     const fieldCounts = new Map<string, number>()
     const fieldGroupCounts = new Map<string, Map<string, number>>()

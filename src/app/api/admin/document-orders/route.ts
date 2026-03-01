@@ -18,7 +18,7 @@ export async function GET() {
   const supabaseAdmin = getSupabaseAdmin()
   const { data, error } = await supabaseAdmin
     .from("document_orders")
-    .select("id,user_id,status,package_name,package_flow,amount_sek,target_role,target_job_link,stripe_customer_email,stripe_checkout_session_id,stripe_status,paid_at,delivery_notes,delivered_at,created_at")
+    .select("id,user_id,status,package_name,package_flow,amount_sek,target_role,target_job_link,intake_full_name,intake_email,letter_job_title,stripe_customer_email,stripe_checkout_session_id,stripe_status,paid_at,delivery_notes,delivered_at,created_at")
     .order("created_at", { ascending: false })
     .limit(200)
 
