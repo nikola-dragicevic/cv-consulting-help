@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getServerSupabase } from "@/lib/supabaseServer"
-import { isAdminUser } from "@/lib/admin"
+import { isAdminOrModerator } from "@/lib/admin"
 
 function getSupabaseAdmin() {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
@@ -11,7 +11,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const supabase = await getServerSupabase()
   const { data: { user } } = await supabase.auth.getUser()
 
-  if (!isAdminUser(user)) {
+  if (!isAdminOrModerator(user)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 

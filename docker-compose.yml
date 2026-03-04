@@ -33,6 +33,7 @@ services:
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - OLLAMA_URL=http://ollama:11434/api/embeddings
       - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
       - ./logs:/app/logs
       - ./downloads:/app/downloads

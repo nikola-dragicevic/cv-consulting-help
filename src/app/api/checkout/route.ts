@@ -3,34 +3,31 @@ import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabaseServer';
 import { getStripeClient } from '@/lib/stripeServer';
 import { isAdminUser } from '@/lib/admin';
+import { runGeneration } from '@/app/api/generate-cv/route';
 
 const stripe = getStripeClient();
 const oneTimePriceByFlow: Record<string, string | undefined> = {
-  booking: process.env.STRIPE_PRICE_ID_CV_LETTER_CONSULTATION?.trim(),
-  cv_letter_intake: process.env.STRIPE_PRICE_ID_CV_AND_LETTER?.trim(),
+  booking: process.env.STRIPE_PRICE_ID_BOOKING?.trim(),
   cv_intake: process.env.STRIPE_PRICE_ID_CV_ONLY?.trim(),
+  // letter_intake uses dynamic price_data (amount varies by number of jobs)
+  letter_intake: undefined,
 };
 
 type IntakeExperience = {
   title?: string;
   company?: string;
-  city?: string;
   start?: string;
   end?: string;
   current?: boolean;
-  tasks?: string;
-  achievements?: string;
-  tools?: string;
+  description?: string;
 };
 
 type IntakeEducation = {
   program?: string;
   school?: string;
-  city?: string;
   start?: string;
   end?: string;
   current?: boolean;
-  details?: string;
 };
 
 type IntakeData = {
@@ -43,8 +40,6 @@ type IntakeData = {
   certifications?: string;
   languages?: string;
   driverLicense?: string;
-  additionalInfo?: string;
-  includeFullAddressInCv?: boolean;
   includeExperience3?: boolean;
   includeAdditionalEducation?: boolean;
   experiences?: IntakeExperience[];
@@ -52,11 +47,8 @@ type IntakeData = {
   education2?: IntakeEducation;
   jobTitle?: string;
   companyName?: string;
-  jobAdText?: string;
   whyThisRole?: string;
-  whyThisCompany?: string;
   keyExamples?: string;
-  explainInLetter?: string;
   tone?: string;
   letterLanguage?: string;
 };
@@ -77,13 +69,10 @@ function normalizeIntakeExperience(input: unknown): IntakeExperience | null {
   return {
     title: asTrimmedString(row.title) || undefined,
     company: asTrimmedString(row.company) || undefined,
-    city: asTrimmedString(row.city) || undefined,
     start: asTrimmedString(row.start) || undefined,
     end: asTrimmedString(row.end) || undefined,
     current: typeof row.current === "boolean" ? row.current : undefined,
-    tasks: asTrimmedString(row.tasks) || undefined,
-    achievements: asTrimmedString(row.achievements) || undefined,
-    tools: asTrimmedString(row.tools) || undefined,
+    description: asTrimmedString(row.description) || undefined,
   };
 }
 
@@ -93,11 +82,9 @@ function normalizeIntakeEducation(input: unknown): IntakeEducation | null {
   return {
     program: asTrimmedString(row.program) || undefined,
     school: asTrimmedString(row.school) || undefined,
-    city: asTrimmedString(row.city) || undefined,
     start: asTrimmedString(row.start) || undefined,
     end: asTrimmedString(row.end) || undefined,
     current: typeof row.current === "boolean" ? row.current : undefined,
-    details: asTrimmedString(row.details) || undefined,
   };
 }
 
@@ -189,8 +176,6 @@ export async function POST(req: Request) {
           intake_certifications_text: asTrimmedString(intakeData?.certifications),
           intake_languages_text: asTrimmedString(intakeData?.languages),
           intake_driver_license: asTrimmedString(intakeData?.driverLicense),
-          intake_additional_info: asTrimmedString(intakeData?.additionalInfo),
-          intake_include_full_address_in_cv: asBoolean(intakeData?.includeFullAddressInCv),
           intake_include_experience_3: asBoolean(intakeData?.includeExperience3),
           intake_include_additional_education: asBoolean(intakeData?.includeAdditionalEducation),
           intake_experiences: experiences,
@@ -198,11 +183,8 @@ export async function POST(req: Request) {
           intake_education_additional: additionalEducation || {},
           letter_job_title: asTrimmedString(intakeData?.jobTitle),
           letter_company_name: asTrimmedString(intakeData?.companyName),
-          letter_job_ad_text: asTrimmedString(intakeData?.jobAdText),
           letter_why_this_role: asTrimmedString(intakeData?.whyThisRole),
-          letter_why_this_company: asTrimmedString(intakeData?.whyThisCompany),
           letter_key_examples: asTrimmedString(intakeData?.keyExamples),
-          letter_explain_in_letter: asTrimmedString(intakeData?.explainInLetter),
           letter_tone: asTrimmedString(intakeData?.tone),
           letter_language: asTrimmedString(intakeData?.letterLanguage),
         })
@@ -235,6 +217,13 @@ export async function POST(req: Request) {
         if (bypassUpdateError) {
           console.error("document_orders bypass update error:", bypassUpdateError);
           return NextResponse.json({ error: "Failed to finalize admin bypass order" }, { status: 500 });
+        }
+
+        // Fire-and-forget generation — don't await, response returns immediately
+        if (documentOrderId) {
+          runGeneration(documentOrderId).catch(err =>
+            console.error("[checkout] bypass generation failed:", err)
+          );
         }
 
         return NextResponse.json({

@@ -172,8 +172,8 @@ export default function ProfilePage() {
 
       setMessage(
         t(
-          "✅ Din profil har sparats! Din matchningsprofil kommer att regenereras vid nästa sökning.",
-          "✅ Your profile has been saved! Your matching profile will be regenerated the next time you search."
+          "✅ Profil sparad! Matchningsvektorer uppdateras nu i bakgrunden (tar ~10 sekunder).",
+          "✅ Profile saved! Matching vectors are updating in the background (~10 seconds)."
         )
       );
 

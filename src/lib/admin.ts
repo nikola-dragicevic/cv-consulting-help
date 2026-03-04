@@ -11,3 +11,12 @@ export function getUserRole(user: AdminUserLike) {
 export function isAdminUser(user: AdminUserLike) {
   return getUserRole(user) === "admin"
 }
+
+export function isModeratorUser(user: AdminUserLike) {
+  return getUserRole(user) === "moderator"
+}
+
+export function isAdminOrModerator(user: AdminUserLike) {
+  const role = getUserRole(user)
+  return role === "admin" || role === "moderator"
+}

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 import { getStripeClient } from '@/lib/stripeServer';
+import { runGeneration } from '@/app/api/generate-cv/route';
 
 const stripe = getStripeClient();
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -82,6 +83,11 @@ if (!signature) {
         console.error("Fel vid uppdatering av document_orders:", orderUpdateError);
         return NextResponse.json({ error: "Document order update failed" }, { status: 500 });
       }
+
+      // 🤖 Trigger CV/letter generation — fire-and-forget so Stripe isn't kept waiting
+      runGeneration(document_order_id).catch((err) =>
+        console.error("[webhook] CV generation failed for order", document_order_id, err)
+      );
     }
   }
 

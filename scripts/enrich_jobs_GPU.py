@@ -286,8 +286,13 @@ def build_job_document(
     city = (row.get("city") or row.get("location") or "").strip()
     company = (row.get("company") or "").strip()
 
-    fallback_desc = row.get("description_text") or ""
-    desc_raw, desc_source = extract_desc_from_snapshot(snap, fallback_desc)
+    # ✅ Always prefer description_text (stored plain text, reliably populated).
+    # Fall back to snapshot only when description_text is missing/empty.
+    db_desc = (row.get("description_text") or "").strip()
+    if db_desc:
+        desc_raw, desc_source = db_desc, "row.description_text"
+    else:
+        desc_raw, desc_source = extract_desc_from_snapshot(snap, "")
 
     cleaned_desc, removed_lines = clean_text_preserve_newlines(desc_raw)
     if cleaned_desc:

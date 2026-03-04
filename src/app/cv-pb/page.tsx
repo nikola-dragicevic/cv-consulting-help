@@ -1,15 +1,6 @@
-import { StaticOrderForm } from "@/components/orders/StaticOrderForm"
+import { redirect } from "next/navigation"
 
-export default function CvPbOrderPage() {
-  return (
-    <StaticOrderForm
-      config={{
-        name: "CV + Personligt Brev",
-        amount: 199,
-        flow: "cv_letter_intake",
-        includesLetter: true,
-        includesConsultation: false,
-      }}
-    />
-  )
+// CV + PB bundle removed. Flow is now: buy CV → match jobs → buy PB separately at /pb
+export default function CvPbRedirect() {
+  redirect("/cv")
 }

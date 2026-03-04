@@ -1,0 +1,29 @@
+<svg width="512" height="512" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Radiant Portal symbol monochrome</title>
+  <desc id="desc">Monochrome version of the Radiant Portal symbol for print and single-color applications.</desc>
+
+  <circle cx="128" cy="128" r="94" stroke="#0F172A" stroke-width="10"/>
+  <circle cx="128" cy="128" r="18" fill="#0F172A" opacity="0.08"/>
+  <circle cx="128" cy="128" r="8" fill="#0F172A"/>
+
+  <path d="M96 178V110C96 92.3269 110.327 78 128 78C145.673 78 160 92.3269 160 110V178" stroke="#0F172A" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <path d="M128 52V30" stroke="#0F172A" stroke-width="8" stroke-linecap="round"/>
+  <path d="M95 60L82 42" stroke="#0F172A" stroke-width="6" stroke-linecap="round"/>
+  <path d="M161 60L174 42" stroke="#0F172A" stroke-width="6" stroke-linecap="round"/>
+
+  <circle cx="128" cy="20" r="4" fill="#0F172A"/>
+  <circle cx="70" cy="38" r="4" fill="#0F172A"/>
+  <circle cx="186" cy="38" r="4" fill="#0F172A"/>
+
+  <circle cx="224" cy="128" r="3.5" fill="#0F172A"/>
+  <circle cx="205" cy="187" r="3.5" fill="#0F172A"/>
+  <circle cx="156" cy="221" r="3.5" fill="#0F172A"/>
+  <circle cx="100" cy="221" r="3.5" fill="#0F172A"/>
+  <circle cx="51" cy="187" r="3.5" fill="#0F172A"/>
+  <circle cx="32" cy="128" r="3.5" fill="#0F172A"/>
+  <circle cx="51" cy="69" r="3.5" fill="#0F172A"/>
+  <circle cx="100" cy="35" r="3.5" fill="#0F172A"/>
+  <circle cx="156" cy="35" r="3.5" fill="#0F172A"/>
+  <circle cx="205" cy="69" r="3.5" fill="#0F172A"/>
+</svg>

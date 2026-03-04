@@ -118,14 +118,6 @@ export async function POST(req: Request) {
       skills_text: skills || null,
       education_certifications_text: education || null,
       seniority_level: seniorityLevel || null,
-
-      // Clear vectors when updating manually (they'll be regenerated)
-      profile_vector: null,
-      persona_current_vector: null,
-      persona_target_vector: null,
-      persona_past_1_vector: null,
-      persona_past_2_vector: null,
-      persona_past_3_vector: null,
     };
 
     // Geocode user address -> persist location_lat/location_lon for dashboard + matching.
@@ -198,8 +190,21 @@ export async function POST(req: Request) {
       personaCurrent || personaTarget || skills || education
     );
 
-    // Trigger webhook for CV upload OR manual entry
+    // Only clear vectors (and trigger regeneration) when we have content to process.
+    // This prevents vectors from being permanently nulled when the webhook won't fire.
     if (hasCv || hasManualEntry) {
+      await supabase
+        .from("candidate_profiles")
+        .update({
+          profile_vector: null,
+          persona_current_vector: null,
+          persona_target_vector: null,
+          persona_past_1_vector: null,
+          persona_past_2_vector: null,
+          persona_past_3_vector: null,
+        })
+        .eq("user_id", user.id);
+
       console.log("🚀 Triggering vector update webhook for user:", user.id, "mode:", entryMode);
 
       const cvText = extractedText || "";

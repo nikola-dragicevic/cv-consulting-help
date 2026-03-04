@@ -22,7 +22,7 @@ import InteractiveJobMap from "@/components/ui/InteractiveJobMap"
 import JobCategoriesSection from "@/components/ui/JobCategoriesSection"
 import { format } from "date-fns"
 import { useLanguage, type SiteLanguage } from "@/components/i18n/LanguageProvider"
-import { isAdminUser } from "@/lib/admin"
+import { isAdminOrModerator } from "@/lib/admin"
 
 /* ============================================================
    Types
@@ -46,7 +46,7 @@ type PackageChoice = {
   name: string
   amount: number
   description: string
-  flow: "booking" | "cv_intake" | "cv_letter_intake"
+  flow: "booking" | "cv_intake"
 }
 
 type ExperienceEntry = {
@@ -290,12 +290,6 @@ function validateCvIntakeForCheckout(
 
   if (!draft.skills.trim()) return t("Fyll i kompetenser / skills.", "Fill in skills.")
 
-  if (flow === "cv_letter_intake") {
-    if (!draft.jobTitle.trim()) return t("Fyll i vilket jobb du söker.", "Enter which job you are applying for.")
-    if (!draft.whyThisRole.trim()) return t("Beskriv varför du vill ha just detta jobb.", "Describe why you want this job.")
-    if (!draft.keyExamples.trim()) return t("Skriv 2–3 erfarenheter/resultat du vill lyfta i brevet.", "Write 2-3 experiences/results to highlight in the letter.")
-  }
-
   return null
 }
 
@@ -440,7 +434,7 @@ export default function UnifiedLandingPage() {
   const [intakeSavedMessage, setIntakeSavedMessage] = useState("")
   const [intakeSubmitting, setIntakeSubmitting] = useState(false)
   const [cvIntakeDraft, setCvIntakeDraft] = useState<CvIntakeDraft>(() => createInitialCvIntakeDraft(""))
-  const canBypassPayment = isAdminUser(user)
+  const canBypassPayment = isAdminOrModerator(user)
 
   // Freemium
   const jobLimit = user ? 50 : 20
@@ -781,16 +775,22 @@ export default function UnifiedLandingPage() {
                 <span className="font-semibold">{t("Högsta betyg", "Top rating")}</span>
                 <span>{t("från verifierade kandidater", "from verified candidates")}</span>
               </div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                <Users className="h-3.5 w-3.5" />
+                {t("Ny tjänst: Kandidatrepresentation 300 kr/mån", "New service: Candidate Representation 300 SEK/month")}
+              </div>
             </div>
             <div className="flex justify-center lg:justify-end">
               <div className="relative">
                 <div className="absolute inset-0 bg-blue-200 rounded-full blur-3xl opacity-20" />
                 <Image
-                  src="/star-business-award-2026-masked.png"
+                  src="/award-diploma-highres.png"
                   alt={t("Star Business Awards utmärkelse", "Star Business Awards certificate")}
-                  width={443}
-                  height={626}
-                  className="relative w-full max-w-[420px] rounded-3xl shadow-2xl border-4 border-white bg-white object-contain p-3"
+                  width={2200}
+                  height={948}
+                  quality={100}
+                  sizes="(max-width: 1024px) 92vw, 70vw"
+                  className="relative w-full max-w-[1100px] rounded-3xl shadow-2xl border-4 border-white bg-white object-contain"
                   priority
                 />
               </div>
@@ -802,78 +802,220 @@ export default function UnifiedLandingPage() {
       {/* === PACKAGES === */}
       <section id="packages" className="py-20 bg-white">
         <div className="container mx-auto px-4">
-          <div className="text-center space-y-4 mb-16">
-            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">{t("Välj ditt paket", "Choose your package")}</h2>
-            <p className="text-lg text-slate-600 max-w-2xl mx-auto">{t("Välj paket och boka din tid direkt i kalendern.", "Choose a package and book your time directly in the calendar.")}</p>
+          <div className="text-center space-y-3 mb-10">
+            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">
+              {t("Kom igång – det tar 5 minuter", "Get started – takes 5 minutes")}
+            </h2>
+            <p className="text-base text-slate-500 max-w-xl mx-auto">
+              {t(
+                "Köp CV:t en gång, hitta matchande jobb i dashboarden och beställ personliga brev för varje jobb du söker.",
+                "Buy the CV once, find matching jobs in the dashboard, then order a cover letter for each job you apply to."
+              )}
+            </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {/* Premium */}
-            <Card className="relative border-2 border-blue-600 shadow-xl">
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                <Badge className="bg-blue-600 text-white px-4 py-1"><Star className="h-3 w-3 mr-1 inline" /> {t("Rekommenderas", "Recommended")}</Badge>
-              </div>
-              <CardHeader className="text-center pt-8">
-                <CardTitle className="text-2xl">{t("CV + Personligt Brev + Konsultation", "CV + Cover Letter + Consultation")}</CardTitle>
-                <div className="mt-4"><span className="text-4xl font-bold">999 kr</span></div>
-                <CardDescription className="mt-2">{t("Fullständigt paket med personlig coaching", "Complete package with personal coaching")}</CardDescription>
+          {/* Step flow */}
+          <div className="flex items-center justify-center gap-0 mb-12 max-w-md mx-auto text-xs">
+            {(lang === "sv"
+              ? [["1", "Skapa CV"], ["2", "Hitta jobb"], ["3", "Beställ brev"]]
+              : [["1", "Create CV"], ["2", "Find jobs"], ["3", "Order letters"]]
+            ).map(([num, label], i, arr) => (
+              <React.Fragment key={num}>
+                <div className="flex flex-col items-center gap-1.5">
+                  <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">{num}</div>
+                  <span className="text-slate-600 font-medium whitespace-nowrap">{label}</span>
+                </div>
+                {i < arr.length - 1 && <div className="flex-1 h-px bg-slate-300 mx-3 mb-5" />}
+              </React.Fragment>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
+
+            {/* Card 1 — CV */}
+            <Card className="border-2 border-slate-200 flex flex-col">
+              <CardHeader className="text-center pb-4">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">{t("Steg 1", "Step 1")}</div>
+                <CardTitle className="text-xl">CV</CardTitle>
+                <div className="mt-3">
+                  <span className="text-4xl font-bold text-slate-900">119 kr</span>
+                  <span className="text-sm text-slate-400 ml-1">{t("engångs", "one-time")}</span>
+                </div>
+                <CardDescription className="mt-2 text-xs">
+                  {t("AI skriver ditt CV på 60 sekunder – anpassat mot jobbet du söker.", "AI writes your CV in 60 seconds – tailored to the job you are applying for.")}
+                </CardDescription>
               </CardHeader>
-              <CardContent>
-                <ul className="space-y-3 mb-6">
+              <CardContent className="flex flex-col flex-1">
+                <ul className="space-y-2.5 mb-6 flex-1">
                   {(lang === "sv"
-                    ? ["Professionellt CV","Personligt brev","45 min personlig konsultation","Jobbsökningsstrategier","Intervjuförberedelse","Personlig coaching"]
-                    : ["Professional CV","Cover letter","45 min personal consultation","Job search strategies","Interview preparation","Personal coaching"]).map((item) => (
-                    <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
+                    ? ["Genereras direkt – ladda ner som PDF","ATS-optimerat – passerar automatiska filter","Klistra in jobblänk → CV anpassas mot rollen","Action-verb och professionellt språk","Avancerad AI-teknik"]
+                    : ["Generated instantly – download as PDF","ATS-optimised – passes automatic filters","Paste job link → CV tailored to the role","Action verbs and professional language","Advanced AI technology"]
+                  ).map((item) => (
+                    <li key={item} className="flex items-start gap-2">
+                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <span className="text-sm text-slate-600">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Button className="w-full" variant="outline" size="lg" asChild>
+                  <Link href="/cv">{t("Beställ CV →", "Order CV →")}</Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Card 2 — Dashboard Premium (featured) */}
+            <Card className="relative border-2 border-blue-600 shadow-xl flex flex-col">
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                <Badge className="bg-blue-600 text-white px-4 py-1 text-xs">
+                  <Star className="h-3 w-3 mr-1 inline" /> {t("Rekommenderas", "Recommended")}
+                </Badge>
+              </div>
+              <CardHeader className="text-center pt-8 pb-4">
+                <div className="text-xs font-semibold text-blue-500 uppercase tracking-widest mb-2">{t("Steg 2", "Step 2")}</div>
+                <CardTitle className="text-xl">{t("Dashboard Premium", "Dashboard Premium")}</CardTitle>
+                <div className="mt-3">
+                  <span className="text-4xl font-bold text-slate-900">100 kr</span>
+                  <span className="text-sm text-slate-400 ml-1">{t("/mån", "/mo")}</span>
+                </div>
+                <CardDescription className="mt-2 text-xs">
+                  {t(
+                    "AI jämför ditt CV mot tusentals riktiga platsannonser och rankar de jobb som passar dig bäst – varje dag.",
+                    "AI compares your CV against thousands of real job listings and ranks the jobs that fit you best – every day."
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col flex-1">
+                <ul className="space-y-2.5 mb-6 flex-1">
+                  {(lang === "sv"
+                    ? ["Tusentals jobb matchade mot ditt CV","AI rankar efter erfarenhet, titel, kompetens & ort","Se vilka skills du saknar per jobb","Gratis = 4 jobb · Premium = alla resultat","Nya annonser matchas automatiskt varje dag","Avsluta prenumerationen när som helst"]
+                    : ["Thousands of jobs matched to your CV","AI ranks by experience, title, skills & location","See which skills you are missing per job","Free = 4 jobs · Premium = all results","New listings matched automatically every day","Cancel subscription at any time"]
+                  ).map((item) => (
+                    <li key={item} className="flex items-start gap-2">
+                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <span className="text-sm text-slate-600">{item}</span>
+                    </li>
                   ))}
                 </ul>
                 <Button className="w-full bg-blue-600 hover:bg-blue-700" size="lg" asChild>
-                  <Link href="/cvpb&konsult">{t("Välj & Boka", "Choose & Book")}</Link>
+                  <Link href="/dashboard">{t("Prova gratis →", "Try for free →")}</Link>
                 </Button>
+                <p className="text-center text-xs text-slate-400 mt-2">
+                  {t("4 matcher gratis. Uppgradera när du vill.", "4 free matches. Upgrade whenever.")}
+                </p>
               </CardContent>
             </Card>
 
-            {/* Standard */}
-            <Card className="border-2">
-              <CardHeader className="text-center">
-                <CardTitle className="text-2xl">{t("CV + Personligt Brev", "CV + Cover Letter")}</CardTitle>
-                <div className="mt-4"><span className="text-4xl font-bold">199 kr</span></div>
-                <CardDescription className="mt-2">{t("Ett paket med CV och skräddarsytt personligt brev", "A package with CV and tailored cover letter")}</CardDescription>
+            {/* Card 3 — Personligt Brev */}
+            <Card className="border-2 border-slate-200 flex flex-col">
+              <CardHeader className="text-center pb-4">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">{t("Steg 3", "Step 3")}</div>
+                <CardTitle className="text-xl">{t("Personligt Brev", "Cover Letter")}</CardTitle>
+                <div className="mt-3">
+                  <span className="text-4xl font-bold text-slate-900">{t("fr. 99 kr", "from 99 SEK")}</span>
+                </div>
+                <CardDescription className="mt-2 text-xs">
+                  {t(
+                    "Hämta jobblänken från din Dashboard. AI läser hela annonsen och skriver ett unikt brev mot just den tjänsten.",
+                    "Grab the job link from your Dashboard. AI reads the full posting and writes a unique letter for that exact role."
+                  )}
+                </CardDescription>
               </CardHeader>
-              <CardContent>
-                <ul className="space-y-3 mb-6">
-                  {(lang === "sv" ? ["Professionellt CV","Skräddarsytt personligt brev","Anpassat till specifik tjänst"] : ["Professional CV","Tailored cover letter","Adapted to a specific role"]).map((item) => (
-                    <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
+              <CardContent className="flex flex-col flex-1">
+                <ul className="space-y-2.5 mb-4 flex-1">
+                  {(lang === "sv"
+                    ? ["1 brev = 99 kr · varje extra jobb +30 kr","AI läser jobbannonsen automatiskt","Unikt brev per tjänst – aldrig generiskt","Klart på under 30 sekunder","Svenska eller engelska"]
+                    : ["1 letter = 99 SEK · each extra job +30 SEK","AI reads the job posting automatically","Unique letter per role – never generic","Ready in under 30 seconds","Swedish or English"]
+                  ).map((item) => (
+                    <li key={item} className="flex items-start gap-2">
+                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <span className="text-sm text-slate-600">{item}</span>
+                    </li>
                   ))}
                 </ul>
+                <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700 mb-4">
+                  {t("Tips: Hämta jobblänkarna från din", "Tip: Get your job links from your")}{" "}
+                  <Link href="/dashboard" className="font-semibold underline hover:text-blue-900">{t("Matchningsdashboard →", "Matching Dashboard →")}</Link>
+                </div>
                 <Button className="w-full" variant="outline" size="lg" asChild>
-                  <Link href="/cv&pb">{t("Välj & Boka", "Choose & Continue")}</Link>
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Basic */}
-            <Card className="border-2">
-              <CardHeader className="text-center">
-                <CardTitle className="text-2xl">CV</CardTitle>
-                <div className="mt-4"><span className="text-4xl font-bold">119 kr</span></div>
-                <CardDescription className="mt-2">{t("Professionellt skrivet CV", "Professionally written CV")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-3 mb-6">
-                  {(lang === "sv" ? ["Skräddarsytt CV","Professionell layout","ATS-optimerat"] : ["Tailored CV","Professional layout","ATS-optimized"]).map((item) => (
-                    <li key={item} className="flex items-start gap-2"><Check className="h-5 w-5 text-slate-600 shrink-0 mt-0.5" /><span className="text-sm">{item}</span></li>
-                  ))}
-                </ul>
-                <Button className="w-full" variant="outline" size="lg" asChild>
-                  <Link href="/cv">{t("Välj & Boka", "Choose & Continue")}</Link>
+                  <Link href="/pb">{t("Beställ brev →", "Order letter →")}</Link>
                 </Button>
               </CardContent>
             </Card>
           </div>
 
           {!user && (
-            <p className="mt-6 text-center text-sm text-slate-600">{t("Inte registrerad än?", "Not registered yet?")} <Link href="/login" className="text-blue-700 hover:underline inline-flex items-center gap-1"><LogIn className="h-4 w-4" /> {t("Skapa konto eller logga in", "Create an account or log in")}</Link> {t("för att slutföra köp.", "to complete your purchase.")}</p>
+            <p className="mt-8 text-center text-sm text-slate-500">
+              {t("Inte registrerad än?", "Not registered yet?")}{" "}
+              <Link href="/login" className="text-blue-700 hover:underline inline-flex items-center gap-1">
+                <LogIn className="h-4 w-4" /> {t("Skapa konto eller logga in", "Create an account or log in")}
+              </Link>{" "}
+              {t("för att slutföra köp.", "to complete your purchase.")}
+            </p>
           )}
+        </div>
+      </section>
+
+      <section id="representation" className="py-16 bg-emerald-50 border-y border-emerald-100">
+        <div className="container mx-auto px-4">
+          <div className="max-w-5xl mx-auto">
+            <Card className="border-2 border-emerald-200 shadow-sm bg-white">
+              <CardHeader>
+                <div className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  <Badge className="bg-emerald-600 text-white">{t("Nytt", "New")}</Badge>
+                  <span>{t("Representationsprogram", "Representation Program")}</span>
+                </div>
+                <CardTitle className="mt-3 text-2xl lg:text-3xl text-slate-900">
+                  {t("Kandidatrepresentation – jag representerar dig mot arbetsgivare", "Candidate Representation - I represent you toward employers")}
+                </CardTitle>
+                <CardDescription className="text-slate-700">
+                  {t(
+                    "För dig som vill ha aktiv hjälp i jobbsökandet. Med mitt diplom i grunden arbetar jag som din partner och kontaktar arbetsgivare för att öppna dörrar till relevanta roller.",
+                    "For you who want active support in your job search. With my diploma as a foundation, I act as your partner and contact employers to open doors to relevant roles."
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-6 lg:grid-cols-[1.2fr_auto] lg:items-center">
+                <div>
+                  <ul className="space-y-2.5">
+                    {(lang === "sv"
+                      ? [
+                          "Pris: 300 kr per månad",
+                          "Personlig representation av din profil mot arbetsgivare",
+                          "Aktiv kontakt med relevanta företag och rekryterare",
+                          "Löpande återkoppling om dialoger, möjligheter och nästa steg",
+                          "Målet är intervjuer och faktisk rörelse mot nytt jobb"
+                        ]
+                      : [
+                          "Price: 300 SEK per month",
+                          "Personal representation of your profile toward employers",
+                          "Active outreach to relevant companies and recruiters",
+                          "Continuous feedback on conversations, opportunities, and next steps",
+                          "The goal is interviews and real movement toward a new job"
+                        ]).map((item) => (
+                      <li key={item} className="flex items-start gap-2">
+                        <Check className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <span className="text-sm text-slate-700">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="flex flex-col gap-3 lg:min-w-[220px]">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
+                    <div className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">{t("Månadspris", "Monthly price")}</div>
+                    <div className="text-3xl font-bold text-slate-900">300 kr</div>
+                  </div>
+                  <Button className="bg-emerald-600 hover:bg-emerald-700" asChild>
+                    <a href="mailto:info@jobbnu.se?subject=Intresse%20f%C3%B6r%20kandidatrepresentation%20300%20kr/m%C3%A5n">
+                      {t("Ansök om representation", "Apply for representation")}
+                    </a>
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <a href="#contact">{t("Ställ en fråga först", "Ask a question first")}</a>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </section>
 
@@ -956,6 +1098,15 @@ export default function UnifiedLandingPage() {
                 <AccordionTrigger>{t("Kan jag få dokument på engelska?", "Can I get the documents in English?")}</AccordionTrigger>
                 <AccordionContent>{t("Ja, alla tjänster kan levereras på svenska eller engelska.", "Yes, all services can be delivered in Swedish or English.")}</AccordionContent>
               </AccordionItem>
+              <AccordionItem value="item-4">
+                <AccordionTrigger>{t("Vad är kandidatrepresentation (300 kr/mån)?", "What is candidate representation (300 SEK/month)?")}</AccordionTrigger>
+                <AccordionContent>
+                  {t(
+                    "Det är en aktiv tjänst där jag representerar dig mot arbetsgivare, kontaktar relevanta företag och hjälper dig driva processen framåt. Målet är konkreta intervjuer och bättre möjligheter till anställning.",
+                    "It is an active service where I represent you toward employers, contact relevant companies, and help move your process forward. The goal is concrete interviews and better hiring opportunities."
+                  )}
+                </AccordionContent>
+              </AccordionItem>
             </Accordion>
           </div>
         </div>
@@ -985,8 +1136,8 @@ export default function UnifiedLandingPage() {
               <h3 className="text-xl font-bold mb-4">{t("Tjänster", "Services")}</h3>
               <div className="space-y-2 text-slate-300">
                 {(lang === "sv"
-                  ? ["Professionell CV‑skrivning","Personliga brev","Jobbkonsultation & coaching","Intervjuförberedelse","Jobbsökningsstrategier","AI‑drivna jobbförslag"]
-                  : ["Professional CV writing","Cover letters","Career consultation & coaching","Interview preparation","Job search strategies","AI-driven job suggestions"]).map((item) => <p key={item}>{item}</p>)}
+                  ? ["Professionell CV‑skrivning","Personliga brev","Kandidatrepresentation (300 kr/mån)","Jobbkonsultation & coaching","Intervjuförberedelse","Jobbsökningsstrategier","AI‑drivna jobbförslag"]
+                  : ["Professional CV writing","Cover letters","Candidate representation (300 SEK/month)","Career consultation & coaching","Interview preparation","Job search strategies","AI-driven job suggestions"]).map((item) => <p key={item}>{item}</p>)}
               </div>
             </div>
           </div>
@@ -1033,7 +1184,7 @@ export default function UnifiedLandingPage() {
               <h2 className="text-2xl font-bold text-slate-900">{displayPackageName(selectedPackage.name)} • {t("Underlag", "Details")}</h2>
               <p className="text-slate-600 mt-1">
                 {t("Fyll i informationen nedan så vi kan ta fram ett starkt CV", "Fill in the information below so we can prepare a strong CV")}
-                {selectedPackage.flow === "cv_letter_intake" ? t(" och personligt brev", " and cover letter") : ""} {t("utifrån dina uppgifter.", "based on your information.")}
+                {t("utifrån dina uppgifter.", "based on your information.")}
               </p>
             </div>
 
@@ -1334,86 +1485,6 @@ export default function UnifiedLandingPage() {
                 </div>
               </section>
 
-              {selectedPackage.flow === "cv_letter_intake" && (
-                <section className="rounded-xl border border-blue-200 bg-blue-50/40 p-5">
-                  <h3 className="text-lg font-semibold text-slate-900">{t("6. Underlag för personligt brev", "6. Cover letter details")}</h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {t("Skriv fritt och konkret. Målet är att kunna skapa ett brev som känns personligt och träffsäkert.", "Write freely and concretely. The goal is to create a letter that feels personal and precise.")}
-                  </p>
-
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>{t("Vilket jobb söker du?", "Which job are you applying for?")}</Label>
-                      <Input value={cvIntakeDraft.jobTitle} onChange={(e) => handleCvIntakeField("jobTitle", e.target.value)} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("Företag", "Company")}</Label>
-                      <Input value={cvIntakeDraft.companyName} onChange={(e) => handleCvIntakeField("companyName", e.target.value)} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Kopiera in jobbannonsen (rekommenderas)", "Paste the job ad (recommended)")}</Label>
-                      <Textarea
-                        rows={6}
-                        placeholder={t("Klistra in annonsens text här. Detta hjälper oss att anpassa både CV och brev mot rätt krav och nyckelord.", "Paste the job ad text here. This helps us tailor both the CV and letter to the right requirements and keywords.")}
-                        value={cvIntakeDraft.jobAdText}
-                        onChange={(e) => handleCvIntakeField("jobAdText", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Varför vill du ha just detta jobb?", "Why do you want this specific job?")}</Label>
-                      <Textarea
-                        rows={4}
-                        placeholder={t("Beskriv motivationen: vad lockar i rollen, arbetsuppgifterna och utvecklingsmöjligheterna?", "Describe your motivation: what attracts you in the role, tasks and growth opportunities?")}
-                        value={cvIntakeDraft.whyThisRole}
-                        onChange={(e) => handleCvIntakeField("whyThisRole", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Varför just detta företag?", "Why this company?")}</Label>
-                      <Textarea
-                        rows={4}
-                        placeholder={t("Vad gillar du med företaget? Bransch, värderingar, produkter, kultur, uppdrag...", "What do you like about the company? Industry, values, products, culture, mission...")}
-                        value={cvIntakeDraft.whyThisCompany}
-                        onChange={(e) => handleCvIntakeField("whyThisCompany", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Vilka 2–3 erfarenheter/resultat vill du lyfta i brevet?", "Which 2-3 experiences/results should be highlighted in the letter?")}</Label>
-                      <Textarea
-                        rows={4}
-                        placeholder={t("Skriv konkreta exempel som visar att du passar. Gärna siffror/resultat.", "Write concrete examples showing why you fit. Numbers/results are great.")}
-                        value={cvIntakeDraft.keyExamples}
-                        onChange={(e) => handleCvIntakeField("keyExamples", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Finns något brevet ska förklara?", "Is there anything the letter should explain?")}</Label>
-                      <Textarea
-                        rows={3}
-                        placeholder={t("Exempel: karriärbyte, glapp i CV, flytt, deltidsarbete, begränsad erfarenhet men stark motivation...", "Example: career change, CV gap, relocation, part-time work, limited experience but strong motivation...")}
-                        value={cvIntakeDraft.explainInLetter}
-                        onChange={(e) => handleCvIntakeField("explainInLetter", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("Ton i brevet", "Letter tone")}</Label>
-                      <Input
-                        placeholder={t("t.ex. professionell, varm, självsäker", "e.g. professional, warm, confident")}
-                        value={cvIntakeDraft.tone}
-                        onChange={(e) => handleCvIntakeField("tone", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("Språk", "Language")}</Label>
-                      <Input
-                        placeholder={t("svenska / engelska", "Swedish / English")}
-                        value={cvIntakeDraft.letterLanguage}
-                        onChange={(e) => handleCvIntakeField("letterLanguage", e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </section>
-              )}
             </div>
 
             <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">

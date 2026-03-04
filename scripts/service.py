@@ -37,6 +37,8 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 CATEGORIZATION_MODEL = os.getenv("CATEGORIZATION_MODEL", "llama3.2:3b")
 DIMS = int(os.getenv("DIMS", "768"))
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 # --- Helper: Normalization (only used by /embed endpoint) ---
@@ -420,122 +422,164 @@ def simple_categorize_cv(text: str, max_groups: int = 10) -> list[str]:
 
 async def resolve_cv_groups(cat_text: str) -> tuple[list[str], list[str], list[tuple[str, int]], str]:
     """
-    Fast-first categorization:
-    - Run keyword scoring first (cheap)
-    - If strong signals exist, skip LLM for speed and stability
-    - Otherwise use LLM and merge keyword additions
-    Returns (final_groups, llm_groups, kw_ranked, source)
+    Claude-first categorization with keyword fallback.
+
+    Strategy:
+    1. Try Claude Haiku (per-experience + per-skills, very accurate, fast).
+    2. If Claude is unavailable (no key / network error), fall back to keyword scoring.
+
+    Returns (final_groups, claude_groups, kw_ranked, source)
     """
     kw_ranked = simple_categorize_cv_scored(cat_text, max_groups=10)
     kw_groups = [g for g, _ in kw_ranked]
 
-    # Strong enough lexical evidence -> skip slow LLM (huge latency win on common CVs)
-    # Example: kitchen/cleaning/care CVs with many explicit tokens.
-    strong_kw = bool(kw_ranked) and (
-        kw_ranked[0][1] >= 2 or sum(score for _, score in kw_ranked[:3]) >= 4
-    )
-    if strong_kw:
+    # Primary: Claude Haiku — accurate per-experience/per-skills categorization
+    claude_groups = await categorize_cv_with_claude(cat_text)
+    if claude_groups:
+        # Only merge keyword hits with score >= 3 to avoid noisy low-confidence additions
+        high_conf_kw = [g for g, s in kw_ranked if s >= 3 and g not in claude_groups]
+        merged = list(dict.fromkeys(claude_groups + high_conf_kw))
+        return merged[:6], claude_groups, kw_ranked, "claude+keyword"
+
+    # Fallback: keyword-only when Claude is unavailable
+    if kw_groups:
+        print("⚠️ [CATEGORIZATION] Claude unavailable — using keyword fallback.")
         return kw_groups[:5], [], kw_ranked, "keyword"
 
-    llm_groups = await categorize_cv_text(cat_text)
-    merged = list(dict.fromkeys(llm_groups + [g for g in kw_groups if g not in llm_groups]))
-    final_groups = merged[:5]
-    return final_groups, llm_groups, kw_ranked, ("llm+keyword" if llm_groups else "keyword")
+    return [], [], kw_ranked, "none"
 
 
-async def categorize_cv_text(cv_text: str) -> list[str]:
+def _build_groups_reference() -> tuple[list[str], str]:
     """
-    LLM-based CV categorization at occupation_group_label level.
-    Returns 5-10 specific group names chosen from category_map.json.
-    Requires llama3.2:3b (or CATEGORIZATION_MODEL) to be available in Ollama.
+    Returns (all_groups_flat_list, formatted_reference_text) from category_map.json.
+    Organises groups by field so Claude understands the taxonomy structure.
     """
+    category_map = _load_category_map()
+    all_groups: list[str] = []
+    lines: list[str] = []
+    for field, field_data in category_map.items():
+        groups = field_data.get("groups", [])
+        if groups:
+            lines.append(f"{field}:")
+            for g in groups:
+                lines.append(f"  - {g}")
+                all_groups.append(g)
+    return all_groups, "\n".join(lines)
+
+
+async def categorize_cv_with_claude(cv_text: str) -> list[str]:
+    """
+    Claude Haiku-based CV categorization.
+
+    Strategy (per user requirement):
+    - 1 category tag per work experience listed in the CV (max 3)
+    - 1 category tag for the skills section (if present)
+    - Returns up to 5 unique groups, most relevant first
+
+    Replaces llama3.2:3b which produced false positives via CPU-side inference.
+    """
+    if not ANTHROPIC_API_KEY:
+        print("⚠️ [CATEGORIZATION] ANTHROPIC_API_KEY not set, skipping Claude categorization.")
+        return []
+
     if not cv_text or not cv_text.strip():
         return []
 
-    # Build flat list of all groups from category_map.json for the LLM to choose from
-    category_map = _load_category_map()
-    if category_map:
-        all_groups: list[str] = []
-        for field_data in category_map.values():
-            all_groups.extend(field_data.get('groups', []))
-        groups_list = "\n".join(all_groups)
-    else:
-        # Absolute fallback if category_map.json is missing
-        groups_list = ""
+    all_groups, groups_reference = _build_groups_reference()
+    if not all_groups:
+        return []
 
-    prompt = f"""You are categorizing a CV into Swedish job market occupation groups.
+    system_prompt = """You are an expert at classifying Swedish CVs into Arbetsförmedlingen occupation groups.
 
-Choose the 1-5 most relevant occupation groups from this EXACT list (use the names exactly as written):
+Your job is to assign ONE occupation group per work experience listed in the CV.
+Assign tags to ALL work experiences found — do not skip any.
 
-{groups_list}
+RULES:
+- Return ONLY groups from the provided list, using EXACT Swedish spelling
+- Assign ONE group per work experience — cover every job role listed
+- Optionally add ONE group for the skills section if skills clearly suggest an additional occupation
+- Return max 6 groups total
+- Base decisions on EXPLICIT job titles and roles — never guess from vague context
+- Do NOT add kitchen/food/cleaning/healthcare groups unless the CV clearly states this experience
+- Return ONLY a valid JSON array of strings, no explanation"""
 
-CV Text:
-{cv_text[:3000]}
+    user_prompt = f"""Classify this CV. Assign 1 occupation group to EACH work experience (all of them), plus 1 for skills if applicable.
 
-Rules:
-- Pick only from the list above, using the exact Swedish names
-- Return 1-5 groups, most relevant first
-- Prioritize explicit role evidence from experience/job titles before broad assumptions
-- Do not guess broad unrelated groups just to fill the list
-- Return ONLY a JSON array, no explanation
+AVAILABLE OCCUPATION GROUPS (choose ONLY from this list, exact spelling):
+{groups_reference}
 
-Example output: ["Kockar och kallskänkor", "Restaurang- och köksbiträden m.fl.", "Städare"]
+---
+
+CV TEXT:
+{cv_text[:6000]}
+
+---
+
+Return a JSON array with one group per work experience found (cover all experiences listed).
+Example format: ["Mjukvaru- och systemutvecklare m.fl.", "Flygmekaniker m.fl.", "Övriga drifttekniker och processövervakare"]
 
 Your response (JSON array only):"""
 
     try:
-        # CPU-only inference of llama3.2:3b with a ~200-line group list + CV text
-        # typically takes 60-180 s. Use a generous timeout so we don't cut it short.
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                OLLAMA_GENERATE_URL,
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                },
                 json={
-                    "model": CATEGORIZATION_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "temperature": 0.3,
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 512,
+                    "temperature": 0.1,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
                 },
             )
             response.raise_for_status()
             data = response.json()
-            generated_text = data.get("response", "")
+            generated_text = (data.get("content") or [{}])[0].get("text", "").strip()
 
-            cleaned = generated_text.strip()
-            if cleaned.startswith("```json"):
-                cleaned = cleaned[7:]
+            # Strip markdown code fences if present
+            cleaned = generated_text
             if cleaned.startswith("```"):
-                cleaned = cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
             cleaned = cleaned.strip()
 
             subcategories = json.loads(cleaned)
-            if isinstance(subcategories, list):
-                # Validate: keep only groups that exist exactly in the taxonomy
-                valid_set = set(all_groups) if all_groups else set()
-                valid = [g for g in subcategories if g in valid_set]
-                invalid = [g for g in subcategories if g not in valid_set]
-                if invalid:
-                    print(f"⚠️ [CATEGORIZATION] Discarded hallucinated groups: {invalid}")
-                if valid:
-                    print(f"✅ [CATEGORIZATION] Valid groups (LLM): {valid}")
-                    return valid[:10]
-                else:
-                    print(f"⚠️ [CATEGORIZATION] No valid groups after validation, falling back to keywords")
-                    return []
-            else:
-                print(f"⚠️ [CATEGORIZATION] Response was not a list: {subcategories}")
+            if not isinstance(subcategories, list):
+                print(f"⚠️ [CATEGORIZATION] Claude response was not a list: {subcategories}")
                 return []
 
-    except json.JSONDecodeError as e:
-        print(f"⚠️ [CATEGORIZATION] Failed to parse JSON: {generated_text[:200]}")
+            valid_set = set(all_groups)
+            valid = [g for g in subcategories if g in valid_set]
+            invalid = [g for g in subcategories if g not in valid_set]
+            if invalid:
+                print(f"⚠️ [CATEGORIZATION] Discarded hallucinated groups: {invalid}")
+            if valid:
+                print(f"✅ [CATEGORIZATION] Valid groups (Claude): {valid}")
+            return valid[:6]
+
+    except json.JSONDecodeError:
+        print(f"⚠️ [CATEGORIZATION] Claude returned unparseable JSON: {generated_text[:200]}")
         return []
     except httpx.RequestError as e:
-        print(f"❌ Connection error to Ollama for categorization: {e}")
+        print(f"❌ [CATEGORIZATION] Anthropic API connection error: {e}")
         return []
     except Exception as e:
-        print(f"❌ Categorization error: {e}")
+        print(f"❌ [CATEGORIZATION] Claude categorization error: {e}")
         return []
+
+
+async def categorize_cv_text(cv_text: str) -> list[str]:
+    """
+    Compatibility shim — delegates to Claude Haiku.
+    Kept so existing call sites don't break.
+    """
+    return await categorize_cv_with_claude(cv_text)
 
 
 @app.post("/categorize-cv")

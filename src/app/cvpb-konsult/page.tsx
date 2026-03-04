@@ -1,15 +1,6 @@
-import { StaticOrderForm } from "@/components/orders/StaticOrderForm"
+import { redirect } from "next/navigation"
 
-export default function CvPbKonsultOrderPage() {
-  return (
-    <StaticOrderForm
-      config={{
-        name: "CV + Personligt Brev + Konsultation",
-        amount: 999,
-        flow: "booking",
-        includesLetter: true,
-        includesConsultation: true,
-      }}
-    />
-  )
+// Removed product. Redirect to dashboard.
+export default function CvPbKonsultRedirect() {
+  redirect("/dashboard")
 }

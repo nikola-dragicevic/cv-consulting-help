@@ -571,7 +571,7 @@ export function MatchesDashboard() {
                     className="min-w-[176px] bg-amber-500 text-black hover:bg-amber-400"
                   >
                     <Crown />
-                    {subscriptionCheckoutLoading ? t("Startar...", "Starting...") : t("Prenumerera 99 kr/mån", "Subscribe 99 SEK/month")}
+                    {subscriptionCheckoutLoading ? t("Startar...", "Starting...") : t("Prenumerera 100 kr/mån", "Subscribe 100 SEK/month")}
                   </Button>
                 )}
               </div>
@@ -581,8 +581,8 @@ export function MatchesDashboard() {
           {!hasActiveSubscription && (
             <div className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900">
               {t(
-                "Free-plan: Du ser 4 jobb per lista. Prenumeration (99 kr/mån) låser upp alla jobb.",
-                "Free plan: You can see 4 jobs per list. Subscription (99 SEK/month) unlocks all jobs."
+                "Free-plan: Du ser 4 jobb per lista. Prenumeration (100 kr/mån) låser upp alla jobb.",
+                "Free plan: You can see 4 jobs per list. Subscription (100 SEK/month) unlocks all jobs."
               )}
             </div>
           )}

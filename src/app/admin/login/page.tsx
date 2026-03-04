@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { getBrowserSupabase } from "@/lib/supabaseBrowser"
-import { getUserRole, isAdminUser } from "@/lib/admin"
+import { getUserRole, isAdminOrModerator } from "@/lib/admin"
 
 export default function AdminLoginPage() {
   const router = useRouter()
@@ -23,7 +23,7 @@ export default function AdminLoginPage() {
         return
       }
 
-      if (!isAdminUser(user)) {
+      if (!isAdminOrModerator(user)) {
         const role = getUserRole(user) || "none"
         setMessage(`Inloggad som ${user.email ?? "okänd användare"}, men rollen är '${role}'. Endast role=admin har adminåtkomst.`)
         setLoading(false)

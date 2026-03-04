@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { getBrowserSupabase } from '@/lib/supabaseBrowser';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/components/i18n/LanguageProvider';
+import { isAdminOrModerator } from '@/lib/admin';
 import type { User } from '@supabase/supabase-js';
 
 export default function Header() {
@@ -97,16 +98,16 @@ export default function Header() {
               CV
             </Link>
             <Link
-              href="/cv&pb"
+              href="/pb"
               className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
             >
-              CV + PB
+              {t("Personligt Brev", "Cover Letter")}
             </Link>
             <Link
-              href="/cvpb&konsult"
+              href="/dashboard"
               className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
             >
-              CV + PB + Konsult
+              {t("Jobbmatchning", "Job Matching")}
             </Link>
           </div>
         </div>
@@ -119,6 +120,11 @@ export default function Header() {
           ) : user ? (
             <div className="flex items-center gap-4">
               <span className="text-sm text-gray-600 hidden sm:block">{user.email}</span>
+              {isAdminOrModerator(user) && (
+                <Link href="/admin">
+                  <Button variant="outline" size="sm">Admin</Button>
+                </Link>
+              )}
               <Link href="/profile">
                 <Button variant="outline" size="sm">{t("Min Profil", "My Profile")}</Button>
               </Link>

@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
-type PackageFlow = "booking" | "cv_intake" | "cv_letter_intake"
+type PackageFlow = "booking" | "cv_intake"
 
 type PackageConfig = {
   name: string
@@ -27,28 +27,23 @@ type PackageConfig = {
 type ExperienceEntry = {
   title: string
   company: string
-  city: string
   start: string
   end: string
   current: boolean
-  tasks: string
-  achievements: string
-  tools: string
+  description: string // combined: tasks + achievements + tools
 }
 
 type EducationEntry = {
   program: string
   school: string
-  city: string
   start: string
   end: string
   current: boolean
-  details: string
 }
 
 type IntakeDraft = {
   fullName: string
-  address: string
+  address: string       // stores ort/stad for CV header
   phone: string
   email: string
   targetJobLink: string
@@ -62,43 +57,21 @@ type IntakeDraft = {
   certifications: string
   languages: string
   driverLicense: string
-  additionalInfo: string
-  includeFullAddressInCv: boolean
+  // letter fields
   jobTitle: string
   companyName: string
-  jobAdText: string
-  whyThisRole: string
-  whyThisCompany: string
+  whyThisRole: string   // combined: why role + why this company
   keyExamples: string
-  explainInLetter: string
   tone: string
   letterLanguage: string
 }
 
 function emptyExperience(): ExperienceEntry {
-  return {
-    title: "",
-    company: "",
-    city: "",
-    start: "",
-    end: "",
-    current: false,
-    tasks: "",
-    achievements: "",
-    tools: "",
-  }
+  return { title: "", company: "", start: "", end: "", current: false, description: "" }
 }
 
 function emptyEducation(): EducationEntry {
-  return {
-    program: "",
-    school: "",
-    city: "",
-    start: "",
-    end: "",
-    current: false,
-    details: "",
-  }
+  return { program: "", school: "", start: "", end: "", current: false }
 }
 
 function createInitialDraft(email = ""): IntakeDraft {
@@ -118,15 +91,10 @@ function createInitialDraft(email = ""): IntakeDraft {
     certifications: "",
     languages: "",
     driverLicense: "",
-    additionalInfo: "",
-    includeFullAddressInCv: false,
     jobTitle: "",
     companyName: "",
-    jobAdText: "",
     whyThisRole: "",
-    whyThisCompany: "",
     keyExamples: "",
-    explainInLetter: "",
     tone: "",
     letterLanguage: "svenska",
   }
@@ -140,20 +108,31 @@ function validateDraft(
 ): string | null {
   const t = (sv: string, en: string) => (lang === "sv" ? sv : en)
   if (!draft.fullName.trim()) return t("Fyll i fullständigt namn.", "Enter full name.")
-  if (!draft.address.trim()) return t("Fyll i adress.", "Enter address.")
   if (!draft.phone.trim()) return t("Fyll i telefonnummer.", "Enter phone number.")
   if (!draft.email.trim()) return t("Fyll i e-post.", "Enter email.")
   if (!draft.profileSummary.trim()) return t("Skriv en kort profiltext.", "Write a short profile summary.")
   if (!draft.experiences[0].title.trim()) return t("Ange titel för Erfarenhet 1.", "Enter title for Experience 1.")
   if (!draft.experiences[0].company.trim()) return t("Ange företag för Erfarenhet 1.", "Enter company for Experience 1.")
   if (!draft.education.program.trim()) return t("Fyll i utbildning/examen.", "Enter education/degree.")
-  if (!draft.skills.trim()) return t("Fyll i skills.", "Enter skills.")
+  if (!draft.skills.trim()) return t("Fyll i kompetenser.", "Enter skills.")
 
   if (draft.targetJobLink.trim()) {
     try {
       const url = new URL(draft.targetJobLink.trim())
       if (!["http:", "https:"].includes(url.protocol)) {
         return t("Länken måste börja med http eller https.", "The link must start with http or https.")
+      }
+      if (!url.hostname.includes("arbetsformedlingen.se")) {
+        return t(
+          "Endast länkar från arbetsformedlingen.se accepteras.",
+          "Only links from arbetsformedlingen.se are accepted."
+        )
+      }
+      if (!url.pathname.match(/\/annonser\/\d+/)) {
+        return t(
+          "Länken måste peka på en specifik annons, t.ex. https://arbetsformedlingen.se/platsbanken/annonser/12345678",
+          "The link must point to a specific job ad, e.g. https://arbetsformedlingen.se/platsbanken/annonser/12345678"
+        )
       }
     } catch {
       return t("Ogiltig jobblänk.", "Invalid job link.")
@@ -162,7 +141,13 @@ function validateDraft(
 
   if (config.includesLetter) {
     if (!draft.jobTitle.trim()) return t("Fyll i vilket jobb du söker.", "Enter which role you are applying for.")
-    if (!draft.whyThisRole.trim()) return t("Fyll i varför du vill ha rollen.", "Enter why you want the role.")
+    if (!draft.whyThisRole.trim()) return t("Berätta varför du söker rollen.", "Explain why you are applying for this role.")
+    if (!draft.targetJobLink.trim()) {
+      return t(
+        "Jobblänk från Arbetsförmedlingen krävs för personligt brev.",
+        "A job link from Arbetsförmedlingen is required for the cover letter."
+      )
+    }
   }
 
   if (config.includesConsultation) {
@@ -299,106 +284,152 @@ export function StaticOrderForm({ config }: { config: PackageConfig }) {
   }
 
   return (
-    <div className="container mx-auto max-w-5xl px-4 py-8">
+    <div className="container mx-auto max-w-3xl px-4 py-8">
       <Card>
         <CardHeader>
           <CardTitle>{config.name}</CardTitle>
           <CardDescription>
-            {t("Fyll i formuläret och klicka på Beställ längst ner för att gå vidare till Stripe-betalning.", "Fill the form and click Order at the end to continue to Stripe checkout.")}
+            {t(
+              "Fyll i formuläret nedan. Vi genererar ett professionellt, ATS-optimerat CV med AI baserat på din info.",
+              "Fill in the form below. We generate a professional, ATS-optimised CV using AI based on your information."
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-8">
-          {message && <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">{message}</div>}
+          {message && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {message}
+            </div>
+          )}
 
+          {/* 1. Contact */}
           <section className="space-y-4">
-            <h2 className="text-lg font-semibold">{t("1. Kontaktuppgifter", "1. Contact details")}</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>{t("Fullständigt namn", "Full name")}</Label>
+            <h2 className="text-base font-semibold text-slate-800">{t("1. Kontaktuppgifter", "1. Contact details")}</h2>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>{t("Fullständigt namn", "Full name")} *</Label>
                 <Input value={draft.fullName} onChange={(e) => handleField("fullName", e.target.value)} />
               </div>
-              <div className="space-y-2">
-                <Label>{t("E-post", "Email")}</Label>
-                <Input value={draft.email} onChange={(e) => handleField("email", e.target.value)} />
+              <div className="space-y-1.5">
+                <Label>{t("E-post", "Email")} *</Label>
+                <Input type="email" value={draft.email} onChange={(e) => handleField("email", e.target.value)} />
               </div>
-              <div className="space-y-2">
-                <Label>{t("Telefonnummer", "Phone number")}</Label>
-                <Input value={draft.phone} onChange={(e) => handleField("phone", e.target.value)} />
+              <div className="space-y-1.5">
+                <Label>{t("Telefonnummer", "Phone number")} *</Label>
+                <Input type="tel" value={draft.phone} onChange={(e) => handleField("phone", e.target.value)} />
               </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>{t("Adress", "Address")}</Label>
-                <Input value={draft.address} onChange={(e) => handleField("address", e.target.value)} />
+              <div className="space-y-1.5">
+                <Label>{t("Ort / Stad", "City")}</Label>
+                <Input placeholder={t("t.ex. Stockholm", "e.g. Stockholm")} value={draft.address} onChange={(e) => handleField("address", e.target.value)} />
               </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>{t("Jobblänk (valfritt)", "Job link (optional)")}</Label>
-                <Input placeholder="https://..." value={draft.targetJobLink} onChange={(e) => handleField("targetJobLink", e.target.value)} />
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>
+                  {config.includesLetter
+                    ? t("Jobblänk från Arbetsförmedlingen (obligatorisk)", "Job link from Arbetsförmedlingen (required)")
+                    : t("Jobblänk från Arbetsförmedlingen (valfritt – förbättrar CV:t)", "Job link from Arbetsförmedlingen (optional – improves CV)")}
+                </Label>
+                <Input
+                  placeholder="https://arbetsformedlingen.se/platsbanken/annonser/..."
+                  value={draft.targetJobLink}
+                  onChange={(e) => handleField("targetJobLink", e.target.value)}
+                />
+                <p className="text-xs text-slate-500">
+                  {t(
+                    "Vi hämtar jobbbeskrivningen automatiskt och skräddarsyr ditt CV mot rollen.",
+                    "We fetch the job description automatically and tailor your CV to the role."
+                  )}
+                </p>
               </div>
             </div>
           </section>
 
-          <section className="space-y-4">
-            <h2 className="text-lg font-semibold">{t("2. Kort profiltext", "2. Short profile summary")}</h2>
-            <Textarea rows={5} value={draft.profileSummary} onChange={(e) => handleField("profileSummary", e.target.value)} />
+          {/* 2. Profile summary */}
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold text-slate-800">{t("2. Profiltext", "2. Profile summary")} *</h2>
+            <p className="text-xs text-slate-500">
+              {t(
+                "2–4 meningar om dig själv: vem du är, vad du är bra på och vad du söker. AI:n förbättrar språket.",
+                "2–4 sentences about yourself: who you are, your strengths, and what you are looking for. AI will polish the language."
+              )}
+            </p>
+            <Textarea
+              rows={4}
+              placeholder={t(
+                "T.ex.: Erfaren projektledare med 8 år inom IT-branschen. Specialiserad på agila metoder och teamledarskap. Söker en roll där jag kan driva digitala transformationsprojekt i en växande organisation.",
+                "E.g.: Experienced project manager with 8 years in IT. Specialised in agile methods and team leadership. Looking for a role driving digital transformation in a growing organisation."
+              )}
+              value={draft.profileSummary}
+              onChange={(e) => handleField("profileSummary", e.target.value)}
+            />
           </section>
 
+          {/* 3. Work experience */}
           <section className="space-y-4">
-            <h2 className="text-lg font-semibold">{t("3. Arbetslivserfarenhet", "3. Work experience")}</h2>
-            {[0, 1, 2].map((idx) => {
+            <h2 className="text-base font-semibold text-slate-800">{t("3. Arbetslivserfarenhet", "3. Work experience")}</h2>
+            {([0, 1, 2] as const).map((idx) => {
               if (idx === 2 && !draft.includeExperience3) return null
-              const exp = draft.experiences[idx as 0 | 1 | 2]
+              const exp = draft.experiences[idx]
+              const label = t(`Erfarenhet ${idx + 1}`, `Experience ${idx + 1}`)
               return (
-                <div key={idx} className="rounded-lg border border-slate-200 p-4 space-y-4">
+                <div key={idx} className="rounded-lg border border-slate-200 p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-medium">{t("Erfarenhet", "Experience")} {idx + 1}</h3>
-                    <label className="text-sm text-slate-600 inline-flex items-center gap-2">
+                    <h3 className="text-sm font-medium text-slate-700">{label}</h3>
+                    <label className="text-xs text-slate-600 inline-flex items-center gap-1.5 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={exp.current}
-                        onChange={(e) => handleExperience(idx as 0 | 1 | 2, "current", e.target.checked)}
+                        onChange={(e) => handleExperience(idx, "current", e.target.checked)}
                       />
                       {t("Pågående", "Current")}
                     </label>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>{t("Titel", "Title")}</Label>
-                      <Input value={exp.title} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "title", e.target.value)} />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{t("Jobbtitel", "Job title")}{idx === 0 ? " *" : ""}</Label>
+                      <Input
+                        placeholder={t("t.ex. Projektledare", "e.g. Project Manager")}
+                        value={exp.title}
+                        onChange={(e) => handleExperience(idx, "title", e.target.value)}
+                      />
                     </div>
-                    <div className="space-y-2">
-                      <Label>{t("Företag", "Company")}</Label>
-                      <Input value={exp.company} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "company", e.target.value)} />
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{t("Företag", "Company")}{idx === 0 ? " *" : ""}</Label>
+                      <Input
+                        placeholder={t("t.ex. Volvo AB", "e.g. Volvo AB")}
+                        value={exp.company}
+                        onChange={(e) => handleExperience(idx, "company", e.target.value)}
+                      />
                     </div>
-                    <div className="space-y-2">
-                      <Label>{t("Ort", "City")}</Label>
-                      <Input value={exp.city} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "city", e.target.value)} />
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{t("Startdatum", "Start date")}</Label>
+                      <Input placeholder="YYYY-MM" value={exp.start} onChange={(e) => handleExperience(idx, "start", e.target.value)} />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label>{t("Startdatum", "Start date")}</Label>
-                        <Input placeholder="YYYY-MM" value={exp.start} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "start", e.target.value)} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>{t("Slutdatum", "End date")}</Label>
-                        <Input placeholder={exp.current ? t("Pågående", "Current") : "YYYY-MM"} disabled={exp.current} value={exp.end} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "end", e.target.value)} />
-                      </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{t("Slutdatum", "End date")}</Label>
+                      <Input
+                        placeholder={exp.current ? t("Pågående", "Current") : "YYYY-MM"}
+                        disabled={exp.current}
+                        value={exp.end}
+                        onChange={(e) => handleExperience(idx, "end", e.target.value)}
+                      />
                     </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Arbetsuppgifter", "Tasks")}</Label>
-                      <Textarea rows={4} value={exp.tasks} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "tasks", e.target.value)} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Resultat / prestationer", "Achievements")}</Label>
-                      <Textarea rows={3} value={exp.achievements} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "achievements", e.target.value)} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>{t("Verktyg / teknik", "Tools / tech")}</Label>
-                      <Input value={exp.tools} onChange={(e) => handleExperience(idx as 0 | 1 | 2, "tools", e.target.value)} />
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label className="text-xs">{t("Beskrivning", "Description")}</Label>
+                      <Textarea
+                        rows={4}
+                        placeholder={t(
+                          "Beskriv dina uppgifter, resultat och verktyg du använde. T.ex.: Ledde ett team om 6 utvecklare i agila sprintar. Levererade nytt betalningssystem som ökade konverteringen med 15%. Använde React, Node.js och AWS.",
+                          "Describe your tasks, results, and tools used. E.g.: Led a team of 6 developers in agile sprints. Delivered new payment system that increased conversion by 15%. Used React, Node.js, and AWS."
+                        )}
+                        value={exp.description}
+                        onChange={(e) => handleExperience(idx, "description", e.target.value)}
+                      />
                     </div>
                   </div>
                 </div>
               )
             })}
-            <label className="text-sm text-slate-700 inline-flex items-center gap-2">
+            <label className="text-sm text-slate-600 inline-flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={draft.includeExperience3}
@@ -408,177 +439,219 @@ export function StaticOrderForm({ config }: { config: PackageConfig }) {
             </label>
           </section>
 
+          {/* 4. Education */}
           <section className="space-y-4">
-            <h2 className="text-lg font-semibold">{t("4. Utbildning", "4. Education")}</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>{t("Utbildning / Examen", "Education / Degree")}</Label>
-                <Input value={draft.education.program} onChange={(e) => handleEducation("program", e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>{t("Skola", "School")}</Label>
-                <Input value={draft.education.school} onChange={(e) => handleEducation("school", e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>{t("Ort", "City")}</Label>
-                <Input value={draft.education.city} onChange={(e) => handleEducation("city", e.target.value)} />
-              </div>
-              <div className="flex items-end">
-                <label className="text-sm text-slate-700 inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={draft.education.current}
-                    onChange={(e) => handleEducation("current", e.target.checked)}
+            <h2 className="text-base font-semibold text-slate-800">{t("4. Utbildning", "4. Education")}</h2>
+            <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("Utbildning / Examen", "Degree / Programme")} *</Label>
+                  <Input
+                    placeholder={t("t.ex. Civilingenjör Datateknik", "e.g. B.Sc. Computer Science")}
+                    value={draft.education.program}
+                    onChange={(e) => handleEducation("program", e.target.value)}
                   />
-                  {t("Pågående", "Current")}
-                </label>
-              </div>
-              <div className="space-y-2">
-                <Label>{t("Startdatum", "Start date")}</Label>
-                <Input placeholder="YYYY-MM" value={draft.education.start} onChange={(e) => handleEducation("start", e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>{t("Slutdatum", "End date")}</Label>
-                <Input placeholder={draft.education.current ? t("Pågående", "Current") : "YYYY-MM"} disabled={draft.education.current} value={draft.education.end} onChange={(e) => handleEducation("end", e.target.value)} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>{t("Detaljer", "Details")}</Label>
-                <Textarea rows={3} value={draft.education.details} onChange={(e) => handleEducation("details", e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("Skola", "School")}</Label>
+                  <Input
+                    placeholder={t("t.ex. KTH", "e.g. Oxford University")}
+                    value={draft.education.school}
+                    onChange={(e) => handleEducation("school", e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("Startår", "Start year")}</Label>
+                  <Input placeholder="YYYY" value={draft.education.start} onChange={(e) => handleEducation("start", e.target.value)} />
+                </div>
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1 space-y-1.5">
+                    <Label className="text-xs">{t("Slutår", "End year")}</Label>
+                    <Input
+                      placeholder={draft.education.current ? t("Pågående", "Current") : "YYYY"}
+                      disabled={draft.education.current}
+                      value={draft.education.end}
+                      onChange={(e) => handleEducation("end", e.target.value)}
+                    />
+                  </div>
+                  <label className="text-xs text-slate-600 inline-flex items-center gap-1.5 cursor-pointer pb-2">
+                    <input
+                      type="checkbox"
+                      checked={draft.education.current}
+                      onChange={(e) => handleEducation("current", e.target.checked)}
+                    />
+                    {t("Pågående", "Current")}
+                  </label>
+                </div>
               </div>
             </div>
-            <label className="text-sm text-slate-700 inline-flex items-center gap-2">
+            <label className="text-sm text-slate-600 inline-flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={draft.includeAdditionalEducation}
                 onChange={(e) => handleField("includeAdditionalEducation", e.target.checked)}
               />
-              {t("Lägg till extra utbildning", "Add additional education")}
+              {t("Lägg till ytterligare utbildning", "Add additional education")}
             </label>
             {draft.includeAdditionalEducation && (
-              <div className="grid gap-4 md:grid-cols-2 rounded-lg border border-slate-200 p-4">
-                <div className="space-y-2">
-                  <Label>{t("Utbildning / Examen", "Education / Degree")}</Label>
-                  <Input value={draft.education2.program} onChange={(e) => handleEducation2("program", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t("Skola", "School")}</Label>
-                  <Input value={draft.education2.school} onChange={(e) => handleEducation2("school", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t("Ort", "City")}</Label>
-                  <Input value={draft.education2.city} onChange={(e) => handleEducation2("city", e.target.value)} />
-                </div>
-                <div className="flex items-end">
-                  <label className="text-sm text-slate-700 inline-flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={draft.education2.current}
-                      onChange={(e) => handleEducation2("current", e.target.checked)}
-                    />
-                    {t("Pågående", "Current")}
-                  </label>
-                </div>
-                <div className="space-y-2">
-                  <Label>{t("Startdatum", "Start date")}</Label>
-                  <Input placeholder="YYYY-MM" value={draft.education2.start} onChange={(e) => handleEducation2("start", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t("Slutdatum", "End date")}</Label>
-                  <Input placeholder={draft.education2.current ? t("Pågående", "Current") : "YYYY-MM"} disabled={draft.education2.current} value={draft.education2.end} onChange={(e) => handleEducation2("end", e.target.value)} />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>{t("Detaljer", "Details")}</Label>
-                  <Textarea rows={3} value={draft.education2.details} onChange={(e) => handleEducation2("details", e.target.value)} />
+              <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("Utbildning / Examen", "Degree / Programme")}</Label>
+                    <Input value={draft.education2.program} onChange={(e) => handleEducation2("program", e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("Skola", "School")}</Label>
+                    <Input value={draft.education2.school} onChange={(e) => handleEducation2("school", e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("Startår", "Start year")}</Label>
+                    <Input placeholder="YYYY" value={draft.education2.start} onChange={(e) => handleEducation2("start", e.target.value)} />
+                  </div>
+                  <div className="flex gap-3 items-end">
+                    <div className="flex-1 space-y-1.5">
+                      <Label className="text-xs">{t("Slutår", "End year")}</Label>
+                      <Input
+                        placeholder={draft.education2.current ? t("Pågående", "Current") : "YYYY"}
+                        disabled={draft.education2.current}
+                        value={draft.education2.end}
+                        onChange={(e) => handleEducation2("end", e.target.value)}
+                      />
+                    </div>
+                    <label className="text-xs text-slate-600 inline-flex items-center gap-1.5 cursor-pointer pb-2">
+                      <input
+                        type="checkbox"
+                        checked={draft.education2.current}
+                        onChange={(e) => handleEducation2("current", e.target.checked)}
+                      />
+                      {t("Pågående", "Current")}
+                    </label>
+                  </div>
                 </div>
               </div>
             )}
           </section>
 
-          <section className="space-y-4">
-            <h2 className="text-lg font-semibold">{t("5. Skills", "5. Skills")}</h2>
-            <div className="space-y-2">
-              <Label>{t("Kompetenser", "Skills")}</Label>
-              <Textarea rows={4} value={draft.skills} onChange={(e) => handleField("skills", e.target.value)} />
+          {/* 5. Skills */}
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold text-slate-800">{t("5. Kompetenser", "5. Skills")}</h2>
+            <div className="space-y-1.5">
+              <Label className="text-xs">{t("Kompetenser & tekniker", "Skills & technologies")} *</Label>
+              <Textarea
+                rows={3}
+                placeholder={t(
+                  "T.ex.: Projektledning, Agile/Scrum, React, TypeScript, SQL, Excel, Kundservice",
+                  "E.g.: Project management, Agile/Scrum, React, TypeScript, SQL, Excel, Customer service"
+                )}
+                value={draft.skills}
+                onChange={(e) => handleField("skills", e.target.value)}
+              />
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>{t("Certifikat", "Certificates")}</Label>
-                <Textarea rows={3} value={draft.certifications} onChange={(e) => handleField("certifications", e.target.value)} />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("Språk", "Languages")}</Label>
+                <Input
+                  placeholder={t("t.ex. Svenska, Engelska (flytande)", "e.g. Swedish, English (fluent)")}
+                  value={draft.languages}
+                  onChange={(e) => handleField("languages", e.target.value)}
+                />
               </div>
-              <div className="space-y-2">
-                <Label>{t("Språk", "Languages")}</Label>
-                <Textarea rows={3} value={draft.languages} onChange={(e) => handleField("languages", e.target.value)} />
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("Certifikat", "Certificates")}</Label>
+                <Input
+                  placeholder={t("t.ex. AWS, PMP, Scrum", "e.g. AWS, PMP, Scrum")}
+                  value={draft.certifications}
+                  onChange={(e) => handleField("certifications", e.target.value)}
+                />
               </div>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>{t("Körkort", "Driver's license")}</Label>
-                <Input value={draft.driverLicense} onChange={(e) => handleField("driverLicense", e.target.value)} />
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("Körkort", "Driver's license")}</Label>
+                <Input
+                  placeholder={t("t.ex. B", "e.g. B")}
+                  value={draft.driverLicense}
+                  onChange={(e) => handleField("driverLicense", e.target.value)}
+                />
               </div>
-              <div className="flex items-end">
-                <label className="text-sm text-slate-700 inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={draft.includeFullAddressInCv}
-                    onChange={(e) => handleField("includeFullAddressInCv", e.target.checked)}
-                  />
-                  {t("Visa full adress i CV", "Show full address in CV")}
-                </label>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>{t("Övrigt", "Additional info")}</Label>
-              <Textarea rows={3} value={draft.additionalInfo} onChange={(e) => handleField("additionalInfo", e.target.value)} />
             </div>
           </section>
 
+          {/* 6. Cover letter (letter flow only) */}
           {config.includesLetter && (
             <section className="space-y-4 rounded-lg border border-blue-200 bg-blue-50/30 p-4">
-              <h2 className="text-lg font-semibold">{t("6. Underlag för personligt brev", "6. Cover letter details")}</h2>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>{t("Vilket jobb söker du?", "Which role are you applying for?")}</Label>
-                  <Input value={draft.jobTitle} onChange={(e) => handleField("jobTitle", e.target.value)} />
+              <h2 className="text-base font-semibold text-slate-800">{t("6. Underlag för personligt brev", "6. Cover letter details")}</h2>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("Vilket jobb söker du?", "Which role are you applying for?")} *</Label>
+                  <Input
+                    placeholder={t("t.ex. Projektledare", "e.g. Project Manager")}
+                    value={draft.jobTitle}
+                    onChange={(e) => handleField("jobTitle", e.target.value)}
+                  />
                 </div>
-                <div className="space-y-2">
-                  <Label>{t("Företag", "Company")}</Label>
-                  <Input value={draft.companyName} onChange={(e) => handleField("companyName", e.target.value)} />
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("Företag", "Company")}</Label>
+                  <Input
+                    placeholder={t("t.ex. Spotify", "e.g. Spotify")}
+                    value={draft.companyName}
+                    onChange={(e) => handleField("companyName", e.target.value)}
+                  />
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>{t("Jobbannons", "Job ad")}</Label>
-                  <Textarea rows={6} value={draft.jobAdText} onChange={(e) => handleField("jobAdText", e.target.value)} />
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs">{t("Varför söker du denna roll och detta företag?", "Why are you applying for this role and company?")} *</Label>
+                  <Textarea
+                    rows={4}
+                    placeholder={t(
+                      "T.ex.: Jag söker rollen för att jag brinner för produktutveckling och har 5 år av erfarenhet inom just det området. Spotify tilltalar mig för att de kombinerar teknik med kreativitet på ett sätt som passar min profil.",
+                      "E.g.: I am applying because I am passionate about product development with 5 years of relevant experience. Spotify appeals to me because they combine technology and creativity in a way that matches my profile."
+                    )}
+                    value={draft.whyThisRole}
+                    onChange={(e) => handleField("whyThisRole", e.target.value)}
+                  />
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>{t("Varför vill du ha just detta jobb?", "Why do you want this role?")}</Label>
-                  <Textarea rows={4} value={draft.whyThisRole} onChange={(e) => handleField("whyThisRole", e.target.value)} />
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs">{t("2–3 konkreta exempel att lyfta i brevet", "2–3 key examples to highlight in the letter")}</Label>
+                  <Textarea
+                    rows={3}
+                    placeholder={t(
+                      "T.ex.: Ledde lansering av mobilapp med 50k nedladdningar första månaden. Reducerade supportärenden med 30% genom ny onboarding-process.",
+                      "E.g.: Led mobile app launch with 50k downloads in first month. Reduced support tickets by 30% with new onboarding process."
+                    )}
+                    value={draft.keyExamples}
+                    onChange={(e) => handleField("keyExamples", e.target.value)}
+                  />
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>{t("Varför just detta företag?", "Why this company?")}</Label>
-                  <Textarea rows={4} value={draft.whyThisCompany} onChange={(e) => handleField("whyThisCompany", e.target.value)} />
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("Ton", "Tone")}</Label>
+                  <select
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={draft.tone}
+                    onChange={(e) => handleField("tone", e.target.value)}
+                  >
+                    <option value="">{t("Professionell (standard)", "Professional (default)")}</option>
+                    <option value="Personlig och engagerad">{t("Personlig och engagerad", "Personal and engaged")}</option>
+                    <option value="Energisk och driven">{t("Energisk och driven", "Energetic and driven")}</option>
+                    <option value="Formell">{t("Formell", "Formal")}</option>
+                  </select>
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>{t("2-3 exempel att lyfta", "2-3 key examples")}</Label>
-                  <Textarea rows={4} value={draft.keyExamples} onChange={(e) => handleField("keyExamples", e.target.value)} />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>{t("Något brevet ska förklara", "Anything to explain in letter")}</Label>
-                  <Textarea rows={3} value={draft.explainInLetter} onChange={(e) => handleField("explainInLetter", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t("Ton", "Tone")}</Label>
-                  <Input value={draft.tone} onChange={(e) => handleField("tone", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t("Språk", "Language")}</Label>
-                  <Input value={draft.letterLanguage} onChange={(e) => handleField("letterLanguage", e.target.value)} />
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("Språk för brevet", "Letter language")}</Label>
+                  <select
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={draft.letterLanguage}
+                    onChange={(e) => handleField("letterLanguage", e.target.value)}
+                  >
+                    <option value="svenska">Svenska</option>
+                    <option value="english">English</option>
+                  </select>
                 </div>
               </div>
             </section>
           )}
 
+          {/* 7. Booking (consultation flow only) */}
           {config.includesConsultation && (
             <section className="space-y-4 rounded-lg border border-amber-200 bg-amber-50/40 p-4">
-              <h2 className="text-lg font-semibold">{t("7. Välj konsultationstid", "7. Select consultation time")}</h2>
+              <h2 className="text-base font-semibold text-slate-800">{t("7. Välj konsultationstid", "7. Select consultation time")}</h2>
               <p className="text-sm text-slate-600">{t("Välj en ledig tid innan du klickar Beställ.", "Select an available time before clicking Order.")}</p>
               {slotLabel && <p className="text-sm font-medium text-slate-800">{t("Vald tid:", "Selected time:")} {slotLabel}</p>}
               <BookingCalendar
@@ -590,10 +663,10 @@ export function StaticOrderForm({ config }: { config: PackageConfig }) {
             </section>
           )}
 
-          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end pt-2">
             {canBypassPayment && (
               <Button type="button" variant="secondary" onClick={() => submitOrder(true)} disabled={submitting}>
-                {submitting ? t("Skapar testorder...", "Creating test order...") : t("Admin: Skapa testorder utan betalning", "Admin: Create test order without payment")}
+                {submitting ? t("Skapar testorder...", "Creating test order...") : t("Admin: Testorder utan betalning", "Admin: Test order without payment")}
               </Button>
             )}
             <Button type="button" className="bg-blue-600 hover:bg-blue-700" onClick={() => submitOrder(false)} disabled={submitting}>

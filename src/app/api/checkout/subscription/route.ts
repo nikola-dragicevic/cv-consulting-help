@@ -3,36 +3,40 @@ import { getServerSupabase } from "@/lib/supabaseServer";
 import { getStripeClient } from "@/lib/stripeServer";
 
 const stripe = getStripeClient();
-const dashboardPremiumPriceId = process.env.STRIPE_PRICE_ID_DASHBOARD_PREMIUM?.trim();
+const MONTHLY_PRICE_SEK = 100;
 
 export async function POST() {
   try {
     const supabase = await getServerSupabase();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://jobbnu.se";
-    if (!dashboardPremiumPriceId) {
-      return NextResponse.json(
-        { error: "Missing STRIPE_PRICE_ID_DASHBOARD_PREMIUM" },
-        { status: 500 }
-      );
-    }
+    const priceId = process.env.STRIPE_PRICE_ID_DASHBOARD_PREMIUM?.trim();
+
+    // Use pre-configured recurring price ID if available; otherwise build price_data
+    const lineItem = priceId
+      ? { price: priceId, quantity: 1 }
+      : {
+          price_data: {
+            currency: "sek",
+            unit_amount: MONTHLY_PRICE_SEK * 100,
+            recurring: { interval: "month" as const },
+            product_data: {
+              name: "Dashboard Premium",
+              description: "Obegränsad jobbmatchning – AI matchar ditt CV mot tusentals jobb.",
+            },
+          },
+          quantity: 1,
+        };
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price: dashboardPremiumPriceId,
-          quantity: 1,
-        },
-      ],
+      line_items: [lineItem],
       success_url: `${baseUrl}/dashboard?subscription=success`,
       cancel_url: `${baseUrl}/dashboard?subscription=canceled`,
       customer_email: user.email ?? undefined,

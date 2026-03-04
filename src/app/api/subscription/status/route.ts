@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { createClient } from "@supabase/supabase-js";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { isAdminUser } from "@/lib/admin";
 import { getStripeClient } from "@/lib/stripeServer";
@@ -11,6 +12,10 @@ const ACTIVE_STATUSES = new Set<Stripe.Subscription.Status>([
   "trialing",
   "past_due",
 ]);
+
+function getSupabaseAdmin() {
+  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);
+}
 
 export async function GET() {
   try {
@@ -33,6 +38,22 @@ export async function GET() {
         status: "admin_override",
         currentPeriodEnd: null,
         isAdmin: true,
+      });
+    }
+
+    // Check manual_premium override in DB first (fast, no Stripe API call needed)
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: profile } = await supabaseAdmin
+      .from("candidate_profiles")
+      .select("manual_premium")
+      .eq("user_id", user.id)
+      .single();
+
+    if (profile?.manual_premium === true) {
+      return NextResponse.json({
+        hasActiveSubscription: true,
+        status: "manual_premium",
+        currentPeriodEnd: null,
       });
     }
 
