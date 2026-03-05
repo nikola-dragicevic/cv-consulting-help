@@ -15,8 +15,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CV-Hjälp & Jobbmatchning", // Updated title
-  description: "Professionell CV-hjälp och AI-driven jobbmatchning.", // Updated description
+  title: "CV-Hjälp & Jobbmatchning",
+  description: "Professionell CV-hjälp och AI-driven jobbmatchning.",
+  icons: {
+    icon: "/jobbnutag.png",
+    shortcut: "/jobbnutag.png",
+    apple: "/jobbnutag.png",
+  },
 };
 
 export default function RootLayout({

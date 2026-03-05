@@ -784,13 +784,13 @@ export default function UnifiedLandingPage() {
               <div className="relative">
                 <div className="absolute inset-0 bg-blue-200 rounded-full blur-3xl opacity-20" />
                 <Image
-                  src="/award-diploma-highres.png"
+                  src="/star-business-award-2026-masked.png"
                   alt={t("Star Business Awards utmärkelse", "Star Business Awards certificate")}
-                  width={2200}
-                  height={948}
+                  width={900}
+                  height={1200}
                   quality={100}
-                  sizes="(max-width: 1024px) 92vw, 70vw"
-                  className="relative w-full max-w-[1100px] rounded-3xl shadow-2xl border-4 border-white bg-white object-contain"
+                  sizes="(max-width: 1024px) 70vw, 55vw"
+                  className="relative w-full max-w-[520px] lg:max-w-[620px] drop-shadow-2xl object-contain"
                   priority
                 />
               </div>

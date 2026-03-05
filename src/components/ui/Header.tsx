@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { getBrowserSupabase } from '@/lib/supabaseBrowser';
 import { Button } from '@/components/ui/button';
@@ -57,17 +58,32 @@ export default function Header() {
   return (
     <header className="bg-white/80 backdrop-blur-md sticky top-0 z-40 border-b">
       <div className="container mx-auto grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-2.5">
-        <Link href="/" className="text-xl font-bold">
-          Jobb Nu
+        <Link href="/" className="flex items-center gap-2 shrink-0">
+          <Image
+            src="/jobbnu_app_icon_centered_128.png"
+            alt=""
+            width={32}
+            height={32}
+            className="h-8 w-8"
+            priority
+          />
+          <Image
+            src="/JobbNuColor.png"
+            alt="JobbNu"
+            width={100}
+            height={28}
+            className="h-7 w-auto"
+            priority
+          />
         </Link>
 
         <div className="flex justify-center">
           <div className="flex items-center gap-2">
             <Link
               href="/dashboard"
-              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
+              className="rounded-full border border-amber-400 bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-colors hover:bg-amber-500 hover:border-amber-500"
             >
-              {t("Dashboard", "Dashboard")}
+              {t("Jobbmatchning", "Job Matching")}
             </Link>
             <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-sm">
               <button
@@ -102,12 +118,6 @@ export default function Header() {
               className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
             >
               {t("Personligt Brev", "Cover Letter")}
-            </Link>
-            <Link
-              href="/dashboard"
-              className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
-            >
-              {t("Jobbmatchning", "Job Matching")}
             </Link>
           </div>
         </div>
