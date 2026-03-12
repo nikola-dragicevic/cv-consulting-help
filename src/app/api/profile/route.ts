@@ -22,7 +22,7 @@ function normalizeExtractedText(raw: string): string {
 
 async function parsePdf(buffer: Buffer): Promise<string> {
   try {
-    const mod: any = await import("pdf-parse");
+    const mod: unknown = await import("pdf-parse");
     const pdfParse = mod.default ?? mod;
     const data = await pdfParse(buffer);
     return data?.text ?? "";
@@ -46,7 +46,7 @@ export async function GET() {
     .eq("user_id", user.id)
     .single();
 
-  if (error && (error as any).code === "PGRST116") {
+  if (error && (error as { code?: string }).code === "PGRST116") {
     return NextResponse.json(null);
   }
   if (error) {
@@ -72,6 +72,13 @@ export async function POST(req: Request) {
     const fullName = String(formData.get("fullName") ?? "");
     const phone = String(formData.get("phone") ?? "");
     const street = String(formData.get("street") ?? "");
+    const ageRaw = String(formData.get("age") ?? "").trim();
+    const cvTextInput = normalizeExtractedText(String(formData.get("cvText") ?? ""));
+    const parsedAge = ageRaw ? Number(ageRaw) : null;
+
+    if (parsedAge !== null && (!Number.isInteger(parsedAge) || parsedAge < 16 || parsedAge > 100)) {
+      throw new Error("Ålder måste vara ett heltal mellan 16 och 100");
+    }
 
     // NEW: optional consent checkbox
     const jobOfferConsentRaw = formData.get("jobOfferConsent");
@@ -96,13 +103,14 @@ export async function POST(req: Request) {
       .eq("user_id", user.id)
       .single();
 
-    const profileData: Record<string, any> = {
+    const profileData: Record<string, unknown> = {
       user_id: user.id,
       email: user.email,
       full_name: fullName,
       phone: phone,
       city: city,
       street: street,
+      age: parsedAge,
 
       // NEW: persist consent
       job_offer_consent: jobOfferConsent,
@@ -141,7 +149,7 @@ export async function POST(req: Request) {
       }
     }
 
-    let extractedText = "";
+    let extractedText = cvTextInput;
 
     if (file) {
       console.log("Uploading CV file:", file.name);
@@ -171,10 +179,15 @@ export async function POST(req: Request) {
           extractedText = buffer.toString("utf-8");
         }
 
-        extractedText = normalizeExtractedText(extractedText);
+        extractedText = normalizeExtractedText(extractedText) || cvTextInput;
       } catch (err) {
         console.error("Text extraction failed:", err);
+        extractedText = cvTextInput;
       }
+    }
+
+    if (extractedText) {
+      profileData.candidate_text_vector = extractedText;
     }
 
     const { error: upsertError } = await supabase
@@ -224,8 +237,8 @@ export async function POST(req: Request) {
       newCvUrl: profileData.cv_file_url
     });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Profile update error:", err);
-    return NextResponse.json({ error: err?.message || "Unknown error" }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
   }
 }

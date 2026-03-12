@@ -17,11 +17,13 @@ import {
 import { User, Eye } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/components/i18n/LanguageProvider";
+import { CvPreview, LetterPreview } from "@/components/cv/CvPreview";
 
 interface Profile {
   full_name: string;
   email: string;
   phone: string;
+  age: number | null;
   city: string;
   street: string;
   cv_file_url: string | null;
@@ -38,7 +40,34 @@ interface Profile {
   skills_text?: string;
   education_certifications_text?: string;
   seniority_level?: string;
+  candidate_text_vector?: string;
 }
+
+type GeneratedDocument = {
+  id: string;
+  generatedAt: string | null;
+  content: string;
+};
+
+type GeneratedDocumentState = {
+  latestOrder: {
+    id: string;
+    packageFlow: string | null;
+    generationStatus: string | null;
+    createdAt: string | null;
+  } | null;
+  latestCv: GeneratedDocument | null;
+  latestLetter: GeneratedDocument | null;
+};
+
+type InterviewSlot = {
+  id: string;
+  slot_date: string;
+  start_time: string;
+  end_time: string;
+  is_booked: boolean;
+  created_at: string;
+};
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -48,6 +77,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [cvFile, setCvFile] = useState<File | null>(null);
+  const [cvTextInput, setCvTextInput] = useState("");
   const [entryMode, setEntryMode] = useState<'cv_upload' | 'manual_entry'>('cv_upload');
 
   // Checkbox 1 (required)
@@ -59,6 +89,16 @@ export default function ProfilePage() {
   // CV view state
   const [cvViewLoading, setCvViewLoading] = useState(false);
   const [cvViewError, setCvViewError] = useState<string | null>(null);
+  const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocumentState | null>(null);
+  const [generatedDocsLoading, setGeneratedDocsLoading] = useState(true);
+  const [showGeneratedCv, setShowGeneratedCv] = useState(false);
+  const [showGeneratedLetter, setShowGeneratedLetter] = useState(false);
+  const [interviewSlots, setInterviewSlots] = useState<InterviewSlot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(true);
+  const [slotDate, setSlotDate] = useState("");
+  const [slotStartTime, setSlotStartTime] = useState("09:00");
+  const [slotEndTime, setSlotEndTime] = useState("09:30");
+  const [slotMessage, setSlotMessage] = useState("");
 
   // Rate limiting state
   const [isRateLimited, setIsRateLimited] = useState(false);
@@ -87,6 +127,7 @@ export default function ProfilePage() {
             full_name: "",
             email: user?.email || "",
             phone: "",
+            age: null,
             city: "",
             street: "",
             cv_file_url: null,
@@ -101,6 +142,7 @@ export default function ProfilePage() {
             skills_text: '',
             education_certifications_text: '',
             seniority_level: '',
+            candidate_text_vector: '',
           });
 
           // Fresh profile
@@ -108,7 +150,8 @@ export default function ProfilePage() {
           setGdprAccepted(false);
         } else {
           setProfile(data);
-          setEntryMode(data.entry_mode || 'cv_upload');
+          setEntryMode('cv_upload');
+          setCvTextInput(typeof data.candidate_text_vector === "string" ? data.candidate_text_vector : "");
 
           // ✅ Load stored consent
           setJobOfferConsent(Boolean(data.job_offer_consent));
@@ -116,13 +159,79 @@ export default function ProfilePage() {
           // ✅ Reduce friction: profile already exists => keep checkbox 1 checked
           setGdprAccepted(true);
         }
+
+        const docsRes = await fetch("/api/profile/generated-documents", { method: "GET" });
+        if (docsRes.ok) {
+          const docs = await docsRes.json();
+          setGeneratedDocs(docs);
+        }
+
+        const slotsRes = await fetch("/api/profile/interview-slots", { method: "GET" });
+        if (slotsRes.ok) {
+          const slotsJson = await slotsRes.json();
+          setInterviewSlots(slotsJson.data || []);
+        }
       } catch (e) {
         console.error("Error fetching profile:", e);
       } finally {
         setLoading(false);
+        setGeneratedDocsLoading(false);
+        setSlotsLoading(false);
       }
     })();
   }, [router, supabase, t]);
+
+  const refreshInterviewSlots = async () => {
+    setSlotsLoading(true);
+    try {
+      const res = await fetch("/api/profile/interview-slots", { method: "GET" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Kunde inte hämta intervjutider.");
+      setInterviewSlots(json.data || []);
+    } catch (err) {
+      setSlotMessage(err instanceof Error ? err.message : "Kunde inte hämta intervjutider.");
+    } finally {
+      setSlotsLoading(false);
+    }
+  };
+
+  const handleAddInterviewSlot = async () => {
+    if (!slotDate || !slotStartTime || !slotEndTime) {
+      setSlotMessage(t("Välj datum och tid först.", "Choose date and time first."));
+      return;
+    }
+
+    setSlotMessage("");
+    try {
+      const res = await fetch("/api/profile/interview-slots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slotDate,
+          startTime: slotStartTime,
+          endTime: slotEndTime,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Kunde inte spara intervjutiden.");
+      setInterviewSlots((prev) => [...prev, json.data].sort((a, b) => `${a.slot_date}${a.start_time}`.localeCompare(`${b.slot_date}${b.start_time}`)));
+      setSlotMessage(t("Intervjutid sparad.", "Interview slot saved."));
+    } catch (err) {
+      setSlotMessage(err instanceof Error ? err.message : "Kunde inte spara intervjutiden.");
+    }
+  };
+
+  const handleDeleteInterviewSlot = async (id: string) => {
+    setSlotMessage("");
+    try {
+      const res = await fetch(`/api/profile/interview-slots/${id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Kunde inte ta bort intervjutiden.");
+      setInterviewSlots((prev) => prev.filter((slot) => slot.id !== id));
+    } catch (err) {
+      setSlotMessage(err instanceof Error ? err.message : "Kunde inte ta bort intervjutiden.");
+    }
+  };
 
   const handleUpdateProfile = async (e: FormEvent) => {
     e.preventDefault();
@@ -144,6 +253,7 @@ export default function ProfilePage() {
     const form = new FormData();
     form.append("fullName", profile.full_name);
     form.append("phone", profile.phone);
+    form.append("age", profile.age != null && profile.age !== "" ? String(profile.age) : "");
     form.append("city", profile.city);
     form.append("street", profile.street);
 
@@ -161,6 +271,7 @@ export default function ProfilePage() {
     form.append("skills", profile.skills_text || "");
     form.append("education", profile.education_certifications_text || "");
     form.append("seniorityLevel", profile.seniority_level || "");
+    form.append("cvText", cvTextInput);
 
     if (cvFile) form.append("cv", cvFile);
 
@@ -180,6 +291,7 @@ export default function ProfilePage() {
       if (result.newCvUrl) {
         setProfile((prev) => (prev ? { ...prev, cv_file_url: result.newCvUrl } : prev));
       }
+      setProfile((prev) => (prev ? { ...prev, candidate_text_vector: cvTextInput } : prev));
 
       // Rate limiter
       setIsRateLimited(true);
@@ -194,8 +306,8 @@ export default function ProfilePage() {
           return prev - 1;
         });
       }, 1000);
-    } catch (err: any) {
-      setMessage(`Fel: ${err.message}`);
+    } catch (err: unknown) {
+      setMessage(`Fel: ${err instanceof Error ? err.message : "Okänt fel"}`);
     } finally {
       setLoading(false);
       setCvFile(null);
@@ -236,8 +348,8 @@ export default function ProfilePage() {
       const { url } = await response.json();
       window.open(url, "_blank");
       setCvViewLoading(false);
-    } catch (err: any) {
-      setCvViewError(err.message || t("Fel vid hämtning av CV", "Error fetching CV"));
+    } catch (err: unknown) {
+      setCvViewError(err instanceof Error ? err.message : t("Fel vid hämtning av CV", "Error fetching CV"));
       setCvViewLoading(false);
     }
   };
@@ -275,51 +387,37 @@ export default function ProfilePage() {
                   <Input id="phone" name="phone" value={profile.phone} onChange={handleInputChange} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="city">{t("Stad", "City")}</Label>
-                  <Input id="city" name="city" value={profile.city} onChange={handleInputChange} />
+                  <Label htmlFor="age">{t("Ålder", "Age")}</Label>
+                  <Input
+                    id="age"
+                    name="age"
+                    type="number"
+                    min={16}
+                    max={100}
+                    value={profile.age ?? ""}
+                    onChange={handleInputChange}
+                  />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="street">{t("Gatuadress", "Street address")}</Label>
-                <Input id="street" name="street" value={profile.street} onChange={handleInputChange} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="city">{t("Stad", "City")}</Label>
+                  <Input id="city" name="city" value={profile.city} onChange={handleInputChange} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="street">{t("Gatuadress", "Street address")}</Label>
+                  <Input id="street" name="street" value={profile.street} onChange={handleInputChange} />
+                </div>
               </div>
             </div>
 
-            {/* Entry Mode Toggle */}
-            <div className="space-y-3">
-              <Label className="text-base font-semibold">{t("Hur vill du skapa din profil?", "How do you want to create your profile?")}</Label>
-              <div className="flex gap-4">
-                <button
-                  type="button"
-                  onClick={() => setEntryMode('cv_upload')}
-                  className={`flex-1 p-4 border-2 rounded-lg transition-all ${
-                    entryMode === 'cv_upload'
-                      ? 'border-blue-600 bg-blue-50 text-blue-900'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
-                >
-                  <div className="font-medium">{t("Ladda upp CV", "Upload CV")}</div>
-                  <div className="text-xs mt-1 opacity-75">{t("Snabbast och enklast", "Fastest and easiest")}</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEntryMode('manual_entry')}
-                  className={`flex-1 p-4 border-2 rounded-lg transition-all ${
-                    entryMode === 'manual_entry'
-                      ? 'border-blue-600 bg-blue-50 text-blue-900'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
-                >
-                  <div className="font-medium">{t("Fyll i manuellt", "Fill in manually")}</div>
-                  <div className="text-xs mt-1 opacity-75">{t("Mer kontroll över vad du delar", "More control over what you share")}</div>
-                </button>
-              </div>
-            </div>
+            {/* Entry mode is intentionally hidden in the UI for now.
+                Keep manual-entry code paths in place so we can restore them later. */}
 
             {/* CV Upload Mode */}
             {entryMode === 'cv_upload' && (
-              <div className="space-y-2">
+              <div className="space-y-4">
                 <Label htmlFor="cv-upload">{t("Ladda upp ditt CV (PDF eller .txt)", "Upload your CV (PDF or .txt)")}</Label>
                 <div className="flex items-center gap-3">
                   <Input
@@ -339,8 +437,168 @@ export default function ProfilePage() {
                 <p className="text-xs text-slate-500">
                   {t("När du sparar ändringar kommer din matchningsprofil att regenereras automatiskt.", "When you save changes, your matching profile will be regenerated automatically.")}
                 </p>
+                <div className="space-y-2">
+                  <Label htmlFor="cv-text">{t("Eller klistra in CV-text", "Or paste CV text")}</Label>
+                  <textarea
+                    id="cv-text"
+                    value={cvTextInput}
+                    onChange={(e) => setCvTextInput(e.target.value)}
+                    rows={10}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    placeholder={t(
+                      "Klistra in hela eller delar av ditt CV här om du inte har en fil tillgänglig.",
+                      "Paste all or part of your CV here if you do not have a file available."
+                    )}
+                  />
+                  <p className="text-xs text-slate-500">
+                    {t(
+                      "Den här texten används som CV-underlag och triggar samma matchningspipeline som en vanlig CV-uppladdning.",
+                      "This text is used as CV input and triggers the same matching pipeline as a regular CV upload."
+                    )}
+                  </p>
+                </div>
               </div>
             )}
+
+            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  {t("Genererade dokument", "Generated documents")}
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  {t(
+                    "Här kan du öppna ditt senaste AI-genererade CV och personliga brev. Använd Skriv ut / Spara som PDF i förhandsvisningen.",
+                    "Here you can open your latest AI-generated CV and cover letter. Use Print / Save as PDF in the preview."
+                  )}
+                </p>
+              </div>
+
+              {generatedDocsLoading && (
+                <p className="text-sm text-slate-500">{t("Laddar dokument...", "Loading documents...")}</p>
+              )}
+
+              {!generatedDocsLoading && generatedDocs?.latestOrder?.generationStatus === "generating" && (
+                <p className="text-sm text-blue-700">
+                  {t("Ett dokument håller på att genereras just nu.", "A document is currently being generated.")}
+                </p>
+              )}
+
+              {!generatedDocsLoading && generatedDocs?.latestOrder && (
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
+                  <span className="font-medium text-slate-700">{t("Senaste dokumentstatus:", "Latest document status:")}</span>{" "}
+                  <span className="text-slate-600">
+                    {generatedDocs.latestOrder.generationStatus === "done"
+                      ? t("klart", "done")
+                      : generatedDocs.latestOrder.generationStatus === "generating"
+                      ? t("genererar", "generating")
+                      : generatedDocs.latestOrder.generationStatus === "error"
+                      ? t("fel vid generering", "generation error")
+                      : generatedDocs.latestOrder.generationStatus === "pending" &&
+                        generatedDocs.latestOrder.packageFlow &&
+                        !generatedDocs.latestCv &&
+                        !generatedDocs.latestLetter
+                      ? t("väntar på betalning eller start av generering", "waiting for payment or generation start")
+                      : generatedDocs.latestOrder.generationStatus || t("okänd", "unknown")}
+                  </span>
+                </div>
+              )}
+
+              {!generatedDocsLoading && !generatedDocs?.latestCv && !generatedDocs?.latestLetter && (
+                <p className="text-sm text-slate-500">
+                  {t("Inga genererade dokument hittades ännu.", "No generated documents found yet.")}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-3">
+                {generatedDocs?.latestCv && (
+                  <Button type="button" variant="outline" onClick={() => setShowGeneratedCv((prev) => !prev)}>
+                    {showGeneratedCv ? t("Dölj senaste CV", "Hide latest CV") : t("Visa senaste CV", "View latest CV")}
+                  </Button>
+                )}
+                {generatedDocs?.latestLetter && (
+                  <Button type="button" variant="outline" onClick={() => setShowGeneratedLetter((prev) => !prev)}>
+                    {showGeneratedLetter
+                      ? t("Dölj senaste personliga brev", "Hide latest cover letter")
+                      : t("Visa senaste personliga brev", "View latest cover letter")}
+                  </Button>
+                )}
+              </div>
+
+              {showGeneratedCv && generatedDocs?.latestCv?.content && (
+                <CvPreview raw={generatedDocs.latestCv.content} className="rounded-xl overflow-hidden border border-slate-200" />
+              )}
+
+              {showGeneratedLetter && generatedDocs?.latestLetter?.content && (
+                <LetterPreview raw={generatedDocs.latestLetter.content} className="rounded-xl overflow-hidden border border-slate-200" />
+              )}
+            </div>
+
+            <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">
+                    {t("Intervjutider", "Interview availability")}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {t(
+                      "Lägg upp tider då arbetsgivare kan boka intervju med dig via en privat länk.",
+                      "Add time slots when employers can book an interview with you through a private link."
+                    )}
+                  </p>
+                </div>
+                <Button type="button" variant="outline" onClick={() => void refreshInterviewSlots()}>
+                  {t("Uppdatera", "Refresh")}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="slot-date">{t("Datum", "Date")}</Label>
+                  <Input id="slot-date" type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="slot-start">{t("Starttid", "Start time")}</Label>
+                  <Input id="slot-start" type="time" value={slotStartTime} onChange={(e) => setSlotStartTime(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="slot-end">{t("Sluttid", "End time")}</Label>
+                  <Input id="slot-end" type="time" value={slotEndTime} onChange={(e) => setSlotEndTime(e.target.value)} />
+                </div>
+              </div>
+
+              <Button type="button" onClick={() => void handleAddInterviewSlot()}>
+                {t("Lägg till intervjutid", "Add interview slot")}
+              </Button>
+
+              {slotMessage && <p className="text-sm text-slate-600">{slotMessage}</p>}
+
+              <div className="space-y-2">
+                {slotsLoading ? (
+                  <p className="text-sm text-slate-500">{t("Laddar tider...", "Loading slots...")}</p>
+                ) : interviewSlots.length === 0 ? (
+                  <p className="text-sm text-slate-500">
+                    {t("Inga intervjutider upplagda ännu.", "No interview slots added yet.")}
+                  </p>
+                ) : (
+                  interviewSlots.map((slot) => (
+                    <div key={slot.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3">
+                      <div className="text-sm text-slate-700">
+                        {slot.slot_date} • {slot.start_time.slice(0, 5)}-{slot.end_time.slice(0, 5)}
+                        {slot.is_booked && <span className="ml-2 text-emerald-700">{t("Bokad", "Booked")}</span>}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void handleDeleteInterviewSlot(slot.id)}
+                        disabled={slot.is_booked}
+                      >
+                        {t("Ta bort", "Remove")}
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
 
             {/* Manual Entry Mode */}
             {entryMode === 'manual_entry' && (

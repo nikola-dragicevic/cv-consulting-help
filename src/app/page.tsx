@@ -740,7 +740,7 @@ export default function UnifiedLandingPage() {
       {/* === HERO === */}
       <section className="relative bg-gradient-to-br from-blue-50 via-white to-amber-50 py-14 lg:py-20">
         <div className="container mx-auto px-4">
-          <div className="grid gap-12 lg:grid-cols-[1fr_1.45fr] items-center">
+          <div className="grid gap-8 lg:grid-cols-[0.85fr_1.9fr] items-center">
             <div className="space-y-6">
               <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 text-balance">
                 {t("Hitta det perfekta jobbet för dig med hjälp av en AI-manager", "Find the right job for you with the help of an AI manager")}
@@ -775,22 +775,31 @@ export default function UnifiedLandingPage() {
                 <span className="font-semibold">{t("Högsta betyg", "Top rating")}</span>
                 <span>{t("från verifierade kandidater", "from verified candidates")}</span>
               </div>
+              <div className="rounded-2xl border border-blue-100 bg-white/80 px-4 py-3 text-sm text-slate-700 shadow-sm backdrop-blur-sm">
+                <span className="font-semibold text-slate-900">
+                  {t("Mitt mål med JobbNu:", "My goal with JobbNu:")}
+                </span>{" "}
+                {t(
+                  "att hjälpa 10 000 personer hitta jobb genom smartare och mer träffsäker matchning.",
+                  "to help 10,000 people find jobs through smarter and more accurate matching."
+                )}
+              </div>
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                 <Users className="h-3.5 w-3.5" />
                 {t("Ny tjänst: Kandidatrepresentation 300 kr/mån", "New service: Candidate Representation 300 SEK/month")}
               </div>
             </div>
             <div className="flex justify-center lg:justify-end">
-              <div className="relative">
+              <div className="relative w-full max-w-none">
                 <div className="absolute inset-0 bg-blue-200 rounded-full blur-3xl opacity-20" />
                 <Image
                   src="/star-business-award-2026-masked.png"
                   alt={t("Star Business Awards utmärkelse", "Star Business Awards certificate")}
-                  width={900}
-                  height={1200}
+                  width={2400}
+                  height={3200}
                   quality={100}
-                  sizes="(max-width: 1024px) 70vw, 55vw"
-                  className="relative w-full max-w-[520px] lg:max-w-[620px] drop-shadow-2xl object-contain"
+                  sizes="(max-width: 640px) 42vw, (max-width: 1024px) 40vw, 34vw"
+                  className="relative mx-auto w-[42vw] max-w-[420px] sm:w-[40vw] sm:max-w-[460px] lg:w-[34vw] lg:max-w-[560px] xl:max-w-[620px] drop-shadow-2xl object-contain"
                   priority
                 />
               </div>
@@ -1050,10 +1059,38 @@ export default function UnifiedLandingPage() {
         </div>
       </section>
 
+      <section className="bg-white py-10">
+        <div className="container mx-auto px-4">
+          <div className="mx-auto max-w-4xl rounded-3xl border border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50 px-6 py-8 text-center shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
+              {t("Målet är enkelt", "The goal is simple")}
+            </p>
+            <p className="mt-3 text-2xl font-bold text-slate-900 lg:text-3xl">
+              {t(
+                "Hjälpa 10 000 personer hitta jobb.",
+                "Help 10,000 people find jobs."
+              )}
+            </p>
+            <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-600">
+              {t(
+                "JobbNu byggs med en tydlig ambition: att göra jobbsökandet snabbare, skarpare och mer träffsäkert för fler människor.",
+                "JobbNu is being built with a clear ambition: to make job searching faster, sharper, and more accurate for more people."
+              )}
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section id="about" className="py-20 bg-slate-50">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto text-center space-y-8">
             <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">{t("Varför välja mig?", "Why choose me?")}</h2>
+            <p className="mx-auto max-w-2xl text-base text-slate-600">
+              {t(
+                "Jag satte ett tydligt mål när jag byggde JobbNu: att hjälpa 10 000 personer hitta jobb.",
+                "I set a clear goal when I built JobbNu: to help 10,000 people find jobs."
+              )}
+            </p>
             <div className="grid md:grid-cols-3 gap-8 mt-12">
               <div className="text-center space-y-4">
                 <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
@@ -1139,6 +1176,9 @@ export default function UnifiedLandingPage() {
                   ? ["Professionell CV‑skrivning","Personliga brev","Kandidatrepresentation (300 kr/mån)","Jobbkonsultation & coaching","Intervjuförberedelse","Jobbsökningsstrategier","AI‑drivna jobbförslag"]
                   : ["Professional CV writing","Cover letters","Candidate representation (300 SEK/month)","Career consultation & coaching","Interview preparation","Job search strategies","AI-driven job suggestions"]).map((item) => <p key={item}>{item}</p>)}
               </div>
+              <p className="mt-4 text-sm text-slate-400">
+                {t("Målet: hjälpa 10 000 personer hitta jobb.", "Goal: help 10,000 people find jobs.")}
+              </p>
             </div>
           </div>
           <div className="border-t border-slate-700 mt-12 pt-8 text-center text-slate-400">

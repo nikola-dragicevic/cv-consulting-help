@@ -126,6 +126,180 @@ class ProfileUpdateWebhook(BaseModel):
     user_id: str
     cv_text: str
 
+
+def _clean_string_list(values, limit: int = 12) -> list[str]:
+    if not isinstance(values, list):
+        return []
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _clean_track_payload(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+
+    cleaned: dict = {}
+    for key, raw in value.items():
+        if not isinstance(key, str):
+            continue
+        label = key.strip()
+        if not label:
+            continue
+        if isinstance(raw, (int, float)):
+            cleaned[label] = round(float(raw), 1)
+        elif isinstance(raw, str):
+            text = raw.strip()
+            if text:
+                cleaned[label] = text
+    return cleaned
+
+
+async def extract_profile_signals_with_claude(profile: dict, source_text: str) -> dict:
+    if not ANTHROPIC_API_KEY:
+        print("⚠️ [PROFILE SIGNALS] ANTHROPIC_API_KEY not set, skipping profile signal extraction.")
+        return {}
+
+    text = (source_text or "").strip()
+    if not text:
+        return {}
+
+    system_prompt = """You extract structured profile signals from a Swedish candidate CV/profile.
+
+Return ONLY valid JSON with this exact shape:
+{
+  "experience_titles": ["..."],
+  "education_titles": ["..."],
+  "search_keywords": ["..."],
+  "seniority_level": "junior|mid|senior|null",
+  "seniority_reason": "...",
+  "experience_summary": "...",
+  "seniority_by_track": {
+    "automation_process": "junior|mid|senior",
+    "software": "junior|mid|senior"
+  },
+  "relevant_experience_years": {
+    "automation_process": 0,
+    "mechanical": 0,
+    "software": 0
+  }
+}
+
+RULES:
+- Use concise Swedish job-role titles for experience_titles.
+- Extract up to 6 experience titles, ordered by relevance and recency.
+- Extract up to 4 education/program titles.
+- search_keywords must be concrete searchable role/skill phrases, not names, not cities, not generic soft skills.
+- seniority_level must reflect practical work seniority, not age.
+- seniority_by_track should only include tracks actually supported by evidence.
+- relevant_experience_years should be approximate numbers when reasonably inferable, otherwise omit the track.
+- Never invent facts that are not supported by the text.
+- Output JSON only, no markdown."""
+
+    profile_hint = {
+        "full_name": profile.get("full_name"),
+        "intent": profile.get("intent"),
+        "persona_current_text": profile.get("persona_current_text"),
+        "persona_target_text": profile.get("persona_target_text"),
+        "skills_text": profile.get("skills_text"),
+        "education_certifications_text": profile.get("education_certifications_text"),
+        "existing_seniority_level": profile.get("seniority_level"),
+    }
+
+    user_prompt = f"""Extract structured profile signals from this candidate data.
+
+PROFILE HINT:
+{json.dumps(profile_hint, ensure_ascii=False)}
+
+SOURCE TEXT:
+{text[:8000]}
+
+Return JSON only."""
+
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 900,
+                    "temperature": 0.1,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            generated_text = (data.get("content") or [{}])[0].get("text", "").strip()
+
+            cleaned = generated_text
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("```")[1]
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+
+            payload = json.loads(cleaned)
+            if not isinstance(payload, dict):
+                return {}
+
+            seniority = payload.get("seniority_level")
+            if seniority not in {"junior", "mid", "senior"}:
+                seniority = None
+
+            normalized = {
+                "experience_titles": _clean_string_list(payload.get("experience_titles"), limit=6),
+                "education_titles": _clean_string_list(payload.get("education_titles"), limit=4),
+                "search_keywords": _clean_string_list(payload.get("search_keywords"), limit=12),
+                "seniority_level": seniority,
+                "seniority_reason": payload.get("seniority_reason").strip()[:500]
+                if isinstance(payload.get("seniority_reason"), str) and payload.get("seniority_reason").strip()
+                else None,
+                "experience_summary": payload.get("experience_summary").strip()[:1000]
+                if isinstance(payload.get("experience_summary"), str) and payload.get("experience_summary").strip()
+                else None,
+                "seniority_by_track": _clean_track_payload(payload.get("seniority_by_track")),
+                "relevant_experience_years": _clean_track_payload(payload.get("relevant_experience_years")),
+            }
+
+            print(
+                "✅ [PROFILE SIGNALS] "
+                f"exp={len(normalized['experience_titles'])} "
+                f"edu={len(normalized['education_titles'])} "
+                f"kw={len(normalized['search_keywords'])} "
+                f"seniority={normalized['seniority_level']}"
+            )
+            return normalized
+
+    except json.JSONDecodeError:
+        print(f"⚠️ [PROFILE SIGNALS] Claude returned unparseable JSON: {generated_text[:200]}")
+        return {}
+    except httpx.RequestError as e:
+        print(f"❌ [PROFILE SIGNALS] Anthropic API connection error: {e}")
+        return {}
+    except Exception as e:
+        print(f"❌ [PROFILE SIGNALS] Claude extraction error: {e}")
+        return {}
+
 @app.get("/health")
 def health():
     return {"status": "ok", "model": EMBEDDING_MODEL, "dims": DIMS}
@@ -905,6 +1079,32 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
 
         except Exception as e:
             print(f"⚠️ [WEBHOOK] Categorization failed (non-critical): {e}")
+
+        try:
+            signal_source_text = cat_text if entry_mode == "manual_entry" else (cv_text or "")
+            profile_signals = await extract_profile_signals_with_claude(profile, signal_source_text)
+
+            if profile_signals.get("experience_titles"):
+                update_data["experience_titles"] = profile_signals["experience_titles"]
+            if profile_signals.get("education_titles"):
+                update_data["education_titles"] = profile_signals["education_titles"]
+            if profile_signals.get("search_keywords"):
+                update_data["search_keywords"] = profile_signals["search_keywords"]
+            if profile_signals.get("seniority_reason"):
+                update_data["seniority_reason"] = profile_signals["seniority_reason"]
+            if profile_signals.get("experience_summary"):
+                update_data["experience_summary"] = profile_signals["experience_summary"]
+            if profile_signals.get("seniority_by_track"):
+                update_data["seniority_by_track"] = profile_signals["seniority_by_track"]
+            if profile_signals.get("relevant_experience_years"):
+                update_data["relevant_experience_years"] = profile_signals["relevant_experience_years"]
+
+            extracted_seniority = profile_signals.get("seniority_level")
+            if extracted_seniority in {"junior", "mid", "senior"}:
+                update_data["seniority_level"] = extracted_seniority
+
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] Profile signal extraction failed (non-critical): {e}")
 
         # Save all updates to DB
         supabase.table("candidate_profiles").update(update_data).eq("user_id", req.user_id).execute()

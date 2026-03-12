@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Bookmark, BookmarkCheck, Building2, Briefcase, ChevronDown, ChevronRight, Crown, MapPin, RefreshCw, Sparkles, User as UserIcon, X } from "lucide-react";
+import { Bookmark, BookmarkCheck, Building2, Briefcase, ChevronDown, ChevronRight, Crown, MapPin, RefreshCw, User as UserIcon } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 
 import { analyzeSkillGap, extractCandidateSkills } from "@/lib/gapAnalysis";
@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MatchInsights } from "@/components/ui/MatchInsights";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import CareerWishlistForm, { type Wish } from "@/components/ui/CareerWishlistForm";
 
 interface Job {
   id: string;
@@ -30,12 +29,13 @@ interface Job {
   vector_similarity?: number;
   keyword_score?: number;
   keyword_hit_rate?: number;
+  keyword_miss_rate?: number;
+  keyword_hits?: string[];
   category_bonus?: number;
   final_score?: number;
   display_score?: number;
   jobbnu_score?: number;
-  ats_score?: number;
-  taxonomy_score?: number;
+  keyword_match_score?: number;
   manager_score?: number;
   manager_explanation?: string;
   job_url?: string | null;
@@ -75,7 +75,7 @@ const EMPTY_DASHBOARD_RESULTS: MatchResults = {
   },
 };
 
-type ScoreMode = "jobbnu" | "ats" | "taxonomy";
+type ScoreMode = "jobbnu" | "keyword_match";
 
 const SCORE_MODE_STORAGE_KEY = "dashboard-score-mode";
 
@@ -91,15 +91,14 @@ export function MatchesDashboard() {
     )
   );
   const [candidateCvText, setCandidateCvText] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
   const [cached, setCached] = useState(false);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
-  const [canRefresh, setCanRefresh] = useState(true);
+  const [canRunBasePool, setCanRunBasePool] = useState(true);
+  const [runsRemaining, setRunsRemaining] = useState(3);
   const [nextRefreshTime, setNextRefreshTime] = useState<string | null>(null);
   const [hoursUntilRefresh, setHoursUntilRefresh] = useState(0);
   const [minutesUntilRefresh, setMinutesUntilRefresh] = useState(0);
   const [legacyActionLoading, setLegacyActionLoading] = useState(false);
-  const [showWishlist, setShowWishlist] = useState(false);
   const [profileLocation, setProfileLocation] = useState<DashboardProfileLocation | null>(null);
   const [radiusKm, setRadiusKm] = useState(40);
   const [radiusInput, setRadiusInput] = useState("40");
@@ -151,14 +150,21 @@ export function MatchesDashboard() {
 
   useEffect(() => {
     const raw = window.localStorage.getItem(SCORE_MODE_STORAGE_KEY);
-    if (raw === "jobbnu" || raw === "ats" || raw === "taxonomy") {
-      setSelectedScoreMode(raw);
+    if (raw === "keyword_match" || raw === "ats") {
+      setSelectedScoreMode("keyword_match");
+      return;
     }
+    setSelectedScoreMode("jobbnu");
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem(SCORE_MODE_STORAGE_KEY, selectedScoreMode);
   }, [selectedScoreMode]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    void loadSavedDashboardResults(selectedScoreMode, true);
+  }, [user?.id, selectedScoreMode]);
 
   async function fetchSubscriptionStatus() {
     try {
@@ -213,45 +219,64 @@ export function MatchesDashboard() {
     return normalized;
   }
 
-  async function refreshMatches() {
-    try {
-      setRefreshing(true);
-      setError(null);
-      setEmptyStateMessage(null);
+  function applyDashboardResponse(data: any) {
+    const normalized = normalizeLegacyJobs(data?.jobs);
+    setResults((prev) => ({
+      intent: prev?.intent || "show_multiple_tracks",
+      matchType: "dashboard_legacy_for_user",
+      candidate_cv_text: data?.candidate_cv_text || prev?.candidate_cv_text || "",
+      buckets: {
+        current: normalized,
+        target: [],
+        adjacent: [],
+      },
+    }));
+    setCandidateCvText(data?.candidate_cv_text || "");
+    setCached(Boolean(data?.cached));
+    setCachedAt(data?.cachedAt || data?.matchedAt || new Date().toISOString());
+    setCanRunBasePool(Boolean(data?.canRunBasePool ?? true));
+    setRunsRemaining(typeof data?.runsRemaining === "number" ? data.runsRemaining : 3);
+    setNextRefreshTime(data?.nextAllowedTime || null);
+    setHoursUntilRefresh(typeof data?.hoursUntilRefresh === "number" ? data.hoursUntilRefresh : 0);
+    setMinutesUntilRefresh(typeof data?.minutesUntilRefresh === "number" ? data.minutesUntilRefresh : 0);
+    setHasRunMatchOnce(true);
+  }
 
-      const res = await fetch("/api/match/intent", { method: "POST" });
+  async function loadSavedDashboardResults(scoreMode: ScoreMode, silent = false) {
+    try {
+      if (!silent) {
+        setError(null);
+        setEmptyStateMessage(null);
+      }
+
+      const res = await fetch(`/api/match/for-user?score_mode=${scoreMode}`, { method: "GET" });
+      const { data, raw } = await safeParseResponse(res);
 
       if (res.ok) {
-        const data = await res.json();
-        setResults(data);
-        setCandidateCvText(data.candidate_cv_text || "");
-        setCached(false);
-        setCachedAt(data.matchedAt || null);
-        setCanRefresh(false);
-        setNextRefreshTime(null);
-        setHoursUntilRefresh(24);
-        setMinutesUntilRefresh(0);
+        applyDashboardResponse(data);
         return;
       }
 
-      if (res.status === 429) {
-        const data = await res.json();
-        setError(data.message || "Du kan söka jobb en gång per 24 timmar.");
-        setCanRefresh(false);
+      if (res.status === 404 && data?.noCacheFound) {
+        setCanRunBasePool(Boolean(data?.canRunBasePool ?? true));
+        setRunsRemaining(typeof data?.runsRemaining === "number" ? data.runsRemaining : 3);
         setNextRefreshTime(data.nextAllowedTime || null);
+        setHoursUntilRefresh(typeof data?.hoursUntilRefresh === "number" ? data.hoursUntilRefresh : 0);
+        setMinutesUntilRefresh(typeof data?.minutesUntilRefresh === "number" ? data.minutesUntilRefresh : 0);
+        if (!silent) {
+          setEmptyStateMessage("Klicka på 'Matcha jobb' för att bygga och spara dagens resultat.");
+        }
         return;
       }
 
-      if (res.status === 401) {
-        setError("Du behöver logga in för att uppdatera matchningar.");
-        return;
+      if (!silent) {
+        console.error("Dashboard /api/match/for-user GET failed:", raw);
+        setError(data?.error || "Kunde inte läsa sparade jobbförslag.");
       }
-
-      throw new Error("Failed to refresh matches");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to refresh matches");
-    } finally {
-      setRefreshing(false);
+      if (!silent) {
+        setError(err instanceof Error ? err.message : "Kunde inte läsa sparade jobbförslag.");
+      }
     }
   }
 
@@ -282,9 +307,7 @@ export function MatchesDashboard() {
     }
   }
 
-  async function runLegacyMatch(params?: { action?: "base_pool" | "score_sort"; scoreMode?: ScoreMode }) {
-    const action = params?.action ?? "base_pool";
-    const scoreMode = params?.scoreMode ?? selectedScoreMode;
+  async function runLegacyMatch() {
     try {
       setLegacyActionLoading(true);
       setError(null);
@@ -309,15 +332,13 @@ export function MatchesDashboard() {
                 lat: 62,
                 lon: 15,
                 radius_km: 9999,
-                match_action: action,
-                ...(action === "score_sort" ? { score_mode: scoreMode } : {}),
+                score_mode: selectedScoreMode,
               }
             : {
                 lat: profileLocation!.location_lat,
                 lon: profileLocation!.location_lon,
                 radius_km: radiusForQuery,
-                match_action: action,
-                ...(action === "score_sort" ? { score_mode: scoreMode } : {}),
+                score_mode: selectedScoreMode,
               }
         ),
       });
@@ -329,71 +350,10 @@ export function MatchesDashboard() {
         return;
       }
 
-      const normalized = normalizeLegacyJobs(data?.jobs);
-      setResults((prev) => ({
-        intent: prev?.intent || "show_multiple_tracks",
-        matchType: "dashboard_legacy_for_user",
-        candidate_cv_text: prev?.candidate_cv_text || "",
-        buckets: {
-          current: normalized,
-          target: [],
-          adjacent: [],
-        },
-      }));
-      setCached(Boolean(data?.cached));
-      setCachedAt(data?.cachedAt || data?.matchedAt || new Date().toISOString());
-      setHasRunMatchOnce(true);
+      applyDashboardResponse(data);
     } catch (err) {
       console.error(err);
       setError("Kunde inte hämta jobbförslag.");
-    } finally {
-      setLegacyActionLoading(false);
-    }
-  }
-
-  async function handleRefineSubmit(wish: Wish) {
-    if (!user) {
-      setShowWishlist(false);
-      setError("Du behöver logga in för att förfina jobbförslag.");
-      return;
-    }
-
-    try {
-      setLegacyActionLoading(true);
-      setError(null);
-      setEmptyStateMessage(null);
-      setShowWishlist(false);
-      const radiusForQuery = wholeSweden ? 9999 : commitRadiusInput();
-
-      const res = await fetch("/api/match/refine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildRefinePayload(user.id, wish, { profileLocation, radiusKm: radiusForQuery, wholeSweden })),
-      });
-      const { data, raw } = await safeParseResponse(res);
-
-      if (!res.ok) {
-        console.error("Dashboard /api/match/refine failed:", raw);
-        setError(data?.error || "Kunde inte förfina jobbförslagen.");
-        return;
-      }
-
-      const normalized = normalizeLegacyJobs(data?.jobs);
-      setResults((prev) => ({
-        intent: prev?.intent || "show_multiple_tracks",
-        matchType: "dashboard_refined",
-        candidate_cv_text: prev?.candidate_cv_text || "",
-        buckets: {
-          current: normalized,
-          target: [],
-          adjacent: [],
-        },
-      }));
-      setCached(false);
-      setCachedAt(new Date().toISOString());
-    } catch (err) {
-      console.error(err);
-      setError("Kunde inte förfina jobbförslagen.");
     } finally {
       setLegacyActionLoading(false);
     }
@@ -427,10 +387,8 @@ export function MatchesDashboard() {
     .sort((a, b) => (getDisplayScore(b, selectedScoreMode) ?? 0) - (getDisplayScore(a, selectedScoreMode) ?? 0))[0];
   const topMatchScore = topMatch ? getDisplayScore(topMatch, selectedScoreMode) : null;
   const scoreModeLabel = selectedScoreMode === "jobbnu"
-    ? "JobbNu"
-    : selectedScoreMode === "ats"
-      ? "ATS"
-      : "Taxonomy";
+    ? "AI Manager"
+    : "Keyword Match";
   const hasProfileGeo =
     typeof profileLocation?.location_lat === "number" &&
     typeof profileLocation?.location_lon === "number";
@@ -451,8 +409,6 @@ export function MatchesDashboard() {
   };
   const handleScoreModeChange = (mode: ScoreMode) => {
     setSelectedScoreMode(mode);
-    if (!canRunMatch || legacyActionLoading || !hasRunMatchOnce) return;
-    void runLegacyMatch({ action: "score_sort", scoreMode: mode });
   };
 
   return (
@@ -469,7 +425,7 @@ export function MatchesDashboard() {
                 {t("Dina jobbmatchningar i dashboard-format", "Your job matches in dashboard format")}
               </h1>
               <p className="mt-2 text-sm text-slate-600">
-                {t("Slimma kort med ATS-score och grade-scale för snabb scanning.", "Slim cards with ATS score and grade scale for fast scanning.")}
+                {t("Slimma kort med AI Manager-sortering eller Keyword Match för snabb scanning.", "Slim cards with AI Manager sorting or Keyword Match for fast scanning.")}
               </p>
             </div>
 
@@ -541,22 +497,13 @@ export function MatchesDashboard() {
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   onClick={() => {
-                    void runLegacyMatch({ action: "base_pool" });
+                    void runLegacyMatch();
                   }}
-                  disabled={legacyActionLoading || !canRunMatch}
+                  disabled={legacyActionLoading || !canRunMatch || !canRunBasePool}
                   className="min-w-[132px]"
                 >
                   <RefreshCw className={legacyActionLoading ? "animate-spin" : ""} />
                   {primaryMatchLabel}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowWishlist(true)}
-                  disabled={legacyActionLoading || !user}
-                  className="min-w-[162px]"
-                >
-                  <Sparkles />
-                  {t("Förfina matchningar", "Refine matches")}
                 </Button>
                 <Button variant="outline" asChild className="min-w-[126px]">
                   <Link href="/profile">
@@ -591,11 +538,10 @@ export function MatchesDashboard() {
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               {t("Visningsläge för matchscore", "Match score view mode")}
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {[
                 { mode: "jobbnu" as const, label: "AI Manager sortering" },
-                { mode: "ats" as const, label: "ATS score" },
-                { mode: "taxonomy" as const, label: "Taxonomy fit" },
+                { mode: "keyword_match" as const, label: "Keyword Match" },
               ].map((option) => (
                 <Button
                   key={option.mode}
@@ -611,23 +557,27 @@ export function MatchesDashboard() {
             </div>
           </div>
 
-          {cachedAt && (
+          {(cachedAt || !canRunBasePool || runsRemaining !== 3) && (
             <div className="border-t border-slate-200 bg-slate-50/90 px-5 py-3 text-sm text-slate-700">
-              <span className="font-medium">{cached ? t("Cache", "Cache") : t("Senast uppdaterad", "Last updated")}:</span>{" "}
-              {new Date(cachedAt).toLocaleString("sv-SE")}
-              {!canRefresh && (
+              {cachedAt && (
+                <>
+                  <span className="font-medium">{cached ? t("Cache", "Cache") : t("Senast uppdaterad", "Last updated")}:</span>{" "}
+                  {new Date(cachedAt).toLocaleString("sv-SE")}
+                </>
+              )}
+              <span className="ml-2 text-slate-500">
+                • {t("Kvar idag", "Remaining today")}: {runsRemaining}/3
+              </span>
+              {!canRunBasePool && (
                 <span className="ml-2 text-slate-500">
                   {t("• Nästa sökning om", "• Next search in")} {hoursUntilRefresh}h {minutesUntilRefresh}{t("min", "min")}
                 </span>
               )}
-              {nextRefreshTime && !canRefresh && (
+              {nextRefreshTime && !canRunBasePool && (
                 <span className="ml-2 text-slate-500">
                   ({new Date(nextRefreshTime).toLocaleString("sv-SE")})
                 </span>
               )}
-              <span className="ml-2 text-slate-500">
-                • <button onClick={refreshMatches} disabled={!canRefresh || refreshing} className="underline disabled:no-underline disabled:opacity-50">{t("Uppdatera dashboard-resultat", "Refresh dashboard results")}</button>
-              </span>
             </div>
           )}
 
@@ -675,39 +625,6 @@ export function MatchesDashboard() {
         </Tabs>
       </div>
 
-      {showWishlist && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="relative max-h-[92vh] w-full max-w-4xl overflow-y-auto">
-            <button
-              type="button"
-              onClick={() => setShowWishlist(false)}
-              className="absolute right-4 top-4 z-10 rounded-full bg-white/90 p-2 text-slate-600 shadow hover:text-slate-900"
-              aria-label="Stäng"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <CareerWishlistForm
-              initial={{
-                freeText: "",
-                titles: [],
-                industries: [],
-                use_skills: [],
-                learn_skills: [],
-                company_size: null,
-                modality: null,
-                pace: null,
-                structure: null,
-                collaboration: null,
-                values: [],
-                includeNearbyMetro: true,
-                location_city: "",
-              }}
-              onCancel={() => setShowWishlist(false)}
-              onSubmit={handleRefineSubmit}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -811,12 +728,10 @@ function SlimMatchCard({
 
   const primaryScore = getDisplayScore(job, scoreMode);
   const roundedPrimaryScore = primaryScore === null ? null : Math.round(primaryScore);
-  const primaryLabel = scoreMode === "jobbnu" ? "JobbNu Score" : scoreMode === "ats" ? "ATS Score" : "Taxonomy Fit";
+  const primaryLabel = scoreMode === "jobbnu" ? "AI Manager Sorting" : "Keyword Match";
   const primaryCaption = scoreMode === "jobbnu"
-    ? "Semantic + keyword weighted fit"
-    : scoreMode === "ats"
-      ? "Keyword-forward ATS-style fit"
-      : "Taxonomy proximity in your selected scope";
+    ? "Vector similarity + keyword hits - keyword misses"
+    : "Keyword hits only";
   const managerScore = job.manager_score ?? null;
   const grade = getManagerGrade(managerScore);
   const managerPct = managerScore !== null ? Math.max(0, Math.min(100, Math.round((managerScore / 10) * 100))) : null;
@@ -854,7 +769,7 @@ function SlimMatchCard({
                     )}
                     {roundedPrimaryScore !== null && (
                       <Badge variant="secondary" className="border border-sky-200 bg-sky-50 text-sky-800">
-                        {scoreMode === "jobbnu" ? "JobbNu" : scoreMode === "ats" ? "ATS" : "Taxonomy"} {roundedPrimaryScore}%
+                        {scoreMode === "jobbnu" ? "AI Manager" : "Keyword Match"} {roundedPrimaryScore}%
                       </Badge>
                     )}
                   </div>
@@ -864,7 +779,7 @@ function SlimMatchCard({
                   onClick={locked ? (e) => e.preventDefault() : undefined}
                   target={job.job_url || job.webpage_url ? "_blank" : undefined}
                   rel={job.job_url || job.webpage_url ? "noopener noreferrer" : undefined}
-                  className="block truncate text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-sky-700"
+                  className="block whitespace-normal break-words text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-sky-700"
                 >
                   {job.title || t("Okänd tjänst", "Unknown role")}
                   </Link>
@@ -974,14 +889,17 @@ function SlimMatchCard({
         {showInsights && !locked && (
           <div className="border-t border-slate-200 bg-white px-4 py-4 sm:px-5">
             <MatchInsights
+              scoreMode={scoreMode}
               vectorSimilarity={job.vector_similarity}
-              keywordScore={job.keyword_score}
+              keywordScore={job.keyword_hit_rate ?? job.keyword_score}
+              keywordMissRate={job.keyword_miss_rate}
               categoryBonus={job.category_bonus}
               finalScore={job.final_score}
               managerScore={job.manager_score}
               managerExplanation={job.manager_explanation}
               skillsData={job.skills_data}
               gapAnalysis={gapAnalysis}
+              keywordHits={job.keyword_hits ?? []}
             />
           </div>
         )}
@@ -1084,10 +1002,16 @@ function normalizeLegacyJobs(rows: unknown[] | undefined): Job[] {
       keyword_score: typeof row.keyword_score === "number" ? row.keyword_score : undefined,
       category_bonus: typeof row.category_bonus === "number" ? row.category_bonus : undefined,
       keyword_hit_rate: typeof row.keyword_hit_rate === "number" ? row.keyword_hit_rate : undefined,
+      keyword_miss_rate: typeof row.keyword_miss_rate === "number" ? row.keyword_miss_rate : undefined,
+      keyword_hits: Array.isArray(row.keyword_hits) ? row.keyword_hits.filter((value): value is string => typeof value === "string") : undefined,
       display_score: typeof row.display_score === "number" ? row.display_score : undefined,
       jobbnu_score: typeof row.jobbnu_score === "number" ? row.jobbnu_score : undefined,
-      ats_score: typeof row.ats_score === "number" ? row.ats_score : undefined,
-      taxonomy_score: typeof row.taxonomy_score === "number" ? row.taxonomy_score : undefined,
+      keyword_match_score:
+        typeof row.keyword_match_score === "number"
+          ? row.keyword_match_score
+          : typeof row.ats_score === "number"
+            ? row.ats_score
+            : undefined,
       occupation_field_label: typeof row.occupation_field_label === "string" ? row.occupation_field_label : undefined,
       occupation_group_label: typeof row.occupation_group_label === "string" ? row.occupation_group_label : undefined,
       job_url: typeof row.job_url === "string" ? row.job_url : null,
@@ -1106,49 +1030,10 @@ function getDisplayScore(job: Job, mode: ScoreMode): number | null {
   if (mode === "jobbnu") {
     return norm(job.display_score) ?? norm(job.jobbnu_score) ?? norm(job.final_score);
   }
-  if (mode === "ats") {
-    return norm(job.ats_score) ?? norm(job.keyword_hit_rate) ?? norm(job.keyword_score) ?? norm(job.final_score);
+  if (mode === "keyword_match") {
+    return norm(job.keyword_match_score) ?? norm(job.keyword_hit_rate) ?? norm(job.keyword_score) ?? norm(job.final_score);
   }
-  return norm(job.taxonomy_score) ?? (job.category_bonus && job.category_bonus > 0 ? 100 : norm(job.final_score));
-}
-
-function buildRefinePayload(
-  candidateId: string,
-  wish: Wish,
-  options: { profileLocation: DashboardProfileLocation | null; radiusKm: number; wholeSweden: boolean }
-) {
-  const { profileLocation, radiusKm, wholeSweden } = options;
-  if (wholeSweden) {
-    return {
-      candidate_id: candidateId,
-      wish: {
-        ...wish,
-        location_city: "Sverige",
-        radius_km: 9999,
-        lat: 62,
-        lon: 15,
-        county_code: "",
-      },
-    };
-  }
-
-  const hasGeo =
-    typeof profileLocation?.location_lat === "number" &&
-    typeof profileLocation?.location_lon === "number";
-  return {
-    candidate_id: candidateId,
-    wish: {
-      ...wish,
-      location_city: profileLocation?.city || wish.location_city || "",
-      radius_km: radiusKm,
-      ...(hasGeo
-        ? {
-            lat: profileLocation!.location_lat,
-            lon: profileLocation!.location_lon,
-          }
-        : {}),
-    },
-  };
+  return null;
 }
 
 function getIntentLabel(intent: string): string {

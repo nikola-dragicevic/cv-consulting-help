@@ -3,9 +3,9 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { extractKeywordsFromCV } from "@/lib/categorization";
+import { isAdminUser } from "@/lib/admin";
 
-type ScoreMode = "jobbnu" | "ats" | "taxonomy";
-type MatchAction = "base_pool" | "score_sort";
+type ScoreMode = "jobbnu" | "keyword_match";
 
 type ProfileRow = {
   profile_vector: number[] | null;
@@ -36,8 +36,8 @@ type RawJobRow = {
   keyword_hit_rate?: number | null;
   keyword_miss_rate?: number | null;
   jobbnu_score?: number | null;
+  keyword_match_score?: number | null;
   ats_score?: number | null;
-  taxonomy_score?: number | null;
   display_score?: number | null;
   skills_data?: {
     required_skills?: string[];
@@ -47,16 +47,34 @@ type RawJobRow = {
 
 type DashboardStateRow = {
   base_job_ids: string[] | null;
+  query_meta?: {
+    lat?: number;
+    lon?: number;
+    radius_km?: number;
+    group_names?: string[];
+    category_names?: string[];
+  } | null;
+  base_updated_at?: string | null;
+};
+
+type DashboardCachePayload = {
+  jobs: ReturnType<typeof normalizeJobRow>[];
+  score_mode: ScoreMode;
+  matchedAt: string;
+  base_ready: boolean;
 };
 
 type DashboardCacheRow = {
-  match_results: {
-    jobs?: ReturnType<typeof normalizeJobRow>[];
-    score_mode?: ScoreMode;
-    matchedAt?: string;
-    base_ready?: boolean;
-  } | null;
+  match_results: DashboardCachePayload | null;
   updated_at: string;
+};
+
+type DashboardRunLimitStatus = {
+  allowed: boolean;
+  runsRemaining: number;
+  nextAllowedTime: string | null;
+  hoursUntilRefresh: number;
+  minutesUntilRefresh: number;
 };
 
 const OCCUPATION_FIELD_ALIASES: Record<string, string[]> = {
@@ -68,15 +86,39 @@ const OCCUPATION_FIELD_ALIASES: Record<string, string[]> = {
 
 const DASHBOARD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_POOL_LIMIT = 2000;
+const DASHBOARD_RUN_LIMIT = 3;
+const DASHBOARD_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-function toScoreMode(value: unknown): ScoreMode {
-  if (value === "ats" || value === "taxonomy") return value;
-  return "jobbnu";
+function isMissingRelationError(message: string) {
+  return message.includes("does not exist") || message.includes("relation") || message.includes("schema cache");
 }
 
-function toMatchAction(value: unknown): MatchAction {
-  if (value === "base_pool") return "base_pool";
-  return "score_sort";
+function isMissingColumnError(message: string) {
+  return (
+    (message.includes("column") && message.includes("does not exist")) ||
+    (message.includes("Could not find") && message.includes("column")) ||
+    message.includes("schema cache")
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  if (typeof error === "object") {
+    const maybeMessage = "message" in error ? error.message : undefined;
+    if (typeof maybeMessage === "string") return maybeMessage;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
+function toScoreMode(value: unknown): ScoreMode {
+  if (value === "keyword_match" || value === "ats") return "keyword_match";
+  return "jobbnu";
 }
 
 function normalizeOccupationFields(value: unknown): string[] | null {
@@ -112,11 +154,27 @@ function buildKeywords(profile: ProfileRow): string[] | null {
   return keywords.length > 0 ? keywords : null;
 }
 
+function findKeywordHits(row: RawJobRow, keywords: string[] | null): string[] {
+  if (!keywords || keywords.length === 0) return [];
+  const haystack = `${row.title ?? ""}\n${row.description ?? ""}`.toLocaleLowerCase("sv-SE");
+  const hits = new Set<string>();
+
+  for (const keyword of keywords) {
+    const normalized = keyword.trim();
+    if (!normalized) continue;
+    if (haystack.includes(normalized.toLocaleLowerCase("sv-SE"))) {
+      hits.add(normalized);
+    }
+  }
+
+  return Array.from(hits);
+}
+
 function hashJobIds(ids: string[]) {
   return createHash("sha1").update(ids.join("|")).digest("hex");
 }
 
-function normalizeJobRow(row: RawJobRow) {
+function normalizeJobRow(row: RawJobRow, keywordHits: string[] = []) {
   return {
     id: String(row.id ?? ""),
     headline: row.title ?? "",
@@ -132,10 +190,10 @@ function normalizeJobRow(row: RawJobRow) {
     keyword_hit_rate: row.keyword_hit_rate ?? null,
     keyword_miss_rate: row.keyword_miss_rate ?? null,
     jobbnu_score: row.jobbnu_score ?? null,
-    ats_score: row.ats_score ?? null,
-    taxonomy_score: row.taxonomy_score ?? null,
+    keyword_match_score: row.keyword_match_score ?? row.ats_score ?? null,
     display_score: row.display_score ?? null,
     final_score: row.display_score ?? null,
+    keyword_hits: keywordHits,
     skills_data: row.skills_data ?? null,
   };
 }
@@ -159,25 +217,32 @@ async function getDashboardCache(
   scoreMode: ScoreMode,
   cacheKey: string
 ) {
-  const { data } = await supabase
-    .from("dashboard_match_cache")
-    .select("match_results, updated_at")
-    .eq("user_id", userId)
-    .eq("score_mode", scoreMode)
-    .eq("cache_key", cacheKey)
-    .maybeSingle();
+  const candidateModes = scoreMode === "keyword_match" ? ["keyword_match", "ats"] : [scoreMode];
 
-  const row = data as DashboardCacheRow | null;
-  if (!row?.match_results || !row.updated_at) return null;
-  const updatedAtMs = new Date(row.updated_at).getTime();
-  if (!Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs > DASHBOARD_CACHE_TTL_MS) {
-    return null;
+  for (const dbMode of candidateModes) {
+    const { data } = await supabase
+      .from("dashboard_match_cache")
+      .select("match_results, updated_at")
+      .eq("user_id", userId)
+      .eq("score_mode", dbMode)
+      .eq("cache_key", cacheKey)
+      .maybeSingle();
+
+    const row = data as DashboardCacheRow | null;
+    if (!row?.match_results || !row.updated_at) continue;
+    const updatedAtMs = new Date(row.updated_at).getTime();
+    if (!Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs > DASHBOARD_CACHE_TTL_MS) {
+      continue;
+    }
+    return {
+      ...row.match_results,
+      score_mode: scoreMode,
+      cached: true,
+      cachedAt: row.updated_at,
+    };
   }
-  return {
-    ...row.match_results,
-    cached: true,
-    cachedAt: row.updated_at,
-  };
+
+  return null;
 }
 
 async function saveDashboardCache(
@@ -185,25 +250,263 @@ async function saveDashboardCache(
   userId: string,
   scoreMode: ScoreMode,
   cacheKey: string,
-  payload: {
-    jobs: ReturnType<typeof normalizeJobRow>[];
-    score_mode: ScoreMode;
-    matchedAt: string;
-    base_ready: boolean;
+  payload: DashboardCachePayload
+) {
+  const basePayload = {
+    user_id: userId,
+    score_mode: scoreMode,
+    cache_key: cacheKey,
+    match_results: payload,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("dashboard_match_cache")
+    .upsert(basePayload, { onConflict: "user_id,score_mode,cache_key" });
+
+  if (error && scoreMode === "keyword_match") {
+    const fallback = await supabase
+      .from("dashboard_match_cache")
+      .upsert(
+        {
+          ...basePayload,
+          score_mode: "ats",
+        },
+        { onConflict: "user_id,score_mode,cache_key" }
+      );
+    if (fallback.error) {
+      throw new Error(`dashboard_match_cache upsert failed: ${fallback.error.message}`);
+    }
+    return;
+  }
+
+  if (error) {
+    throw new Error(`dashboard_match_cache upsert failed: ${error.message}`);
+  }
+}
+
+async function checkDashboardRunLimit(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string,
+  isAdmin: boolean
+): Promise<DashboardRunLimitStatus> {
+  if (isAdmin) {
+    return {
+      allowed: true,
+      runsRemaining: DASHBOARD_RUN_LIMIT,
+      nextAllowedTime: null,
+      hoursUntilRefresh: 0,
+      minutesUntilRefresh: 0,
+    };
+  }
+
+  const sinceIso = new Date(Date.now() - DASHBOARD_RUN_WINDOW_MS).toISOString();
+  const { data, error } = await supabase
+    .from("dashboard_match_runs")
+    .select("created_at")
+    .eq("user_id", userId)
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    if (isMissingRelationError(error.message)) {
+      return {
+        allowed: true,
+        runsRemaining: DASHBOARD_RUN_LIMIT,
+        nextAllowedTime: null,
+        hoursUntilRefresh: 0,
+        minutesUntilRefresh: 0,
+      };
+    }
+    throw new Error(`dashboard_match_runs lookup failed: ${error.message}`);
+  }
+
+  const runs = data ?? [];
+  const runsRemaining = Math.max(0, DASHBOARD_RUN_LIMIT - runs.length);
+  if (runsRemaining > 0) {
+    return {
+      allowed: true,
+      runsRemaining,
+      nextAllowedTime: null,
+      hoursUntilRefresh: 0,
+      minutesUntilRefresh: 0,
+    };
+  }
+
+  const oldestRun = runs[0]?.created_at ? new Date(runs[0].created_at) : null;
+  const nextAllowed = oldestRun ? new Date(oldestRun.getTime() + DASHBOARD_RUN_WINDOW_MS) : null;
+  const remainingMs = nextAllowed ? Math.max(0, nextAllowed.getTime() - Date.now()) : 0;
+  const hoursUntilRefresh = Math.floor(remainingMs / (1000 * 60 * 60));
+  const minutesUntilRefresh = Math.ceil((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+
+  return {
+    allowed: false,
+    runsRemaining: 0,
+    nextAllowedTime: nextAllowed?.toISOString() ?? null,
+    hoursUntilRefresh,
+    minutesUntilRefresh,
+  };
+}
+
+async function recordDashboardRun(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string
+) {
+  const { error } = await supabase.from("dashboard_match_runs").insert({ user_id: userId });
+  if (error) {
+    const message = getErrorMessage(error);
+    if (isMissingRelationError(message) || !message || message === "{}") {
+      return;
+    }
+    throw new Error(`dashboard_match_runs insert failed: ${message}`);
+  }
+}
+
+async function getDashboardState(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string
+) {
+  const { data, error } = await supabase
+    .from("dashboard_match_state")
+    .select("base_job_ids,query_meta,base_updated_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw new Error(`dashboard_match_state lookup failed: ${error.message}`);
+  return data as DashboardStateRow | null;
+}
+
+async function getCachedPayloadForMode(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string,
+  scoreMode: ScoreMode
+) {
+  const state = await getDashboardState(supabase, userId);
+  const baseJobIds = state?.base_job_ids ?? [];
+  if (baseJobIds.length === 0) {
+    return { payload: null, state };
+  }
+
+  const cacheKey = JSON.stringify({ baseHash: hashJobIds(baseJobIds), scoreMode });
+  const payload = await getDashboardCache(supabase, userId, scoreMode, cacheKey);
+  return { payload, state };
+}
+
+async function sortModePayload(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  params: {
+    profileVector: number[];
+    cvKeywords: string[] | null;
+    jobIds: string[];
+    groupNames: string[] | null;
+    categoryNames: string[] | null;
+    scoreMode: ScoreMode;
   }
 ) {
-  await supabase
-    .from("dashboard_match_cache")
-    .upsert(
-      {
-        user_id: userId,
-        score_mode: scoreMode,
-        cache_key: cacheKey,
-        match_results: payload,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,score_mode,cache_key" }
-    );
+  const attemptedScoreMode = params.scoreMode === "keyword_match" ? "keyword_match" : "jobbnu";
+  let { data, error } = await supabase.rpc("sort_dashboard_pool_by_mode", {
+    candidate_vector: params.profileVector,
+    cv_keywords: params.cvKeywords,
+    job_ids: params.jobIds,
+    group_names: params.groupNames,
+    category_names: params.categoryNames,
+    limit_count: DASHBOARD_POOL_LIMIT,
+    score_mode: attemptedScoreMode,
+  });
+
+  if (error && params.scoreMode === "keyword_match") {
+    const retry = await supabase.rpc("sort_dashboard_pool_by_mode", {
+      candidate_vector: params.profileVector,
+      cv_keywords: params.cvKeywords,
+      job_ids: params.jobIds,
+      group_names: params.groupNames,
+      category_names: params.categoryNames,
+      limit_count: DASHBOARD_POOL_LIMIT,
+      score_mode: "ats",
+    });
+    data = retry.data;
+    error = retry.error;
+  }
+
+  if (error) {
+    throw new Error(`sort_dashboard_pool_by_mode failed: ${error.message}`);
+  }
+
+  const rows = ((data as RawJobRow[] | null) ?? []).map((row) =>
+    normalizeJobRow(row, findKeywordHits(row, params.cvKeywords))
+  );
+
+  return rows;
+}
+
+async function loadProfile(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string
+) {
+  const { data, error } = await supabase
+    .from("candidate_profiles")
+    .select(
+      "profile_vector, location_lat, location_lon, commute_radius_km, category_tags, primary_occupation_field, occupation_field_candidates, candidate_text_vector"
+    )
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return data as ProfileRow;
+}
+
+export async function GET(req: Request) {
+  const supabase = await createSupabaseRouteHandlerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const url = new URL(req.url);
+    const scoreMode = toScoreMode(url.searchParams.get("score_mode"));
+    const profile = await loadProfile(supabase, user.id);
+    const limitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
+    const { payload, state } = await getCachedPayloadForMode(supabase, user.id, scoreMode);
+
+    if (!payload) {
+      return NextResponse.json(
+        {
+          error: "No cached dashboard matches found",
+          noCacheFound: true,
+          canRunBasePool: limitStatus.allowed,
+          runsRemaining: limitStatus.runsRemaining,
+          nextAllowedTime: limitStatus.nextAllowedTime,
+          hoursUntilRefresh: limitStatus.hoursUntilRefresh,
+          minutesUntilRefresh: limitStatus.minutesUntilRefresh,
+          candidate_cv_text: profile?.candidate_text_vector ?? "",
+          base_ready: Boolean((state?.base_job_ids ?? []).length > 0),
+        },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      ...payload,
+      cached: true,
+      candidate_cv_text: profile?.candidate_text_vector ?? "",
+      canRunBasePool: limitStatus.allowed,
+      runsRemaining: limitStatus.runsRemaining,
+      nextAllowedTime: limitStatus.nextAllowedTime,
+      hoursUntilRefresh: limitStatus.hoursUntilRefresh,
+      minutesUntilRefresh: limitStatus.minutesUntilRefresh,
+    });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    console.error("Match for-user GET error:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
@@ -218,36 +521,26 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { data: profile, error: profileError } = await supabase
-      .from("candidate_profiles")
-      .select(
-        "profile_vector, location_lat, location_lon, commute_radius_km, category_tags, primary_occupation_field, occupation_field_candidates, candidate_text_vector"
-      )
-      .eq("user_id", user.id)
-      .single();
-
-    const typedProfile = profile as ProfileRow | null;
-    if (profileError || !typedProfile) {
+    const profile = await loadProfile(supabase, user.id);
+    if (!profile) {
       return NextResponse.json(
         { error: "Profil hittades inte. Vänligen ladda upp ett CV på din profilsida." },
         { status: 404 }
       );
     }
 
-    const matchAction = toMatchAction(body?.match_action);
     const scoreMode = toScoreMode(body?.score_mode);
-
-    const lat = typeof body?.lat === "number" ? body.lat : typedProfile.location_lat;
-    const lon = typeof body?.lon === "number" ? body.lon : typedProfile.location_lon;
-    const radiusKm = Number(body?.radius_km ?? typedProfile.commute_radius_km ?? 40);
+    const lat = typeof body?.lat === "number" ? body.lat : profile.location_lat;
+    const lon = typeof body?.lon === "number" ? body.lon : profile.location_lon;
+    const radiusKm = Number(body?.radius_km ?? profile.commute_radius_km ?? 40);
     const radiusM = Math.max(1, Math.round(radiusKm * 1000));
     const normalizedOccupationFields = mergeOccupationFields(
-      typedProfile.primary_occupation_field,
-      typedProfile.occupation_field_candidates
+      profile.primary_occupation_field,
+      profile.occupation_field_candidates
     );
     const groupNames =
-      typedProfile.category_tags && typedProfile.category_tags.length > 0
-        ? typedProfile.category_tags
+      profile.category_tags && profile.category_tags.length > 0
+        ? profile.category_tags
         : null;
 
     if (typeof lat !== "number" || typeof lon !== "number") {
@@ -257,32 +550,102 @@ export async function POST(req: Request) {
       );
     }
 
-    if (matchAction === "base_pool") {
-      const { data, error } = await supabase.rpc("fetch_dashboard_taxonomy_pool", {
-        candidate_lat: lat,
-        candidate_lon: lon,
-        radius_m: radiusM,
-        group_names: groupNames,
-        category_names: normalizedOccupationFields,
-        limit_count: DASHBOARD_POOL_LIMIT,
-      });
+    if (!profile.profile_vector) {
+      return NextResponse.json(
+        { error: "Din profil har uppdaterats och analyseras nu. Vänligen vänta 10-30 sekunder och försök igen." },
+        { status: 400 }
+      );
+    }
 
-      if (error) {
-        return NextResponse.json({ error: `fetch_dashboard_taxonomy_pool failed: ${error.message}` }, { status: 500 });
-      }
+    const limitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
+    if (!limitStatus.allowed) {
+      return NextResponse.json(
+        {
+          error: "Rate limit exceeded",
+          message: `Du kan köra Matcha jobb ${DASHBOARD_RUN_LIMIT} gånger per 24 timmar. Nästa körning tillgänglig om ${limitStatus.hoursUntilRefresh}h ${limitStatus.minutesUntilRefresh}min.`,
+          canRunBasePool: false,
+          runsRemaining: 0,
+          nextAllowedTime: limitStatus.nextAllowedTime,
+          hoursUntilRefresh: limitStatus.hoursUntilRefresh,
+          minutesUntilRefresh: limitStatus.minutesUntilRefresh,
+        },
+        { status: 429 }
+      );
+    }
 
-      const rows = ((data as RawJobRow[] | null) ?? []).map(normalizeJobRow);
-      const baseIds = rows.map((row) => row.id).filter(Boolean);
+    const cvKeywords = buildKeywords(profile);
+    const { data, error } = await supabase.rpc("fetch_dashboard_taxonomy_pool", {
+      candidate_lat: lat,
+      candidate_lon: lon,
+      radius_m: radiusM,
+      group_names: groupNames,
+      category_names: normalizedOccupationFields,
+      limit_count: DASHBOARD_POOL_LIMIT,
+    });
 
-      await supabase
+    if (error) {
+      return NextResponse.json({ error: `fetch_dashboard_taxonomy_pool failed: ${error.message}` }, { status: 500 });
+    }
+
+    const baseRows = ((data as RawJobRow[] | null) ?? []).map((row) =>
+      normalizeJobRow(row, findKeywordHits(row, cvKeywords))
+    );
+    const baseIds = baseRows.map((row) => row.id).filter(Boolean);
+    const baseHash = hashJobIds(baseIds);
+    const nowIso = new Date().toISOString();
+
+  const [jobbnuRows, keywordRows] = await Promise.all([
+      sortModePayload(supabase, {
+        profileVector: profile.profile_vector,
+        cvKeywords,
+        jobIds: baseIds,
+        groupNames,
+        categoryNames: normalizedOccupationFields,
+        scoreMode: "jobbnu",
+      }),
+      sortModePayload(supabase, {
+        profileVector: profile.profile_vector,
+        cvKeywords,
+        jobIds: baseIds,
+        groupNames,
+        categoryNames: normalizedOccupationFields,
+        scoreMode: "keyword_match",
+      }),
+    ]);
+
+    const primaryStateWrite = await supabase
+      .from("dashboard_match_state")
+      .upsert(
+        {
+          user_id: user.id,
+          base_job_ids: baseIds,
+          ai_manager_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
+          keyword_match_job_ids: keywordRows.map((row) => row.id).filter(Boolean),
+          query_meta: {
+            lat,
+            lon,
+            radius_km: radiusKm,
+            group_names: groupNames ?? [],
+            category_names: normalizedOccupationFields ?? [],
+          },
+          base_updated_at: nowIso,
+          ai_manager_updated_at: nowIso,
+          keyword_match_updated_at: nowIso,
+          updated_at: nowIso,
+        },
+        { onConflict: "user_id" }
+      );
+
+    if (primaryStateWrite.error && isMissingColumnError(primaryStateWrite.error.message)) {
+      const legacyStateWrite = await supabase
         .from("dashboard_match_state")
         .upsert(
           {
             user_id: user.id,
             base_job_ids: baseIds,
-            ai_manager_job_ids: [],
-            ats_job_ids: [],
-            taxonomy_job_ids: [],
+            ai_manager_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
+            ats_job_ids: keywordRows.map((row) => row.id).filter(Boolean),
+            taxonomy_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
             query_meta: {
               lat,
               lon,
@@ -290,101 +653,64 @@ export async function POST(req: Request) {
               group_names: groupNames ?? [],
               category_names: normalizedOccupationFields ?? [],
             },
-            base_updated_at: new Date().toISOString(),
-            ai_manager_updated_at: null,
-            ats_updated_at: null,
-            taxonomy_updated_at: null,
-            updated_at: new Date().toISOString(),
+            base_updated_at: nowIso,
+            ai_manager_updated_at: nowIso,
+            ats_updated_at: nowIso,
+            taxonomy_updated_at: nowIso,
+            updated_at: nowIso,
           },
           { onConflict: "user_id" }
         );
 
-      return NextResponse.json({
-        jobs: rows,
-        matchedAt: new Date().toISOString(),
-        base_ready: true,
-      });
+      if (legacyStateWrite.error) {
+        throw new Error(`dashboard_match_state upsert failed: ${legacyStateWrite.error.message}`);
+      }
+    } else if (primaryStateWrite.error) {
+      throw new Error(`dashboard_match_state upsert failed: ${primaryStateWrite.error.message}`);
     }
 
-    if (!typedProfile.profile_vector) {
-      return NextResponse.json(
-        { error: "Din profil har uppdaterats och analyseras nu. Vänligen vänta 10-30 sekunder och försök igen." },
-        { status: 400 }
-      );
-    }
-
-    const { data: state } = await supabase
-      .from("dashboard_match_state")
-      .select("base_job_ids")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    const typedState = state as DashboardStateRow | null;
-    const baseJobIds = typedState?.base_job_ids ?? [];
-    if (baseJobIds.length === 0) {
-      return NextResponse.json(
-        { error: "Klicka på 'Matcha jobb' först för att bygga jobbpools-listan." },
-        { status: 400 }
-      );
-    }
-
-    const baseHash = hashJobIds(baseJobIds);
-    const cacheKey = JSON.stringify({ baseHash, scoreMode });
-    const cached = await getDashboardCache(supabase, user.id, scoreMode, cacheKey);
-    if (cached) {
-      return NextResponse.json(cached);
-    }
-
-    const cvKeywords = buildKeywords(typedProfile);
-    const { data: sortedData, error: sortedError } = await supabase.rpc("sort_dashboard_pool_by_mode", {
-      candidate_vector: typedProfile.profile_vector,
-      cv_keywords: cvKeywords,
-      job_ids: baseJobIds,
-      group_names: groupNames,
-      category_names: normalizedOccupationFields,
-      limit_count: DASHBOARD_POOL_LIMIT,
-      score_mode: scoreMode,
-    });
-
-    if (sortedError) {
-      return NextResponse.json({ error: `sort_dashboard_pool_by_mode failed: ${sortedError.message}` }, { status: 500 });
-    }
-
-    const rows = ((sortedData as RawJobRow[] | null) ?? []).map(normalizeJobRow);
-    const sortedIds = rows.map((row) => row.id).filter(Boolean);
-    const nowIso = new Date().toISOString();
-
-    const statePatch: Record<string, unknown> = {
-      updated_at: nowIso,
-    };
-    if (scoreMode === "jobbnu") {
-      statePatch.ai_manager_job_ids = sortedIds;
-      statePatch.ai_manager_updated_at = nowIso;
-    } else if (scoreMode === "ats") {
-      statePatch.ats_job_ids = sortedIds;
-      statePatch.ats_updated_at = nowIso;
-    } else {
-      statePatch.taxonomy_job_ids = sortedIds;
-      statePatch.taxonomy_updated_at = nowIso;
-    }
-
-    await supabase
-      .from("dashboard_match_state")
-      .update(statePatch)
-      .eq("user_id", user.id);
-
-    const payload = {
-      jobs: rows,
-      score_mode: scoreMode,
+    const jobbnuPayload: DashboardCachePayload = {
+      jobs: jobbnuRows,
+      score_mode: "jobbnu",
       matchedAt: nowIso,
       base_ready: true,
     };
-    await saveDashboardCache(supabase, user.id, scoreMode, cacheKey, payload);
+    const keywordPayload: DashboardCachePayload = {
+      jobs: keywordRows,
+      score_mode: "keyword_match",
+      matchedAt: nowIso,
+      base_ready: true,
+    };
 
-    return NextResponse.json(payload);
+    await Promise.all([
+      saveDashboardCache(supabase, user.id, "jobbnu", JSON.stringify({ baseHash, scoreMode: "jobbnu" }), jobbnuPayload),
+      saveDashboardCache(
+        supabase,
+        user.id,
+        "keyword_match",
+        JSON.stringify({ baseHash, scoreMode: "keyword_match" }),
+        keywordPayload
+      ),
+      recordDashboardRun(supabase, user.id),
+    ]);
+
+    const responsePayload = scoreMode === "keyword_match" ? keywordPayload : jobbnuPayload;
+    const updatedLimitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
+
+    return NextResponse.json({
+      ...responsePayload,
+      candidate_cv_text: profile.candidate_text_vector ?? "",
+      cached: false,
+      cachedAt: nowIso,
+      canRunBasePool: updatedLimitStatus.allowed,
+      runsRemaining: updatedLimitStatus.runsRemaining,
+      nextAllowedTime: updatedLimitStatus.nextAllowedTime,
+      hoursUntilRefresh: updatedLimitStatus.hoursUntilRefresh,
+      minutesUntilRefresh: updatedLimitStatus.minutesUntilRefresh,
+    });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Unknown error";
-    console.error("Match for-user error:", message);
+    console.error("Match for-user POST error:", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

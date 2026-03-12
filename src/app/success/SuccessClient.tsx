@@ -66,6 +66,7 @@ export default function SuccessClient({
   }, [documentOrderId])
 
   const isGenerating = !order || (order.generationStatus !== "done" && order.generationStatus !== "error")
+  const paymentPending = !!order && order.status !== "paid"
   const hasContent = order?.generationStatus === "done"
   const isLetterOnly = order?.packageFlow === "letter_intake"
 
@@ -83,7 +84,9 @@ export default function SuccessClient({
               {t("Tack för din beställning!", "Thank you for your order!")}
             </h1>
             <p className="text-sm text-slate-600">
-              {isGenerating
+              {paymentPending
+                ? t("Vi väntar på bekräftad betalning innan genereringen startar.", "We are waiting for confirmed payment before generation starts.")
+                : isGenerating
                 ? t("Skapar ditt dokument...", "Creating your document...")
                 : hasContent
                 ? t("Ditt dokument är klart!", "Your document is ready!")
@@ -107,12 +110,33 @@ export default function SuccessClient({
 
         {/* Generating spinner */}
         {documentOrderId && isGenerating && !pollError && (
-          <div className="rounded-xl border border-blue-100 bg-blue-50 px-6 py-8 text-center">
-            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600 mb-4" />
-            <p className="text-sm font-medium text-blue-800">
-              {t("AI:n skapar ditt dokument – brukar ta 20–40 sekunder.", "AI is creating your document – usually takes 20–40 seconds.")}
+          <div
+            className={`rounded-xl px-6 py-8 text-center ${
+              paymentPending
+                ? "border border-amber-200 bg-amber-50"
+                : "border border-blue-100 bg-blue-50"
+            }`}
+          >
+            <div
+              className={`inline-block h-8 w-8 animate-spin rounded-full border-4 mb-4 ${
+                paymentPending
+                  ? "border-amber-200 border-t-amber-600"
+                  : "border-blue-200 border-t-blue-600"
+              }`}
+            />
+            <p
+              className={`text-sm font-medium ${
+                paymentPending ? "text-amber-800" : "text-blue-800"
+              }`}
+            >
+              {paymentPending
+                ? t(
+                    "Vi väntar fortfarande på att betalningen ska bekräftas innan AI-genereringen kan starta.",
+                    "We are still waiting for payment confirmation before AI generation can start."
+                  )
+                : t("AI:n skapar ditt dokument – brukar ta 20–40 sekunder.", "AI is creating your document – usually takes 20–40 seconds.")}
             </p>
-            <p className="text-xs text-blue-500 mt-1">
+            <p className={`text-xs mt-1 ${paymentPending ? "text-amber-600" : "text-blue-500"}`}>
               {t("Sidan uppdateras automatiskt.", "Page updates automatically.")}
             </p>
           </div>

@@ -17,11 +17,22 @@ type CandidateRow = {
   user_id: string | null
   full_name: string | null
   email: string | null
+  age: number | null
   city: string | null
+  street: string | null
+  location_lat: number | null
+  location_lon: number | null
+  commute_radius_km: number | null
   cv_file_url: string | null
   cv_bucket_path: string | null
   category_tags: string[] | null
-  primary_occupation_field: string | null
+  primary_occupation_field: string | string[] | null
+  search_keywords: string[] | null
+  experience_titles: string[] | null
+  education_titles: string[] | null
+  seniority_reason: string | null
+  relevant_experience_years: Record<string, number | string> | null
+  candidate_text_vector: string | null
   manual_premium: boolean | null
   created_at: string | null
 }
@@ -53,18 +64,83 @@ type AdminDocumentOrderRow = {
 
 type JobResult = {
   id: string
-  headline: string
+  headline: string | null
   company: string | null
   city: string | null
   occupation_field_label: string | null
   occupation_group_label: string | null
   occupation_label: string | null
-  distance_km: number
+  distance_km: number | null
   webpage_url: string | null
-  published_at: string | null
+  application_deadline?: string | null
+  // Semantic scoring (present in semantic mode only)
+  display_score?: number | null
+  jobbnu_score?: number | null
+  vector_similarity?: number | null
+  keyword_hit_rate?: number | null
+  keyword_miss_rate?: number | null
+  keyword_hits?: string[] | null
+  contactScanStatus?: string | null
+  outreachType?: string | null
+  contactEmail?: string | null
+  contactName?: string | null
+  contactRole?: string | null
+  contactDomain?: string | null
+  contactNote?: string | null
 }
 
-type TabKey = "candidates" | "jobsearch" | "orders" | "calendar" | "cvgen"
+type TabKey = "candidates" | "jobsearch" | "orders" | "calendar" | "cvgen" | "cvmatch" | "savedjobs"
+
+type SavedJob = {
+  id: string
+  created_at: string
+  candidate_label: string
+  candidate_profile_id: string | null
+  job_id: string
+  headline: string | null
+  company: string | null
+  city: string | null
+  distance_km: number | null
+  webpage_url: string | null
+  occupation_group_label: string | null
+  notes: string | null
+  email_sent: boolean
+  email_sent_at: string | null
+  search_mode: string | null
+  search_keyword: string | null
+  search_address: string | null
+  search_radius_km: number | null
+  candidate_cv_text: string | null
+}
+
+type CvMatchMode = "freetext" | "user"
+
+function normalizeKeywordSeed(value: string | string[] | null | undefined): string {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join(", ")
+  }
+
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function normalizeKeywordCandidates(candidate: CandidateRow): string {
+  const ranked = Array.isArray(candidate.search_keywords)
+    ? candidate.search_keywords
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : []
+
+  if (ranked.length > 0) {
+    return ranked.join(", ")
+  }
+
+  return normalizeKeywordSeed(candidate.primary_occupation_field)
+}
 
 export default function AdminDashboard() {
   const router = useRouter()
@@ -95,6 +171,38 @@ export default function AdminDashboard() {
   const [cvGenResult, setCvGenResult] = useState("")
   const [cvGenLoading, setCvGenLoading] = useState(false)
   const [cvGenError, setCvGenError] = useState("")
+
+  // CV Match tab
+  const [cmMode, setCmMode] = useState<CvMatchMode>("freetext")
+  const [cmCandidate, setCmCandidate] = useState<CandidateRow | null>(null)
+  const [cmCandidateSearch, setCmCandidateSearch] = useState("")
+  const [cmCvText, setCmCvText] = useState("")
+  const [cmAddress, setCmAddress] = useState("")
+  const [cmKeywords, setCmKeywords] = useState("")
+  const [cmRadius, setCmRadius] = useState("50")
+  const [cmResults, setCmResults] = useState<JobResult[]>([])
+  const [cmLoading, setCmLoading] = useState(false)
+  const [cmError, setCmError] = useState("")
+  const [cmTotal, setCmTotal] = useState<number | null>(null)
+  const [cmExtractedAddress, setCmExtractedAddress] = useState("")
+  const [cmExtractedKeywords, setCmExtractedKeywords] = useState("")
+  const [cmSavedJobIds, setCmSavedJobIds] = useState<Set<string>>(new Set())
+  // occupation_group_label values from candidate.category_tags (comma-separated text)
+  const [cmGroupNames, setCmGroupNames] = useState("")
+  const [cmLastSearchMode, setCmLastSearchMode] = useState<"semantic" | "keyword" | null>(null)
+  const [cmSaveThreshold, setCmSaveThreshold] = useState("75")
+  const [cmBulkSaving, setCmBulkSaving] = useState(false)
+  const [cmContactScanLoading, setCmContactScanLoading] = useState(false)
+
+  // Saved jobs
+  const [savedJobs, setSavedJobs] = useState<SavedJob[]>([])
+  const [savedJobsCandidateFilter, setSavedJobsCandidateFilter] = useState<string>("")
+  const [savedJobsCandidateOptions, setSavedJobsCandidateOptions] = useState<Array<{ id: string; label: string }>>([])
+  const [savedJobNotes, setSavedJobNotes] = useState<Record<string, string>>({})
+  const [emailGenLoading, setEmailGenLoading] = useState<string | null>(null)
+  const [generatedEmails, setGeneratedEmails] = useState<Record<string, string>>({})
+  const [introLinkLoading, setIntroLinkLoading] = useState<string | null>(null)
+  const [employerIntroLinks, setEmployerIntroLinks] = useState<Record<string, string>>({})
 
   // Job search
   const [jsAddress, setJsAddress] = useState("")
@@ -132,6 +240,7 @@ export default function AdminDashboard() {
       fetchCandidates()
       fetchBlocks()
       fetchDocumentOrders()
+      fetchSavedJobs()
     }
 
     bootstrap()
@@ -208,7 +317,386 @@ export default function AdminDashboard() {
     }
   }
 
+  const fetchSavedJobs = async (candidateProfileId?: string | null) => {
+    try {
+      const query = candidateProfileId ? `?candidateProfileId=${encodeURIComponent(candidateProfileId)}` : ""
+      const res = await fetch(`/api/admin/saved-jobs${query}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Failed")
+      const jobs: SavedJob[] = json.data || []
+      setSavedJobs(jobs)
+      if (!candidateProfileId) {
+        const options = new Map<string, string>()
+        for (const job of jobs) {
+          if (!job.candidate_profile_id) continue
+          options.set(job.candidate_profile_id, job.candidate_label || "Okänd kandidat")
+        }
+        setSavedJobsCandidateOptions(
+          Array.from(options.entries())
+            .map(([id, label]) => ({ id, label }))
+            .sort((a, b) => a.label.localeCompare(b.label, "sv"))
+        )
+      }
+      setSavedJobNotes((prev) => {
+        const next = { ...prev }
+        for (const j of jobs) {
+          if (!(j.id in next)) next[j.id] = j.notes || ""
+        }
+        return next
+      })
+    } catch (err) {
+      console.error("fetchSavedJobs:", err)
+    }
+  }
+
+  useEffect(() => {
+    const candidateProfileId = cmMode === "user" ? cmCandidate?.id ?? null : null
+    void fetchSavedJobs(candidateProfileId)
+  }, [cmMode, cmCandidate?.id])
+
+  useEffect(() => {
+    if (!savedJobsCandidateFilter && cmMode === "user" && cmCandidate?.id) {
+      setSavedJobsCandidateFilter(cmCandidate.id)
+    }
+  }, [cmMode, cmCandidate, savedJobsCandidateFilter])
+
+  useEffect(() => {
+    const relevantSavedJobs = savedJobs.filter((job) =>
+      cmMode === "user" && cmCandidate ? job.candidate_profile_id === cmCandidate.id : true
+    )
+    setCmSavedJobIds(new Set(relevantSavedJobs.map((job) => job.job_id).filter(Boolean)))
+  }, [savedJobs, cmMode, cmCandidate])
+
+  const handleCvMatch = async (mode: "semantic" | "keyword") => {
+    if (mode === "keyword" && !cmKeywords.trim()) {
+      return setCmError("Ange yrke/nyckelord för yrkes-sökning")
+    }
+    if (!cmAddress.trim() && !cmCvText.trim() && !cmCandidate?.candidate_text_vector?.trim() && !cmCandidate?.location_lat) {
+      return setCmError("Ange adress, välj kandidat med sparad adress, eller klistra in CV-text")
+    }
+    setCmLoading(true)
+    setCmError("")
+    setCmResults([])
+    setCmTotal(null)
+    setCmLastSearchMode(mode)
+    setCmExtractedAddress("")
+    setCmExtractedKeywords("")
+    const groupNamesArr = cmGroupNames
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+    try {
+      const res = await fetch("/api/admin/cv-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          searchMode: mode,
+          cvText: cmCvText.trim(),
+          candidateProfileId: cmMode === "user" && cmCandidate ? cmCandidate.id : null,
+          address: cmAddress.trim(),
+          keywords: cmKeywords.trim(),
+          groupNames: groupNamesArr,
+          radiusKm: Number(cmRadius),
+          limit: 100,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Matchning misslyckades")
+      setCmResults(json.results || [])
+      setCmTotal(json.total)
+      if (json.extractedAddress) setCmExtractedAddress(json.extractedAddress)
+      if (json.extractedKeywords) setCmExtractedKeywords(json.extractedKeywords)
+      if (!cmAddress.trim() && json.address) setCmAddress(json.address)
+      if (!cmKeywords.trim() && json.keywords) setCmKeywords(json.keywords)
+    } catch (err: unknown) {
+      setCmError(err instanceof Error ? err.message : "Okänt fel")
+    } finally {
+      setCmLoading(false)
+    }
+  }
+
+  const handleSaveJob = async (job: JobResult) => {
+    const candidateLabel =
+      cmMode === "user" && cmCandidate
+        ? cmCandidate.full_name || cmCandidate.email || "Kandidat"
+        : "Inklistrad CV"
+    const candidateCvText =
+      cmCvText.trim() ||
+      (cmMode === "user" ? cmCandidate?.candidate_text_vector?.trim() || "" : "")
+    try {
+      const res = await fetch("/api/admin/saved-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateLabel,
+          candidateProfileId: cmMode === "user" ? cmCandidate?.id : null,
+          jobId: job.id,
+          headline: job.headline,
+          company: job.company,
+          city: job.city,
+          distanceKm: job.distance_km,
+          webpageUrl: job.webpage_url,
+          occupationGroupLabel: job.occupation_group_label,
+          searchMode: cmLastSearchMode,
+          searchKeyword: cmKeywords.trim() || null,
+          searchAddress: cmAddress.trim() || null,
+          searchRadiusKm: Number(cmRadius),
+          candidateCvText: candidateCvText || null,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Save failed")
+      setCmSavedJobIds((prev) => new Set(prev).add(job.id))
+      await fetchSavedJobs(cmMode === "user" ? cmCandidate?.id ?? null : null)
+    } catch (err) {
+      console.error(err)
+      alert("Kunde inte spara jobbet")
+    }
+  }
+
+  const handleSaveJobsByScore = async () => {
+    const threshold = Number(cmSaveThreshold)
+    if (!Number.isFinite(threshold)) {
+      setCmError("Ange en giltig scoregräns")
+      return
+    }
+
+    const jobsToSave = cmResults.filter((job) => {
+      if (cmSavedJobIds.has(job.id)) return false
+      const score = job.display_score ?? job.jobbnu_score
+      return typeof score === "number" && score >= threshold
+    })
+
+    if (jobsToSave.length === 0) {
+      setCmError(`Inga osparade jobb hittades över ${threshold}%`)
+      return
+    }
+
+    const candidateLabel =
+      cmMode === "user" && cmCandidate
+        ? cmCandidate.full_name || cmCandidate.email || "Kandidat"
+        : "Inklistrad CV"
+    const candidateCvText =
+      cmCvText.trim() ||
+      (cmMode === "user" ? cmCandidate?.candidate_text_vector?.trim() || "" : "")
+
+    setCmBulkSaving(true)
+    setCmError("")
+
+    try {
+      const savedIds = new Set<string>()
+
+      for (const job of jobsToSave) {
+        const res = await fetch("/api/admin/saved-jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            candidateLabel,
+            candidateProfileId: cmMode === "user" ? cmCandidate?.id : null,
+            jobId: job.id,
+            headline: job.headline,
+            company: job.company,
+            city: job.city,
+            distanceKm: job.distance_km,
+            webpageUrl: job.webpage_url,
+            occupationGroupLabel: job.occupation_group_label,
+            searchMode: cmLastSearchMode,
+            searchKeyword: cmKeywords.trim() || null,
+            searchAddress: cmAddress.trim() || null,
+            searchRadiusKm: Number(cmRadius),
+            candidateCvText: candidateCvText || null,
+          }),
+        })
+        const json = await res.json()
+        if (!res.ok) throw new Error(json?.error || "Bulk save failed")
+        savedIds.add(job.id)
+      }
+
+      setCmSavedJobIds((prev) => {
+        const next = new Set(prev)
+        for (const id of savedIds) next.add(id)
+        return next
+      })
+      await fetchSavedJobs(cmMode === "user" ? cmCandidate?.id ?? null : null)
+    } catch (err) {
+      console.error(err)
+      setCmError(err instanceof Error ? err.message : "Kunde inte spara jobb")
+    } finally {
+      setCmBulkSaving(false)
+    }
+  }
+
+  const handleScanJobContacts = async () => {
+    if (cmResults.length === 0) {
+      setCmError("Inga jobb att skanna")
+      return
+    }
+
+    setCmContactScanLoading(true)
+    setCmError("")
+
+    try {
+      const res = await fetch("/api/admin/job-contact-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobs: cmResults.map((job) => ({
+            id: job.id,
+            headline: job.headline,
+            company: job.company,
+            webpage_url: job.webpage_url,
+          })),
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kontakt-scan misslyckades")
+
+      const byId = new Map<string, Record<string, unknown>>()
+      for (const row of json.results || []) {
+        if (row?.id) byId.set(String(row.id), row)
+      }
+
+      setCmResults((prev) =>
+        prev.map((job) => {
+          const scan = byId.get(job.id)
+          if (!scan) return job
+          return {
+            ...job,
+            contactScanStatus: typeof scan.contactScanStatus === "string" ? scan.contactScanStatus : null,
+            outreachType: typeof scan.outreachType === "string" ? scan.outreachType : null,
+            contactEmail: typeof scan.contactEmail === "string" ? scan.contactEmail : null,
+            contactName: typeof scan.contactName === "string" ? scan.contactName : null,
+            contactRole: typeof scan.contactRole === "string" ? scan.contactRole : null,
+            contactDomain: typeof scan.contactDomain === "string" ? scan.contactDomain : null,
+            contactNote: typeof scan.contactNote === "string" ? scan.contactNote : null,
+          }
+        })
+      )
+    } catch (err) {
+      setCmError(err instanceof Error ? err.message : "Kontakt-scan misslyckades")
+    } finally {
+      setCmContactScanLoading(false)
+    }
+  }
+
+  const handleDeleteSavedJob = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/saved-jobs/${id}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("Delete failed")
+      setSavedJobs((prev) => prev.filter((j) => j.id !== id))
+    } catch (err) {
+      console.error(err)
+      alert("Kunde inte ta bort")
+    }
+  }
+
+  const handleSaveJobNotes = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/saved-jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: savedJobNotes[id] ?? "" }),
+      })
+      if (!res.ok) throw new Error("Update failed")
+      setSavedJobs((prev) =>
+        prev.map((j) => (j.id === id ? { ...j, notes: savedJobNotes[id] ?? "" } : j))
+      )
+    } catch (err) {
+      console.error(err)
+      alert("Kunde inte spara anteckning")
+    }
+  }
+
+  const handleMarkEmailSent = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/saved-jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailSent: true }),
+      })
+      if (!res.ok) throw new Error("Update failed")
+      setSavedJobs((prev) =>
+        prev.map((j) => (j.id === id ? { ...j, email_sent: true } : j))
+      )
+    } catch (err) {
+      console.error(err)
+      alert("Kunde inte markera e-post som skickad")
+    }
+  }
+
+  const handleGenerateEmail = async (job: SavedJob) => {
+    setEmailGenLoading(job.id)
+    try {
+      const linkRes = await fetch("/api/admin/employer-intro-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ savedJobId: job.id }),
+      })
+      const linkJson = await linkRes.json()
+      if (!linkRes.ok) throw new Error(linkJson?.error || "Kunde inte skapa introduktionslänk")
+      const bookingLink = linkJson?.data?.publicUrl || ""
+      if (bookingLink) {
+        setEmployerIntroLinks((prev) => ({ ...prev, [job.id]: bookingLink }))
+      }
+
+      const cvText =
+        job.candidate_cv_text ||
+        (cmMode === "user" && cmCandidate
+          ? cmCvText || cmCandidate.candidate_text_vector || `Kandidat med kompetenser: ${cmCandidate.category_tags?.join(", ") || ""}`
+          : cmCvText)
+      const res = await fetch("/api/admin/generate-outreach-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.job_id,
+          candidateLabel: job.candidate_label,
+          candidateProfileId: job.candidate_profile_id,
+          cvText,
+          jobHeadline: job.headline,
+          company: job.company,
+          distanceKm: job.distance_km,
+          occupationGroupLabel: job.occupation_group_label,
+          bookingLink,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Generation failed")
+      setGeneratedEmails((prev) => ({ ...prev, [job.id]: json.email || "" }))
+    } catch (err) {
+      alert("Kunde inte generera e-post: " + (err instanceof Error ? err.message : "okänt fel"))
+    } finally {
+      setEmailGenLoading(null)
+    }
+  }
+
+  const handleCreateEmployerIntroLink = async (job: SavedJob) => {
+    setIntroLinkLoading(job.id)
+    try {
+      const res = await fetch("/api/admin/employer-intro-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ savedJobId: job.id }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kunde inte skapa länk")
+      const publicUrl = json?.data?.publicUrl
+      if (publicUrl) {
+        setEmployerIntroLinks((prev) => ({ ...prev, [job.id]: publicUrl }))
+        await navigator.clipboard.writeText(publicUrl)
+      }
+    } catch (err) {
+      alert("Kunde inte skapa introduktionslänk: " + (err instanceof Error ? err.message : "okänt fel"))
+    } finally {
+      setIntroLinkLoading(null)
+    }
+  }
+
   const isSuperAdmin = isAdminUser(adminUser)
+  const savedJobsLabel = savedJobsCandidateFilter
+    ? `Sparade Jobb för ${
+        savedJobsCandidateOptions.find((option) => option.id === savedJobsCandidateFilter)?.label || "vald kandidat"
+      }`
+    : "Sparade Jobb"
 
   const togglePremium = async (candidate: CandidateRow) => {
     const newValue = !candidate.manual_premium
@@ -243,7 +731,11 @@ export default function AdminDashboard() {
       if (!res.ok) throw new Error(json?.error || "Update failed")
       setModeratorIds((prev) => {
         const next = new Set(prev)
-        newRole ? next.add(uid) : next.delete(uid)
+        if (newRole) {
+          next.add(uid)
+        } else {
+          next.delete(uid)
+        }
         return next
       })
     } catch (err) {
@@ -432,7 +924,8 @@ export default function AdminDashboard() {
 
   const TAB_LABELS: { key: TabKey; label: string }[] = [
     { key: "candidates", label: "Kandidater" },
-    { key: "jobsearch", label: "Jobsökning" },
+    { key: "cvmatch", label: "CV Matchning" },
+    { key: "savedjobs", label: "Sparade Jobb" },
     { key: "orders", label: "Beställningar" },
     { key: "calendar", label: "Kalender" },
     { key: "cvgen", label: "CV-generator" },
@@ -455,7 +948,13 @@ export default function AdminDashboard() {
           {TAB_LABELS.map(({ key, label }) => (
             <button
               key={key}
-              onClick={() => setTab(key)}
+              onClick={() => {
+                setTab(key)
+                if (key === "savedjobs") {
+                  const candidateProfileId = savedJobsCandidateFilter || (cmMode === "user" ? cmCandidate?.id ?? null : null)
+                  void fetchSavedJobs(candidateProfileId)
+                }
+              }}
               className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
                 tab === key
                   ? "border-blue-600 text-blue-700"
@@ -471,6 +970,11 @@ export default function AdminDashboard() {
               {key === "orders" && documentOrders.length > 0 && (
                 <span className="ml-1.5 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
                   {documentOrders.length}
+                </span>
+              )}
+              {key === "savedjobs" && savedJobs.length > 0 && (
+                <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                  {savedJobs.length}
                 </span>
               )}
             </button>
@@ -507,7 +1011,10 @@ export default function AdminDashboard() {
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="min-w-0">
-                        <p className="font-semibold text-slate-900 truncate">{c.full_name || "(inget namn)"}</p>
+                        <p className="font-semibold text-slate-900 truncate">
+                          {c.full_name || "(inget namn)"}
+                          {c.age != null ? `, ${c.age}` : ""}
+                        </p>
                         <p className="text-sm text-slate-500 truncate">{c.email} {c.city ? `• ${c.city}` : ""}</p>
                       </div>
                     </div>
@@ -596,6 +1103,585 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* ═══ TAB: CV Matchning ═══ */}
+        {tab === "cvmatch" && (
+          <div>
+            <h2 className="text-lg font-semibold mb-4">CV Matchning</h2>
+
+            {/* Mode selector */}
+            <div className="flex gap-2 mb-5">
+              <button
+                onClick={() => { setCmMode("freetext"); setCmCandidate(null); setCmCandidateSearch("") }}
+                className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
+                  cmMode === "freetext"
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                }`}
+              >
+                Klistra in CV-text
+              </button>
+              <button
+                onClick={() => setCmMode("user")}
+                className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
+                  cmMode === "user"
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                }`}
+              >
+                Välj kandidat
+              </button>
+            </div>
+
+            <div className="bg-white rounded-lg border p-5 shadow-sm mb-4 space-y-4">
+
+              {/* Mode: select candidate */}
+              {cmMode === "user" && (
+                <div>
+                  <Label>Sök kandidat</Label>
+                  <Input
+                    placeholder="Sök namn, e-post, stad..."
+                    value={cmCandidateSearch}
+                    onChange={(e) => setCmCandidateSearch(e.target.value)}
+                    className="mb-2"
+                  />
+                  {cmCandidateSearch.trim() && (
+                    <div className="border rounded-md max-h-48 overflow-y-auto divide-y bg-white shadow-sm">
+                      {candidates
+                        .filter((c) => {
+                          const q = cmCandidateSearch.toLowerCase()
+                          return (
+                            c.full_name?.toLowerCase().includes(q) ||
+                            c.email?.toLowerCase().includes(q) ||
+                            c.city?.toLowerCase().includes(q)
+                          )
+                        })
+                        .slice(0, 20)
+                        .map((c) => (
+                          <button
+                            key={c.id}
+                            className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
+                            onClick={() => {
+                              setCmCandidate(c)
+                              setCmCandidateSearch("")
+                              // Address: street + city if available
+                              const fullAddress = c.street
+                                ? `${c.street}, ${c.city ?? ""}`.trim()
+                                : (c.city ?? "")
+                              setCmAddress(fullAddress)
+                              // Radius: from profile or default 50
+                              if (c.commute_radius_km) setCmRadius(String(c.commute_radius_km))
+                              // Keywords: from primary_occupation_field
+                              setCmKeywords(normalizeKeywordCandidates(c))
+                              // Group names: from category_tags (occupation_group_label values)
+                              if (c.category_tags && c.category_tags.length > 0) {
+                                setCmGroupNames(c.category_tags.join(", "))
+                              }
+                            }}
+                          >
+                            <span className="font-medium">{c.full_name || "(inget namn)"}</span>
+                            <span className="text-slate-500 ml-2">{c.email}</span>
+                            {c.city && <span className="text-slate-400 ml-2">• {c.city}</span>}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+
+                  {cmCandidate && (
+                    <div className="mt-2 p-3 bg-blue-50 rounded-md flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 text-sm">{cmCandidate.full_name}</p>
+                        <p className="text-xs text-slate-500">
+                          {cmCandidate.email}
+                          {cmCandidate.street ? ` • ${cmCandidate.street}, ${cmCandidate.city ?? ""}` : cmCandidate.city ? ` • ${cmCandidate.city}` : ""}
+                        </p>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {cmCandidate.commute_radius_km && (
+                            <span className="text-xs text-slate-500">Radie: {cmCandidate.commute_radius_km} km</span>
+                          )}
+                          {cmCandidate.location_lat ? (
+                            <span className="text-xs text-green-700">Koordinater sparade</span>
+                          ) : (
+                            <span className="text-xs text-amber-600">Inga koordinater – geokodas från adress</span>
+                          )}
+                        </div>
+                        {cmCandidate.category_tags && cmCandidate.category_tags.length > 0 && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Grupper: {cmCandidate.category_tags.join(", ")}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2 shrink-0">
+                        {(cmCandidate.cv_file_url || cmCandidate.cv_bucket_path) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => viewCv(cmCandidate.cv_file_url, cmCandidate.cv_bucket_path)}
+                          >
+                            Visa nuvarande CV
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setCmCandidate(null)
+                            setCmAddress("")
+                            setCmKeywords("")
+                            setCmGroupNames("")
+                          }}
+                        >
+                          Byt
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* CV text area (always shown in freetext mode, optional in user mode) */}
+              <div>
+                <Label htmlFor="cm-cvtext">
+                  {cmMode === "freetext" ? "CV-text (klistra in PDF-text, LinkedIn eller anteckningar)" : "CV-text (valfritt – lämna tomt för att använda kandidatens sparade CV-text)"}
+                </Label>
+                <textarea
+                  id="cm-cvtext"
+                  className="mt-1 w-full min-h-[140px] rounded-md border border-slate-300 px-3 py-2 text-sm font-mono resize-y"
+                  placeholder="Klistra in CV-text här för att extrahera adress och yrkestitel automatiskt..."
+                  value={cmCvText}
+                  onChange={(e) => setCmCvText(e.target.value)}
+                />
+                {cmMode === "user" && !cmCvText.trim() && cmCandidate?.candidate_text_vector?.trim() && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Kandidatens sparade CV-text används automatiskt om du lämnar detta tomt.
+                  </p>
+                )}
+                {cmCvText.trim() && !cmAddress && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Adress och nyckelord extraheras automatiskt med Claude om du inte fyller i dem nedan.
+                  </p>
+                )}
+              </div>
+
+              {/* Address + Keywords + Radius */}
+              <div className="grid sm:grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor="cm-address">Adress / Stad</Label>
+                  <Input
+                    id="cm-address"
+                    placeholder="t.ex. Stockholm, Göteborg..."
+                    value={cmAddress}
+                    onChange={(e) => setCmAddress(e.target.value)}
+                  />
+                  {cmExtractedAddress && (
+                    <p className="text-xs text-green-700 mt-1">Extraherad: {cmExtractedAddress}</p>
+                  )}
+                </div>
+              <div>
+                <Label htmlFor="cm-keywords">Yrke / Nyckelord</Label>
+                <Input
+                  id="cm-keywords"
+                  placeholder="t.ex. elektriker, sjuksköterska..."
+                  value={cmKeywords}
+                  onChange={(e) => setCmKeywords(e.target.value)}
+                />
+                  {cmExtractedKeywords && (
+                    <p className="text-xs text-green-700 mt-1">Extraherat: {cmExtractedKeywords}</p>
+                  )}
+                  <p className="text-xs text-slate-500 mt-1">
+                    Används i AI Manager-sorteringen tillsammans med taxonomi, radie och vektormatchning.
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor="cm-radius">Radie (km)</Label>
+                  <Input
+                    id="cm-radius"
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={cmRadius}
+                    onChange={(e) => setCmRadius(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Category group filter */}
+              <div>
+                <Label htmlFor="cm-groups">
+                  Yrkesgrupper (occupation_group_label)
+                </Label>
+                <Input
+                  id="cm-groups"
+                  placeholder="t.ex. Installations- och driftsarbete, El- och energiarbete (kommaseparerat)"
+                  value={cmGroupNames}
+                  onChange={(e) => setCmGroupNames(e.target.value)}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Fylls i automatiskt från kandidatens `category_tags` och används som taxonomifilter i båda sökvägarna.
+                </p>
+              </div>
+
+              {/* Two search buttons */}
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={() => handleCvMatch("semantic")}
+                  disabled={cmLoading}
+                >
+                  {cmLoading && cmLastSearchMode === "semantic" ? "Matchar..." : "Matcha jobb"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleScanJobContacts}
+                  disabled={cmContactScanLoading || cmResults.length === 0}
+                >
+                  {cmContactScanLoading ? "Skannar kontaktinfo..." : "Skanna kontaktinfo"}
+                </Button>
+                {cmLoading && (
+                  <span className="text-sm text-slate-500">
+                    Bygger taxonomipool + rankar som i dashboarden...
+                  </span>
+                )}
+              </div>
+
+              {cmLastSearchMode === "semantic" && cmResults.length > 0 && (
+                <div className="flex flex-wrap items-end gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <div>
+                    <Label htmlFor="cm-save-threshold">Spara jobb över score</Label>
+                    <Input
+                      id="cm-save-threshold"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={cmSaveThreshold}
+                      onChange={(e) => setCmSaveThreshold(e.target.value)}
+                      className="w-28"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={handleSaveJobsByScore}
+                    disabled={cmBulkSaving}
+                  >
+                    {cmBulkSaving ? "Sparar..." : "Spara alla över gränsen"}
+                  </Button>
+                </div>
+              )}
+
+              {cmError && <p className="text-sm text-red-600">{cmError}</p>}
+            </div>
+
+            {/* Results */}
+            {cmTotal !== null && (
+              <p className="text-sm text-slate-600 mb-3">
+                {cmLastSearchMode === "semantic" ? "AI Manager-sortering" : "Hard keyword filter"} —{" "}
+                {cmTotal} jobb
+                {cmKeywords ? ` för "${cmKeywords}"` : ""}
+                {" "}inom {cmRadius} km från {cmAddress}
+              </p>
+            )}
+
+            <div className="space-y-2 mb-8">
+              {cmResults.map((job) => {
+                const alreadySaved = cmSavedJobIds.has(job.id)
+                const score = job.display_score ?? job.jobbnu_score
+                return (
+                  <div key={job.id} className="bg-white rounded-lg border p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900">{job.headline}</p>
+                        <p className="text-sm text-slate-600">
+                          {job.company && <span>{job.company} • </span>}
+                          {job.city && <span>{job.city} • </span>}
+                          {job.distance_km != null ? (
+                            <span className="text-blue-700">{job.distance_km.toFixed(1)} km</span>
+                          ) : score != null ? (
+                            <span className="text-blue-700">Score: {score.toFixed(1)}</span>
+                          ) : null}
+                        </p>
+                        {job.occupation_group_label && (
+                          <p className="text-xs text-slate-500 mt-0.5">{job.occupation_group_label}</p>
+                        )}
+                        {job.vector_similarity != null && (
+                          <div className="flex gap-3 mt-1">
+                            <span className="text-xs text-slate-400">
+                              Vektor: {(job.vector_similarity * 100).toFixed(0)}%
+                            </span>
+                            {job.keyword_hit_rate != null && (
+                              <span className="text-xs text-slate-400">
+                                Nyckelord: {(job.keyword_hit_rate * 100).toFixed(0)}%
+                              </span>
+                            )}
+                            {job.keyword_miss_rate != null && (
+                              <span className="text-xs text-slate-400">
+                                Miss: {(job.keyword_miss_rate * 100).toFixed(0)}%
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {job.keyword_hits && job.keyword_hits.length > 0 && (
+                          <p className="text-xs text-slate-500 mt-2">
+                            Träffade ord: {job.keyword_hits.join(", ")}
+                          </p>
+                        )}
+                        {(job.contactEmail || job.contactNote) && (
+                          <div className="mt-2 space-y-1">
+                            {job.contactEmail && (
+                              <p className="text-xs text-emerald-700">
+                                Direkt outreach: {job.contactEmail}
+                                {job.contactName ? ` · ${job.contactName}` : ""}
+                                {job.contactRole ? ` · ${job.contactRole}` : ""}
+                              </p>
+                            )}
+                            {!job.contactEmail && job.contactNote && (
+                              <p className="text-xs text-amber-700">
+                                {job.contactNote}
+                                {job.contactDomain ? ` · ${job.contactDomain}` : ""}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="shrink-0 flex flex-col items-end gap-2">
+                        {score != null && (
+                          <span className="text-xs font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded">
+                            {score.toFixed(1)}
+                          </span>
+                        )}
+                        <Button
+                          size="sm"
+                          variant={alreadySaved ? "outline" : "default"}
+                          disabled={alreadySaved}
+                          onClick={() => handleSaveJob(job)}
+                        >
+                          {alreadySaved ? "Sparad" : "Spara"}
+                        </Button>
+                        {job.webpage_url && (
+                          <a
+                            href={job.webpage_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-blue-600 underline whitespace-nowrap"
+                          >
+                            Öppna annons
+                          </a>
+                        )}
+                        {job.application_deadline && (
+                          <span className="text-xs text-slate-400">
+                            Sök senast {new Date(job.application_deadline).toLocaleDateString("sv-SE")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+
+              {cmTotal === 0 && (
+                <div className="bg-white rounded-lg border p-6 text-center text-slate-400">
+                  Inga jobb hittades för dessa kriterier.
+                </div>
+              )}
+            </div>
+
+            {/* Link to saved jobs tab */}
+            {savedJobs.length > 0 && (
+              <div className="border-t pt-4">
+                <button
+                  className="text-sm text-amber-700 underline"
+                  onClick={() => {
+                    if (cmMode === "user" && cmCandidate?.id) {
+                      setSavedJobsCandidateFilter(cmCandidate.id)
+                    }
+                    setTab("savedjobs")
+                    void fetchSavedJobs(cmMode === "user" ? cmCandidate?.id ?? null : null)
+                  }}
+                >
+                  {savedJobs.length} sparade jobb → gå till Sparade Jobb
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══ TAB: Sparade Jobb ═══ */}
+        {tab === "savedjobs" && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">{savedJobsLabel}</h2>
+              <div className="flex items-center gap-2">
+                <select
+                  className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
+                  value={savedJobsCandidateFilter}
+                  onChange={(e) => {
+                    const nextValue = e.target.value
+                    setSavedJobsCandidateFilter(nextValue)
+                    void fetchSavedJobs(nextValue || null)
+                  }}
+                >
+                  <option value="">Alla kandidater</option>
+                  {savedJobsCandidateOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void fetchSavedJobs(savedJobsCandidateFilter || null)}
+                >
+                  Uppdatera
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {savedJobs.length === 0 && (
+                <div className="bg-white rounded-lg border p-6 text-center text-slate-400">
+                  Inga sparade jobb ännu. Spara jobb från CV Matchning-fliken.
+                </div>
+              )}
+              {savedJobs.map((job) => (
+                <div key={job.id} className="bg-white rounded-lg border shadow-sm">
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-4 mb-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900">{job.headline}</p>
+                        <p className="text-sm text-slate-600">
+                          {job.company && <span>{job.company} • </span>}
+                          {job.city && <span>{job.city} • </span>}
+                          {job.distance_km != null && (
+                            <span className="text-blue-700">{Number(job.distance_km).toFixed(1)} km</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Kandidat: <span className="font-medium text-slate-700">{job.candidate_label}</span>
+                          {" · "}
+                          {new Date(job.created_at).toLocaleDateString("sv-SE")}
+                        </p>
+                        {(job.search_mode || job.search_keyword || job.search_address) && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Källa: {job.search_mode === "keyword" ? "Keyword Match" : "AI Manager"}
+                            {job.search_keyword ? ` · ${job.search_keyword}` : ""}
+                            {job.search_address ? ` · ${job.search_address}` : ""}
+                            {job.search_radius_km != null ? ` · ${job.search_radius_km} km` : ""}
+                          </p>
+                        )}
+                        {job.occupation_group_label && (
+                          <p className="text-xs text-slate-400">{job.occupation_group_label}</p>
+                        )}
+                        {job.email_sent && (
+                          <p className="text-xs text-green-700 mt-0.5">
+                            E-post skickad {job.email_sent_at ? new Date(job.email_sent_at).toLocaleDateString("sv-SE") : ""}
+                          </p>
+                        )}
+                        {job.notes && (
+                          <p className="text-xs text-slate-600 mt-1 italic">{job.notes}</p>
+                        )}
+                      </div>
+                      <div className="shrink-0 flex flex-col items-end gap-1">
+                        {job.webpage_url && (
+                          <a
+                            href={job.webpage_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-blue-600 underline whitespace-nowrap"
+                          >
+                            Öppna annons
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Notes */}
+                    <div className="flex gap-2 mb-3">
+                      <Input
+                        placeholder="Anteckningar om uppföljning..."
+                        value={savedJobNotes[job.id] ?? ""}
+                        onChange={(e) =>
+                          setSavedJobNotes((prev) => ({ ...prev, [job.id]: e.target.value }))
+                        }
+                        className="text-sm"
+                      />
+                      <Button size="sm" variant="outline" onClick={() => handleSaveJobNotes(job.id)}>
+                        Spara
+                      </Button>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCreateEmployerIntroLink(job)}
+                        disabled={introLinkLoading === job.id}
+                      >
+                        {introLinkLoading === job.id ? "Skapar länk..." : "Skapa bokningslänk"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleGenerateEmail(job)}
+                        disabled={emailGenLoading === job.id}
+                      >
+                        {emailGenLoading === job.id ? "Genererar..." : "Generera e-post"}
+                      </Button>
+                      {!job.email_sent && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleMarkEmailSent(job.id)}
+                        >
+                          Markera e-post skickad
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleDeleteSavedJob(job.id)}
+                      >
+                        Ta bort
+                      </Button>
+                    </div>
+
+                    {employerIntroLinks[job.id] && (
+                      <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-medium text-sky-900">Employer-länk</p>
+                          <button
+                            className="text-xs text-sky-700 underline"
+                            onClick={() => navigator.clipboard.writeText(employerIntroLinks[job.id])}
+                          >
+                            Kopiera länk
+                          </button>
+                        </div>
+                        <p className="mt-1 break-all text-xs text-sky-800">{employerIntroLinks[job.id]}</p>
+                      </div>
+                    )}
+
+                    {/* Generated email */}
+                    {generatedEmails[job.id] && (
+                      <div className="mt-3 bg-slate-50 rounded-md border p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs font-semibold text-slate-700">Genererat e-postmeddelande</p>
+                          <button
+                            className="text-xs text-blue-600 underline"
+                            onClick={() => navigator.clipboard.writeText(generatedEmails[job.id])}
+                          >
+                            Kopiera
+                          </button>
+                        </div>
+                        <pre className="text-xs text-slate-800 whitespace-pre-wrap font-mono leading-relaxed">
+                          {generatedEmails[job.id]}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ═══ TAB: Job Search ═══ */}
         {tab === "jobsearch" && (
           <div>
@@ -656,7 +1742,9 @@ export default function AdminDashboard() {
                       <p className="text-sm text-slate-600">
                         {job.company && <span>{job.company} • </span>}
                         {job.city && <span>{job.city} • </span>}
-                        <span className="text-blue-700">{job.distance_km.toFixed(1)} km</span>
+                        {job.distance_km != null && (
+                          <span className="text-blue-700">{job.distance_km.toFixed(1)} km</span>
+                        )}
                       </p>
                       {job.occupation_group_label && (
                         <p className="text-xs text-slate-500 mt-0.5">{job.occupation_group_label}</p>
@@ -673,9 +1761,9 @@ export default function AdminDashboard() {
                           Öppna annons
                         </a>
                       )}
-                      {job.published_at && (
+                      {job.application_deadline && (
                         <span className="text-xs text-slate-400">
-                          {new Date(job.published_at).toLocaleDateString("sv-SE")}
+                          Sök senast {new Date(job.application_deadline).toLocaleDateString("sv-SE")}
                         </span>
                       )}
                     </div>

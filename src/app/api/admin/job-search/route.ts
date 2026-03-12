@@ -69,7 +69,7 @@ export async function POST(req: Request) {
   // Fetch jobs within bounding box
   let query = supabaseAdmin
     .from("job_ads")
-    .select("id,headline,company,city,occupation_field_label,occupation_group_label,occupation_label,location_lat,location_lon,webpage_url,published_at")
+    .select("id,headline,company,city,occupation_field_label,occupation_group_label,occupation_label,location_lat,location_lon,webpage_url,application_deadline")
     .gte("location_lat", latMin)
     .lte("location_lat", latMax)
     .gte("location_lon", lonMin)

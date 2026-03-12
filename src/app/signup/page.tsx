@@ -24,15 +24,16 @@ export default function SignupPage() {
 
     const supabase = getBrowserSupabase()
 
-    // Get the current origin for the email redirect URL
-    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    // Email confirmations work more reliably when they land on the final page
+    // instead of a server callback that cannot read URL fragments.
+    const origin = typeof window !== "undefined" ? window.location.origin : ""
 
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: `${origin}/api/auth/callback?next=/profile`,
-      }
+        emailRedirectTo: `${origin}/profile`,
+      },
     })
 
     if (error) {

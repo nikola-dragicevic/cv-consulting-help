@@ -11,22 +11,31 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "E-post och meddelande krävs" }, { status: 400 });
     }
 
-    // Configure the transporter
+    const smtpHost = process.env.BUSINESS_SMTP_HOST || process.env.SMTP_HOST;
+    const smtpPort = Number(process.env.BUSINESS_SMTP_PORT || process.env.SMTP_PORT || 465);
+    const smtpSecure = (process.env.BUSINESS_SMTP_SECURE || process.env.SMTP_SECURE || "true") === "true";
+    const smtpUser = process.env.BUSINESS_SMTP_USER || process.env.SMTP_USER;
+    const smtpPass = process.env.BUSINESS_SMTP_PASS || process.env.SMTP_PASS;
+    const contactEmail = process.env.BUSINESS_CONTACT_EMAIL || process.env.CONTACT_EMAIL || smtpUser;
+
+    if (!smtpHost || !smtpUser || !smtpPass || !contactEmail) {
+      return NextResponse.json({ error: "E-postkonfiguration saknas." }, { status: 500 });
+    }
+
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT),
-      secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
       auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: smtpUser,
+        pass: smtpPass,
       },
     });
 
-    // Send the email
     await transporter.sendMail({
-      from: process.env.SMTP_USER, // Sender address
-      to: process.env.CONTACT_EMAIL, // Receiver (you)
-      replyTo: email, // So you can hit "Reply" to answer the user
+      from: smtpUser,
+      to: contactEmail,
+      replyTo: email,
       subject: `Nytt meddelande från JobbNu: ${email}`,
       text: message,
       html: `
@@ -40,7 +49,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Email error:", error);
     return NextResponse.json({ error: "Kunde inte skicka meddelandet." }, { status: 500 });
   }

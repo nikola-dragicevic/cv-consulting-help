@@ -21,9 +21,11 @@ interface GapAnalysis {
 }
 
 interface MatchInsightsProps {
+  scoreMode?: "jobbnu" | "keyword_match";
   // Layer 2: Weighted scores
   vectorSimilarity?: number;
   keywordScore?: number;
+  keywordMissRate?: number;
   categoryBonus?: number;
   finalScore?: number;
 
@@ -34,19 +36,23 @@ interface MatchInsightsProps {
   // Layer 4: Gap analysis
   skillsData?: SkillsData;
   gapAnalysis?: GapAnalysis;
+  keywordHits?: string[];
 
   // Display mode
   compact?: boolean;
 }
 
 export function MatchInsights({
+  scoreMode = "jobbnu",
   vectorSimilarity,
   keywordScore,
+  keywordMissRate,
   categoryBonus,
   finalScore,
   managerScore,
   managerExplanation,
   gapAnalysis,
+  keywordHits,
   compact = false,
 }: MatchInsightsProps) {
   const { t } = useLanguage();
@@ -59,19 +65,41 @@ export function MatchInsights({
       {/* Layer 2: Weighted Scores */}
       {finalScore !== undefined && (
         <Card className="p-4">
-          <h3 className="font-semibold mb-3">{t("Matchdetaljer", "Match Breakdown")}</h3>
+          <h3 className="font-semibold mb-3">
+            {scoreMode === "jobbnu" ? t("Analys för AI Manager", "AI Manager analysis") : t("Analys för Keyword Match", "Keyword Match analysis")}
+          </h3>
+          <p className="mb-3 text-sm text-slate-600">
+            {scoreMode === "jobbnu"
+              ? t(
+                  "AI Manager väger semantisk likhet mot din profil, nyckelordsträffar och avdrag för saknade nyckelord.",
+                  "AI Manager weighs semantic similarity to your profile, keyword hits, and deductions for missing keywords."
+                )
+              : t(
+                  "Keyword Match räknar bara hur många av dina nyckelord som faktiskt finns i jobbannonsen.",
+                  "Keyword Match only counts how many of your keywords actually appear in the job ad."
+                )}
+          </p>
           <div className="space-y-2 text-sm">
+            {scoreMode === "jobbnu" && (
+              <ScoreBar
+                label={t("Semantisk likhet", "Semantic similarity")}
+                value={vectorSimilarity || 0}
+                color="blue"
+              />
+            )}
             <ScoreBar
-              label={t("Innehållsmatch", "Content Match")}
-              value={vectorSimilarity || 0}
-              color="blue"
-            />
-            <ScoreBar
-              label={t("Nyckelordsbonus", "Keyword Bonus")}
+              label={t("Nyckelordsträffar", "Keyword hits")}
               value={keywordScore || 0}
               color="green"
             />
-            {categoryBonus !== undefined && categoryBonus > 0 && (
+            {scoreMode === "jobbnu" && (
+              <ScoreBar
+                label={t("Avdrag för saknade nyckelord", "Deduction for missing keywords")}
+                value={1 - (keywordMissRate || 0)}
+                color="amber"
+              />
+            )}
+            {scoreMode === "jobbnu" && categoryBonus !== undefined && categoryBonus > 0 && (
               <ScoreBar
                 label={t("Kategoriboost", "Category Boost")}
                 value={categoryBonus}
@@ -80,7 +108,7 @@ export function MatchInsights({
             )}
             <div className="pt-2 border-t">
               <ScoreBar
-                label={t("Slutscore", "Final Score")}
+                label={scoreMode === "jobbnu" ? t("AI Manager-score", "AI Manager score") : t("Keyword Match-score", "Keyword Match score")}
                 value={finalScore}
                 color="indigo"
                 bold
@@ -173,6 +201,23 @@ export function MatchInsights({
           )}
         </Card>
       )}
+
+      {keywordHits && (
+        <Card className="p-4">
+          <h3 className="mb-3 font-semibold">{t("Nyckelord du innehåller", "Keywords you contain")}</h3>
+          {keywordHits.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {keywordHits.map((keyword) => (
+                <Badge key={keyword} variant="secondary" className="text-xs">
+                  {keyword}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">{t("Inga nyckelord hittades i den här annonsen.", "No keyword hits were found in this job ad.")}</p>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
@@ -221,6 +266,7 @@ function ScoreBar({
   const colorClasses: Record<string, string> = {
     blue: "bg-blue-500",
     green: "bg-green-500",
+    amber: "bg-amber-500",
     purple: "bg-purple-500",
     indigo: "bg-indigo-600",
   };

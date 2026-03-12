@@ -1,0 +1,66 @@
+<div style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,sans-serif;color:#0f172a;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f7fb;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #dbe4f0;">
+          <tr>
+            <td style="padding:32px 32px 16px 32px;background:linear-gradient(135deg,#eff6ff,#ecfeff);">
+              <div style="font-size:12px;line-height:18px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#0369a1;">
+                JobbNu
+              </div>
+              <h1 style="margin:12px 0 8px 0;font-size:30px;line-height:36px;color:#0f172a;">
+                Bekräfta din e-post
+              </h1>
+              <p style="margin:0;font-size:16px;line-height:25px;color:#334155;">
+                Tack för din registrering. Bekräfta din e-postadress för att fortsätta till din profil och börja använda tjänsten.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto 24px auto;">
+                <tr>
+                  <td align="center" bgcolor="#0b5fff" style="border-radius:999px;">
+                    <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:14px 24px;font-size:16px;line-height:20px;font-weight:700;color:#ffffff;text-decoration:none;">
+                      Bekräfta konto
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 14px 0;font-size:14px;line-height:22px;color:#475569;">
+                Om knappen inte fungerar kan du öppna länken manuellt:
+              </p>
+              <p style="margin:0 0 24px 0;font-size:13px;line-height:20px;word-break:break-all;color:#2563eb;">
+                <a href="{{ .ConfirmationURL }}" style="color:#2563eb;text-decoration:underline;">{{ .ConfirmationURL }}</a>
+              </p>
+
+              <div style="padding:18px 20px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;">
+                <p style="margin:0;font-size:14px;line-height:22px;color:#334155;">
+                  Du får detta mail eftersom någon registrerade ett konto på JobbNu med denna e-postadress.
+                </p>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px 32px 32px 32px;border-top:1px solid #e2e8f0;">
+              <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
+                Med vänlig hälsning,<br />
+                Nikola<br />
+                JobbNu
+              </p>
+              <img
+                src="SIGNATURE_IMAGE_URL"
+                alt="Signature"
+                style="display:block;max-width:220px;height:auto;border:0;margin:0 0 16px 0;"
+              />
+              <p style="margin:0;font-size:13px;line-height:20px;color:#64748b;">
+                info@jobbnu.se
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>

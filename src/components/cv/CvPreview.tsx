@@ -27,6 +27,154 @@ export interface CvData {
   driverLicense?: string | null
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+function buildCvPrintHtml(cv: CvData): string {
+  const skills = Object.entries(cv.skills ?? {})
+    .map(([category, items]) => {
+      const tags = items.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")
+      return `<div class="skill-row"><strong>${escapeHtml(category)}:</strong> ${tags}</div>`
+    })
+    .join("")
+
+  const experience = (cv.experience ?? [])
+    .map(
+      (exp) => `
+        <section class="item">
+          <div class="item-header">
+            <div>
+              <h3>${escapeHtml(exp.title)}</h3>
+              <p>${escapeHtml(exp.company)}</p>
+            </div>
+            <span>${escapeHtml(exp.period)}</span>
+          </div>
+          <ul>
+            ${(exp.bullets ?? []).map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}
+          </ul>
+        </section>
+      `
+    )
+    .join("")
+
+  const education = (cv.education ?? [])
+    .map(
+      (edu) => `
+        <section class="item">
+          <div class="item-header">
+            <div>
+              <h3>${escapeHtml(edu.degree)}</h3>
+              <p>${escapeHtml(edu.school)}</p>
+            </div>
+            <span>${escapeHtml(edu.period)}</span>
+          </div>
+        </section>
+      `
+    )
+    .join("")
+
+  const extras = [
+    (cv.languages?.length ?? 0) > 0
+      ? `<div><strong>Sprak:</strong> ${escapeHtml(cv.languages!.join(", "))}</div>`
+      : "",
+    (cv.certifications?.length ?? 0) > 0
+      ? `<div><strong>Certifikat:</strong> ${escapeHtml(cv.certifications!.join(", "))}</div>`
+      : "",
+    cv.driverLicense ? `<div><strong>Korkort:</strong> ${escapeHtml(cv.driverLicense)}</div>` : "",
+  ]
+    .filter(Boolean)
+    .join("")
+
+  return `<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(cv.name)} - CV</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; background: #fff; }
+    .page { max-width: 794px; margin: 0 auto; }
+    .header { background: #0f172a; color: #fff; padding: 32px 40px; }
+    .header h1 { margin: 0; font-size: 28px; }
+    .header .title { color: #93c5fd; margin-top: 4px; font-size: 14px; font-weight: 600; }
+    .header .meta { margin-top: 10px; font-size: 12px; color: #cbd5e1; line-height: 1.6; }
+    .body { padding: 32px 40px; font-size: 13px; line-height: 1.6; }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: #1d4ed8; margin: 28px 0 12px; border-bottom: 1px solid #dbeafe; padding-bottom: 6px; }
+    .item { margin-bottom: 18px; padding-left: 14px; border-left: 2px solid #dbeafe; }
+    .item-header { display: flex; justify-content: space-between; gap: 12px; }
+    .item-header h3 { margin: 0; font-size: 14px; }
+    .item-header p { margin: 2px 0 0; color: #64748b; font-size: 12px; }
+    .item-header span { color: #94a3b8; font-size: 12px; white-space: nowrap; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    li { margin: 4px 0; }
+    .tag { display: inline-block; background: #f1f5f9; color: #334155; padding: 2px 8px; border-radius: 999px; margin: 2px 6px 2px 0; font-size: 11px; }
+    .skill-row { margin-bottom: 8px; }
+    .extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; font-size: 12px; }
+    @media print { .page { max-width: none; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <h1>${escapeHtml(cv.name)}</h1>
+      <div class="title">${escapeHtml(cv.title)}</div>
+      <div class="meta">
+        ${cv.location ? `${escapeHtml(cv.location)}<br/>` : ""}
+        ${escapeHtml(cv.phone)}<br/>
+        ${escapeHtml(cv.email)}
+      </div>
+    </div>
+    <div class="body">
+      ${cv.profile ? `<div class="section-title">Profil</div><p>${escapeHtml(cv.profile)}</p>` : ""}
+      ${experience ? `<div class="section-title">Arbetslivserfarenhet</div>${experience}` : ""}
+      ${education ? `<div class="section-title">Utbildning</div>${education}` : ""}
+      ${skills ? `<div class="section-title">Kompetenser</div>${skills}` : ""}
+      ${extras ? `<div class="section-title">Ovrigt</div><div class="extras">${extras}</div>` : ""}
+    </div>
+  </div>
+</body>
+</html>`
+}
+
+function buildLetterPrintHtml(raw: string): string {
+  return `<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <title>Personligt brev</title>
+  <style>
+    body { font-family: Georgia, serif; color: #0f172a; margin: 0; background: #fff; }
+    .page { max-width: 794px; margin: 0 auto; }
+    .header { background: #0f172a; color: #93c5fd; padding: 24px 40px; font: 700 12px Arial, sans-serif; text-transform: uppercase; letter-spacing: 0.14em; }
+    .body { padding: 32px 40px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">Personligt brev</div>
+    <div class="body">${escapeHtml(raw)}</div>
+  </div>
+</body>
+</html>`
+}
+
+function printHtmlDocument(html: string) {
+  const win = window.open("", "_blank")
+  if (!win) return
+  win.document.open()
+  win.document.write(html)
+  win.document.close()
+  win.focus()
+  window.setTimeout(() => {
+    win.print()
+  }, 300)
+}
+
 function parseCvData(raw: string): CvData | null {
   try {
     // Strip markdown code fences if Claude wrapped the JSON
@@ -194,7 +342,7 @@ export function CvPreview({ raw, className = "" }: { raw: string; className?: st
       {/* Print button — hidden when printing */}
       <div className="px-10 pb-6 print:hidden">
         <button
-          onClick={() => window.print()}
+          onClick={() => printHtmlDocument(buildCvPrintHtml(cv))}
           className="text-xs text-blue-600 hover:underline"
         >
           Skriv ut / Spara som PDF →
@@ -226,7 +374,7 @@ export function LetterPreview({ raw, className = "" }: { raw: string; className?
       </div>
       <div className="px-10 pb-6 print:hidden">
         <button
-          onClick={() => window.print()}
+          onClick={() => printHtmlDocument(buildLetterPrintHtml(raw))}
           className="text-xs text-blue-600 hover:underline"
         >
           Skriv ut / Spara som PDF →
