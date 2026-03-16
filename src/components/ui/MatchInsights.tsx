@@ -42,6 +42,12 @@ interface MatchInsightsProps {
   compact?: boolean;
 }
 
+function normalizePercentValue(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  if (value <= 1) return Math.max(0, Math.min(100, Math.round(value * 100)));
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 export function MatchInsights({
   scoreMode = "jobbnu",
   vectorSimilarity,
@@ -237,7 +243,7 @@ function CompactMatchInsights({
       {finalScore !== undefined && (
         <div className="flex items-center gap-1">
           <span className="text-gray-600 dark:text-gray-400">{t("Match:", "Match:")}</span>
-          <span className="font-semibold">{Math.round(finalScore * 100)}%</span>
+          <span className="font-semibold">{normalizePercentValue(finalScore)}%</span>
         </div>
       )}
       {managerScore !== undefined && (
@@ -262,7 +268,7 @@ function ScoreBar({
   color: string;
   bold?: boolean;
 }) {
-  const percentage = Math.round(value * 100);
+  const percentage = normalizePercentValue(value);
   const colorClasses: Record<string, string> = {
     blue: "bg-blue-500",
     green: "bg-green-500",

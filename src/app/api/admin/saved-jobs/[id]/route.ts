@@ -41,6 +41,8 @@ export async function PATCH(
 
   const patch: Record<string, unknown> = {}
   if ("notes" in body) patch.notes = body.notes
+  if ("interviewAnalysis" in body) patch.interview_analysis = body.interviewAnalysis
+  if ("manualContactEmail" in body) patch.manual_contact_email = body.manualContactEmail
   if ("emailSent" in body) patch.email_sent = body.emailSent
   if (body.emailSent === true) patch.email_sent_at = new Date().toISOString()
 

@@ -72,6 +72,7 @@ export async function POST(req: Request) {
       webpage_url: body.webpageUrl || null,
       occupation_group_label: body.occupationGroupLabel || null,
       notes: body.notes || null,
+      interview_analysis: body.interviewAnalysis || null,
       search_mode: body.searchMode || null,
       search_keyword: body.searchKeyword || null,
       search_address: body.searchAddress || null,
@@ -83,4 +84,26 @@ export async function POST(req: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ data })
+}
+
+export async function DELETE(req: Request) {
+  const supabase = await getServerSupabase()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!isAdminOrModerator(user)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const url = new URL(req.url)
+  const candidateProfileId = url.searchParams.get("candidateProfileId")?.trim() || null
+  const admin = getSupabaseAdmin()
+
+  let query = admin.from("admin_saved_jobs").delete()
+  if (candidateProfileId) {
+    query = query.eq("candidate_profile_id", candidateProfileId)
+  }
+
+  const { error } = await query
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  return NextResponse.json({ ok: true, deletedScope: candidateProfileId ? "candidate" : "all" })
 }

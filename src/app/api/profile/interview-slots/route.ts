@@ -6,6 +6,11 @@ function getSupabaseAdmin() {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
 }
 
+function toMinutes(timeValue: string) {
+  const [hours, minutes] = timeValue.split(":").map(Number)
+  return hours * 60 + minutes
+}
+
 async function getCandidateProfileId(userId: string) {
   const admin = getSupabaseAdmin()
   const { data, error } = await admin
@@ -15,7 +20,9 @@ async function getCandidateProfileId(userId: string) {
     .single()
 
   if (error || !data?.id) {
-    throw new Error("Candidate profile not found")
+    const profileError = new Error("Candidate profile not found")
+    ;(profileError as Error & { code?: string }).code = "PROFILE_REQUIRED"
+    throw profileError
   }
 
   return data.id as string
@@ -34,7 +41,7 @@ export async function GET() {
   try {
     const candidateProfileId = await getCandidateProfileId(user.id)
     const admin = getSupabaseAdmin()
-    const { data, error } = await admin
+    const { data: slots, error } = await admin
       .from("candidate_interview_slots")
       .select("id,slot_date,start_time,end_time,is_booked,created_at")
       .eq("candidate_profile_id", candidateProfileId)
@@ -42,11 +49,43 @@ export async function GET() {
       .order("start_time", { ascending: true })
 
     if (error) throw error
-    return NextResponse.json({ data: data || [] })
+
+    const slotIds = (slots || []).map((slot) => slot.id)
+    let bookedSlotIds = new Set<string>()
+
+    if (slotIds.length > 0) {
+      const { data: bookings, error: bookingsError } = await admin
+        .from("employer_interview_bookings")
+        .select("candidate_slot_id")
+        .in("candidate_slot_id", slotIds)
+
+      if (bookingsError) throw bookingsError
+      bookedSlotIds = new Set(
+        (bookings || [])
+          .map((booking) => booking.candidate_slot_id)
+          .filter((value): value is string => typeof value === "string")
+      )
+    }
+
+    return NextResponse.json({
+      data: (slots || []).map((slot) => ({
+        ...slot,
+        is_booked: Boolean(slot.is_booked) || bookedSlotIds.has(slot.id),
+      })),
+    })
   } catch (error) {
+    const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
+      {
+        error:
+          code === "PROFILE_REQUIRED"
+            ? "Spara din profil först innan du lägger till intervjutider."
+            : error instanceof Error
+              ? error.message
+              : "Unknown error",
+        code: code || null,
+      },
+      { status: code === "PROFILE_REQUIRED" ? 400 : 500 }
     )
   }
 }
@@ -73,6 +112,13 @@ export async function POST(req: Request) {
   try {
     const candidateProfileId = await getCandidateProfileId(user.id)
     const admin = getSupabaseAdmin()
+    const startMinutes = toMinutes(startTime)
+    const endMinutes = toMinutes(endTime)
+
+    if (endMinutes <= startMinutes) {
+      return NextResponse.json({ error: "End time must be after start time" }, { status: 400 })
+    }
+
     const { data, error } = await admin
       .from("candidate_interview_slots")
       .insert({
@@ -87,9 +133,18 @@ export async function POST(req: Request) {
     if (error) throw error
     return NextResponse.json({ data })
   } catch (error) {
+    const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
+      {
+        error:
+          code === "PROFILE_REQUIRED"
+            ? "Spara din profil först innan du lägger till intervjutider."
+            : error instanceof Error
+              ? error.message
+              : "Unknown error",
+        code: code || null,
+      },
+      { status: code === "PROFILE_REQUIRED" ? 400 : 500 }
     )
   }
 }

@@ -15,7 +15,9 @@ async function getCandidateProfileId(userId: string) {
     .single()
 
   if (error || !data?.id) {
-    throw new Error("Candidate profile not found")
+    const profileError = new Error("Candidate profile not found")
+    ;(profileError as Error & { code?: string }).code = "PROFILE_REQUIRED"
+    throw profileError
   }
 
   return data.id as string
@@ -38,6 +40,21 @@ export async function DELETE(
     const { id } = await ctx.params
     const candidateProfileId = await getCandidateProfileId(user.id)
     const admin = getSupabaseAdmin()
+    const { data: existingBooking, error: bookingError } = await admin
+      .from("employer_interview_bookings")
+      .select("id")
+      .eq("candidate_slot_id", id)
+      .limit(1)
+      .maybeSingle()
+
+    if (bookingError) throw bookingError
+    if (existingBooking?.id) {
+      return NextResponse.json(
+        { error: "Intervjutiden kan inte tas bort eftersom en intervju redan är bokad på det här blocket." },
+        { status: 409 }
+      )
+    }
+
     const { error } = await admin
       .from("candidate_interview_slots")
       .delete()
@@ -47,9 +64,18 @@ export async function DELETE(
     if (error) throw error
     return NextResponse.json({ ok: true })
   } catch (error) {
+    const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
+      {
+        error:
+          code === "PROFILE_REQUIRED"
+            ? "Spara din profil först innan du hanterar intervjutider."
+            : error instanceof Error
+              ? error.message
+              : "Unknown error",
+        code: code || null,
+      },
+      { status: code === "PROFILE_REQUIRED" ? 400 : 500 }
     )
   }
 }

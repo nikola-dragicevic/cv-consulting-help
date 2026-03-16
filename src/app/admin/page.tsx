@@ -104,6 +104,8 @@ type SavedJob = {
   webpage_url: string | null
   occupation_group_label: string | null
   notes: string | null
+  interview_analysis: string | null
+  manual_contact_email: string | null
   email_sent: boolean
   email_sent_at: string | null
   search_mode: string | null
@@ -111,6 +113,32 @@ type SavedJob = {
   search_address: string | null
   search_radius_km: number | null
   candidate_cv_text: string | null
+}
+
+type InterviewBooking = {
+  id: string
+  admin_saved_job_id: string | null
+  candidate_profile_id: string | null
+  company_name: string
+  contact_name: string
+  contact_email: string
+  contact_phone: string | null
+  booking_date: string
+  start_time: string
+  end_time: string
+  status: string
+  admin_followup_status?: string | null
+  created_at: string
+}
+
+type ContactScanResult = {
+  contactScanStatus?: string | null
+  outreachType?: string | null
+  contactEmail?: string | null
+  contactName?: string | null
+  contactRole?: string | null
+  contactDomain?: string | null
+  contactNote?: string | null
 }
 
 type CvMatchMode = "freetext" | "user"
@@ -142,6 +170,27 @@ function normalizeKeywordCandidates(candidate: CandidateRow): string {
   return normalizeKeywordSeed(candidate.primary_occupation_field)
 }
 
+function parseGeneratedEmail(emailText: string) {
+  const raw = emailText.trim()
+  const subjectMatch = raw.match(/^Subject:\s*(.+)$/im)
+  const subject = subjectMatch?.[1]?.trim() || "Kandidat från JobbNu"
+  const body = raw
+    .replace(/^Subject:\s*.+$/im, "")
+    .trim()
+
+  return { subject, body }
+}
+
+function buildGmailComposeUrl(params: { to: string; subject: string; body: string }) {
+  const url = new URL("https://mail.google.com/mail/")
+  url.searchParams.set("view", "cm")
+  url.searchParams.set("fs", "1")
+  url.searchParams.set("to", params.to)
+  url.searchParams.set("su", params.subject)
+  url.searchParams.set("body", params.body)
+  return url.toString()
+}
+
 export default function AdminDashboard() {
   const router = useRouter()
   const [tab, setTab] = useState<TabKey>("candidates")
@@ -155,6 +204,7 @@ export default function AdminDashboard() {
   const [candidateSearch, setCandidateSearch] = useState("")
   const [expandedCandidate, setExpandedCandidate] = useState<string | null>(null)
   const [moderatorIds, setModeratorIds] = useState<Set<string>>(new Set())
+  const [passwordResetLoadingId, setPasswordResetLoadingId] = useState<string | null>(null)
 
   // Document orders
   const [documentOrders, setDocumentOrders] = useState<AdminDocumentOrderRow[]>([])
@@ -198,7 +248,15 @@ export default function AdminDashboard() {
   const [savedJobs, setSavedJobs] = useState<SavedJob[]>([])
   const [savedJobsCandidateFilter, setSavedJobsCandidateFilter] = useState<string>("")
   const [savedJobsCandidateOptions, setSavedJobsCandidateOptions] = useState<Array<{ id: string; label: string }>>([])
+  const [deleteAllSavedJobsLoading, setDeleteAllSavedJobsLoading] = useState(false)
   const [savedJobNotes, setSavedJobNotes] = useState<Record<string, string>>({})
+  const [savedJobInterviewAnalysis, setSavedJobInterviewAnalysis] = useState<Record<string, string>>({})
+  const [savedJobManualEmails, setSavedJobManualEmails] = useState<Record<string, string>>({})
+  const [savedJobContactScans, setSavedJobContactScans] = useState<Record<string, ContactScanResult>>({})
+  const [savedJobContactScanLoading, setSavedJobContactScanLoading] = useState<string | null>(null)
+  const [savedJobsContactBatchLoading, setSavedJobsContactBatchLoading] = useState(false)
+  const [interviewBookings, setInterviewBookings] = useState<InterviewBooking[]>([])
+  const [bookingStatusLoadingId, setBookingStatusLoadingId] = useState<string | null>(null)
   const [emailGenLoading, setEmailGenLoading] = useState<string | null>(null)
   const [generatedEmails, setGeneratedEmails] = useState<Record<string, string>>({})
   const [introLinkLoading, setIntroLinkLoading] = useState<string | null>(null)
@@ -241,6 +299,7 @@ export default function AdminDashboard() {
       fetchBlocks()
       fetchDocumentOrders()
       fetchSavedJobs()
+      fetchInterviewBookings()
     }
 
     bootstrap()
@@ -344,14 +403,41 @@ export default function AdminDashboard() {
         }
         return next
       })
+      setSavedJobInterviewAnalysis((prev) => {
+        const next = { ...prev }
+        for (const j of jobs) {
+          if (!(j.id in next)) next[j.id] = j.interview_analysis || ""
+        }
+        return next
+      })
+      setSavedJobManualEmails((prev) => {
+        const next = { ...prev }
+        for (const j of jobs) {
+          if (!(j.id in next)) next[j.id] = j.manual_contact_email || ""
+        }
+        return next
+      })
     } catch (err) {
       console.error("fetchSavedJobs:", err)
+    }
+  }
+
+  const fetchInterviewBookings = async (candidateProfileId?: string | null) => {
+    try {
+      const query = candidateProfileId ? `?candidateProfileId=${encodeURIComponent(candidateProfileId)}` : ""
+      const res = await fetch(`/api/admin/interview-bookings${query}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Failed")
+      setInterviewBookings((json.data || []) as InterviewBooking[])
+    } catch (err) {
+      console.error("fetchInterviewBookings:", err)
     }
   }
 
   useEffect(() => {
     const candidateProfileId = cmMode === "user" ? cmCandidate?.id ?? null : null
     void fetchSavedJobs(candidateProfileId)
+    void fetchInterviewBookings(candidateProfileId)
   }, [cmMode, cmCandidate?.id])
 
   useEffect(() => {
@@ -590,6 +676,50 @@ export default function AdminDashboard() {
     }
   }
 
+  const handleDeleteAllSavedJobs = async () => {
+    const targetLabel = savedJobsCandidateFilter
+      ? savedJobsCandidateOptions.find((option) => option.id === savedJobsCandidateFilter)?.label || "vald kandidat"
+      : "alla kandidater"
+
+    const confirmed = window.confirm(
+      savedJobsCandidateFilter
+        ? `Ta bort alla sparade jobb för ${targetLabel}?`
+        : "Ta bort alla sparade jobb?"
+    )
+
+    if (!confirmed) return
+
+    setDeleteAllSavedJobsLoading(true)
+    try {
+      const query = savedJobsCandidateFilter
+        ? `?candidateProfileId=${encodeURIComponent(savedJobsCandidateFilter)}`
+        : ""
+      const res = await fetch(`/api/admin/saved-jobs${query}`, { method: "DELETE" })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.error || "Bulk delete failed")
+
+      setSavedJobs([])
+      setSavedJobNotes({})
+      setSavedJobInterviewAnalysis({})
+      setSavedJobManualEmails({})
+      setSavedJobContactScans({})
+      setGeneratedEmails({})
+      setEmployerIntroLinks((prev) => {
+        if (!savedJobsCandidateFilter) return {}
+        const next = { ...prev }
+        for (const job of savedJobs) {
+          delete next[job.id]
+        }
+        return next
+      })
+      await fetchSavedJobs(savedJobsCandidateFilter || null)
+    } catch (err) {
+      alert("Kunde inte ta bort sparade jobb: " + (err instanceof Error ? err.message : "okänt fel"))
+    } finally {
+      setDeleteAllSavedJobsLoading(false)
+    }
+  }
+
   const handleSaveJobNotes = async (id: string) => {
     try {
       const res = await fetch(`/api/admin/saved-jobs/${id}`, {
@@ -607,6 +737,44 @@ export default function AdminDashboard() {
     }
   }
 
+  const handleSaveInterviewAnalysis = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/saved-jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interviewAnalysis: savedJobInterviewAnalysis[id] ?? "" }),
+      })
+      if (!res.ok) throw new Error("Update failed")
+      setSavedJobs((prev) =>
+        prev.map((j) =>
+          j.id === id ? { ...j, interview_analysis: savedJobInterviewAnalysis[id] ?? "" } : j
+        )
+      )
+    } catch (err) {
+      console.error(err)
+      alert("Kunde inte spara intervjuanalys")
+    }
+  }
+
+  const handleSaveManualContactEmail = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/saved-jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manualContactEmail: savedJobManualEmails[id] ?? "" }),
+      })
+      if (!res.ok) throw new Error("Update failed")
+      setSavedJobs((prev) =>
+        prev.map((j) =>
+          j.id === id ? { ...j, manual_contact_email: savedJobManualEmails[id] ?? "" } : j
+        )
+      )
+    } catch (err) {
+      console.error(err)
+      alert("Kunde inte spara manuellt kontaktmail")
+    }
+  }
+
   const handleMarkEmailSent = async (id: string) => {
     try {
       const res = await fetch(`/api/admin/saved-jobs/${id}`, {
@@ -621,6 +789,54 @@ export default function AdminDashboard() {
     } catch (err) {
       console.error(err)
       alert("Kunde inte markera e-post som skickad")
+    }
+  }
+
+  const handleScanSavedJobsContacts = async (jobIds?: string[]) => {
+    const targetJobs = savedJobs.filter((job) => !jobIds || jobIds.includes(job.id))
+    if (targetJobs.length === 0) return
+
+    if (jobIds && jobIds.length === 1) {
+      setSavedJobContactScanLoading(jobIds[0])
+    } else {
+      setSavedJobsContactBatchLoading(true)
+    }
+
+    try {
+      const res = await fetch("/api/admin/job-contact-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobs: targetJobs.map((job) => ({
+            id: job.id,
+            headline: job.headline,
+            company: job.company,
+            webpage_url: job.webpage_url,
+          })),
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kontakt-scan misslyckades")
+
+      const next: Record<string, ContactScanResult> = {}
+      for (const result of json.results || []) {
+        if (!result?.id) continue
+        next[result.id] = {
+          contactScanStatus: typeof result.contactScanStatus === "string" ? result.contactScanStatus : null,
+          outreachType: typeof result.outreachType === "string" ? result.outreachType : null,
+          contactEmail: typeof result.contactEmail === "string" ? result.contactEmail : null,
+          contactName: typeof result.contactName === "string" ? result.contactName : null,
+          contactRole: typeof result.contactRole === "string" ? result.contactRole : null,
+          contactDomain: typeof result.contactDomain === "string" ? result.contactDomain : null,
+          contactNote: typeof result.contactNote === "string" ? result.contactNote : null,
+        }
+      }
+      setSavedJobContactScans((prev) => ({ ...prev, ...next }))
+    } catch (err) {
+      alert("Kunde inte skanna kontaktinfo: " + (err instanceof Error ? err.message : "okänt fel"))
+    } finally {
+      setSavedJobContactScanLoading(null)
+      setSavedJobsContactBatchLoading(false)
     }
   }
 
@@ -657,6 +873,7 @@ export default function AdminDashboard() {
           distanceKm: job.distance_km,
           occupationGroupLabel: job.occupation_group_label,
           bookingLink,
+          interviewAnalysis: savedJobInterviewAnalysis[job.id] ?? job.interview_analysis ?? "",
         }),
       })
       const json = await res.json()
@@ -691,7 +908,60 @@ export default function AdminDashboard() {
     }
   }
 
+  const handleOpenInGmail = (job: SavedJob) => {
+    const generated = generatedEmails[job.id]
+    if (!generated?.trim()) {
+      alert("Generera e-post först.")
+      return
+    }
+
+    const contact = savedJobContactScans[job.id]
+    const recipient = (savedJobManualEmails[job.id] || job.manual_contact_email || contact?.contactEmail || "").trim()
+    if (!recipient) {
+      alert("Ange manuellt kontaktmail eller skanna kontaktinfo först.")
+      return
+    }
+
+    const { subject, body } = parseGeneratedEmail(generated)
+    const gmailUrl = buildGmailComposeUrl({
+      to: recipient,
+      subject,
+      body,
+    })
+
+    window.open(gmailUrl, "_blank", "noopener,noreferrer")
+  }
+
+  const handleUpdateInterviewFollowup = async (bookingId: string, adminFollowupStatus: string) => {
+    setBookingStatusLoadingId(bookingId)
+    try {
+      const res = await fetch(`/api/admin/interview-bookings/${bookingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminFollowupStatus }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Update failed")
+      setInterviewBookings((prev) =>
+        prev.map((booking) =>
+          booking.id === bookingId
+            ? { ...booking, admin_followup_status: adminFollowupStatus }
+            : booking
+        )
+      )
+    } catch (err) {
+      alert("Kunde inte uppdatera kandidatstatus: " + (err instanceof Error ? err.message : "okänt fel"))
+    } finally {
+      setBookingStatusLoadingId(null)
+    }
+  }
+
   const isSuperAdmin = isAdminUser(adminUser)
+  const candidatesWithInterviewReady = new Set(
+    interviewBookings
+      .filter((booking) => booking.candidate_profile_id && booking.admin_followup_status !== "interview_completed")
+      .map((booking) => booking.candidate_profile_id as string)
+  )
   const savedJobsLabel = savedJobsCandidateFilter
     ? `Sparade Jobb för ${
         savedJobsCandidateOptions.find((option) => option.id === savedJobsCandidateFilter)?.label || "vald kandidat"
@@ -741,6 +1011,31 @@ export default function AdminDashboard() {
     } catch (err) {
       console.error(err)
       alert("Kunde inte uppdatera roll")
+    }
+  }
+
+  const sendPasswordReset = async (candidate: CandidateRow) => {
+    if (!candidate.email) {
+      return alert("Kandidaten saknar e-postadress")
+    }
+
+    setPasswordResetLoadingId(candidate.id)
+    try {
+      const res = await fetch("/api/admin/users/send-password-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: candidate.email }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kunde inte skicka återställningslänk")
+      alert(`Återställningslänk skickad till ${candidate.email}`)
+    } catch (err) {
+      alert(
+        "Kunde inte skicka återställningslänk: " +
+          (err instanceof Error ? err.message : "okänt fel")
+      )
+    } finally {
+      setPasswordResetLoadingId(null)
     }
   }
 
@@ -953,6 +1248,7 @@ export default function AdminDashboard() {
                 if (key === "savedjobs") {
                   const candidateProfileId = savedJobsCandidateFilter || (cmMode === "user" ? cmCandidate?.id ?? null : null)
                   void fetchSavedJobs(candidateProfileId)
+                  void fetchInterviewBookings(candidateProfileId)
                 }
               }}
               className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
@@ -1016,6 +1312,9 @@ export default function AdminDashboard() {
                           {c.age != null ? `, ${c.age}` : ""}
                         </p>
                         <p className="text-sm text-slate-500 truncate">{c.email} {c.city ? `• ${c.city}` : ""}</p>
+                        {candidatesWithInterviewReady.has(c.id) && (
+                          <p className="text-xs font-medium text-red-600 mt-0.5">Interview ready</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0 ml-4">
@@ -1082,6 +1381,16 @@ export default function AdminDashboard() {
                             onClick={() => viewCv(c.cv_file_url, c.cv_bucket_path)}
                           >
                             Visa CV
+                          </Button>
+                        )}
+                        {c.email && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => sendPasswordReset(c)}
+                            disabled={passwordResetLoadingId === c.id}
+                          >
+                            {passwordResetLoadingId === c.id ? "Skickar..." : "Byt lösenord"}
                           </Button>
                         )}
                       </div>
@@ -1508,6 +1817,22 @@ export default function AdminDashboard() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">{savedJobsLabel}</h2>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleScanSavedJobsContacts()}
+                  disabled={savedJobsContactBatchLoading || savedJobs.length === 0}
+                >
+                  {savedJobsContactBatchLoading ? "Skannar kontaktinfo..." : "Skanna kontaktinfo"}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => void handleDeleteAllSavedJobs()}
+                  disabled={deleteAllSavedJobsLoading || savedJobs.length === 0}
+                >
+                  {deleteAllSavedJobsLoading ? "Tar bort..." : "Ta bort alla"}
+                </Button>
                 <select
                   className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
                   value={savedJobsCandidateFilter}
@@ -1515,6 +1840,7 @@ export default function AdminDashboard() {
                     const nextValue = e.target.value
                     setSavedJobsCandidateFilter(nextValue)
                     void fetchSavedJobs(nextValue || null)
+                    void fetchInterviewBookings(nextValue || null)
                   }}
                 >
                   <option value="">Alla kandidater</option>
@@ -1527,7 +1853,10 @@ export default function AdminDashboard() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => void fetchSavedJobs(savedJobsCandidateFilter || null)}
+                  onClick={() => {
+                    void fetchSavedJobs(savedJobsCandidateFilter || null)
+                    void fetchInterviewBookings(savedJobsCandidateFilter || null)
+                  }}
                 >
                   Uppdatera
                 </Button>
@@ -1543,6 +1872,68 @@ export default function AdminDashboard() {
               {savedJobs.map((job) => (
                 <div key={job.id} className="bg-white rounded-lg border shadow-sm">
                   <div className="p-4">
+                    {(() => {
+                      const booking = interviewBookings.find((item) => item.admin_saved_job_id === job.id)
+                      return booking ? (
+                        <div className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                          <p className="text-sm font-medium text-emerald-800">
+                            Intervju bokad {booking.booking_date} kl. {booking.start_time.slice(0, 5)}-{booking.end_time.slice(0, 5)}
+                          </p>
+                          <p className="mt-1 text-xs text-emerald-700">
+                            Bokad av {booking.contact_name} ({booking.contact_email})
+                            {booking.contact_phone ? ` · ${booking.contact_phone}` : ""}
+                          </p>
+                          <p className="mt-1 text-xs text-emerald-700">
+                            Status: {booking.admin_followup_status || "booked"}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUpdateInterviewFollowup(booking.id, "contacted_candidate")}
+                              disabled={bookingStatusLoadingId === booking.id}
+                            >
+                              Kontakta kandidat
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUpdateInterviewFollowup(booking.id, "prepared")}
+                              disabled={bookingStatusLoadingId === booking.id}
+                            >
+                              Förberedd
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUpdateInterviewFollowup(booking.id, "interview_completed")}
+                              disabled={bookingStatusLoadingId === booking.id}
+                            >
+                              Intervju genomförd
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null
+                    })()}
+                    {(() => {
+                      const contact = savedJobContactScans[job.id]
+                      return contact ? (
+                        <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                          {contact.contactEmail ? (
+                            <p className="text-xs text-emerald-700">
+                              Direkt outreach: {contact.contactEmail}
+                              {contact.contactName ? ` · ${contact.contactName}` : ""}
+                              {contact.contactRole ? ` · ${contact.contactRole}` : ""}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-amber-700">
+                              {contact.contactNote || "Ingen tydlig kontakt hittad."}
+                              {contact.contactDomain ? ` · ${contact.contactDomain}` : ""}
+                            </p>
+                          )}
+                        </div>
+                      ) : null
+                    })()}
                     <div className="flex items-start justify-between gap-4 mb-3">
                       <div className="min-w-0">
                         <p className="font-semibold text-slate-900">{job.headline}</p>
@@ -1577,6 +1968,11 @@ export default function AdminDashboard() {
                         {job.notes && (
                           <p className="text-xs text-slate-600 mt-1 italic">{job.notes}</p>
                         )}
+                        {job.interview_analysis && (
+                          <p className="mt-1 text-xs text-slate-700">
+                            <span className="font-medium">JobbNu intervjuanalys:</span> {job.interview_analysis}
+                          </p>
+                        )}
                       </div>
                       <div className="shrink-0 flex flex-col items-end gap-1">
                         {job.webpage_url && (
@@ -1607,6 +2003,46 @@ export default function AdminDashboard() {
                       </Button>
                     </div>
 
+                    <div className="mb-3 space-y-2">
+                      <Label htmlFor={`manual-contact-email-${job.id}`}>Manuellt kontaktmail</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id={`manual-contact-email-${job.id}`}
+                          type="email"
+                          placeholder="t.ex. kontakt@foretag.se"
+                          value={savedJobManualEmails[job.id] ?? ""}
+                          onChange={(e) =>
+                            setSavedJobManualEmails((prev) => ({ ...prev, [job.id]: e.target.value }))
+                          }
+                          className="text-sm"
+                        />
+                        <Button size="sm" variant="outline" onClick={() => handleSaveManualContactEmail(job.id)}>
+                          Spara
+                        </Button>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Använd detta om du hittar rätt kontaktmail manuellt, till exempel via extern annons eller Arbetsförmedlingen.
+                      </p>
+                    </div>
+
+                    <div className="mb-3 space-y-2">
+                      <Label htmlFor={`interview-analysis-${job.id}`}>JobbNu intervjuanalys</Label>
+                      <textarea
+                        id={`interview-analysis-${job.id}`}
+                        className="min-h-[110px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        placeholder="Vad kom fram i samtalet med kandidaten som stärker matchningen för just det här jobbet?"
+                        value={savedJobInterviewAnalysis[job.id] ?? ""}
+                        onChange={(e) =>
+                          setSavedJobInterviewAnalysis((prev) => ({ ...prev, [job.id]: e.target.value }))
+                        }
+                      />
+                      <div className="flex justify-end">
+                        <Button size="sm" variant="outline" onClick={() => handleSaveInterviewAnalysis(job.id)}>
+                          Spara intervjuanalys
+                        </Button>
+                      </div>
+                    </div>
+
                     {/* Actions */}
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -1620,10 +2056,29 @@ export default function AdminDashboard() {
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => void handleScanSavedJobsContacts([job.id])}
+                        disabled={savedJobContactScanLoading === job.id}
+                      >
+                        {savedJobContactScanLoading === job.id ? "Skannar..." : "Skanna kontaktinfo"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => handleGenerateEmail(job)}
                         disabled={emailGenLoading === job.id}
                       >
                         {emailGenLoading === job.id ? "Genererar..." : "Generera e-post"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleOpenInGmail(job)}
+                        disabled={
+                          !generatedEmails[job.id] ||
+                          !(savedJobManualEmails[job.id] || job.manual_contact_email || savedJobContactScans[job.id]?.contactEmail)
+                        }
+                      >
+                        Öppna i Gmail
                       </Button>
                       {!job.email_sent && (
                         <Button

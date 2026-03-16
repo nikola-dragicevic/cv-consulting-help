@@ -422,10 +422,10 @@ export function MatchesDashboard() {
                 <Badge variant="secondary">{getIntentLabel(results.intent)}</Badge>
               </div>
               <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
-                {t("Dina jobbmatchningar i dashboard-format", "Your job matches in dashboard format")}
+                {t("Dina matchade jobb", "Your matched jobs")}
               </h1>
               <p className="mt-2 text-sm text-slate-600">
-                {t("Slimma kort med AI Manager-sortering eller Keyword Match för snabb scanning.", "Slim cards with AI Manager sorting or Keyword Match for fast scanning.")}
+                {t("Här ser du jobb som matchar din profil, din erfarenhet och din valda radie.", "Here you can see jobs that match your profile, your experience, and your selected radius.")}
               </p>
             </div>
 

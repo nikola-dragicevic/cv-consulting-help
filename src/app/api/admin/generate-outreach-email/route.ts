@@ -93,27 +93,36 @@ function fitLabelFromEvidence(params: {
   return "Bra match"
 }
 
-const SYSTEM_PROMPT = `Du är en professionell rekryterare på JobbNu (info@jobbnu.se).
-Skriv ett kort, professionellt första kontaktmejl på svenska till ett företag om en kandidat.
+const SYSTEM_PROMPT = `Du skriver klickstarka, professionella första kontaktmejl på svenska från JobbNu (info@jobbnu.se) till arbetsgivare.
+
+Målet med mejlet är ENDAST att få mottagaren att klicka på den privata länken för att:
+- se kandidatprofilen
+- förstå varför kandidaten är relevant
+- godkänna villkoren
+- boka intervju direkt
 
 REGLER:
-- Max 140 ord i själva mejltexten
-- Professionell, varm och konkret ton
+- All utgående text måste vara på idiomatisk svenska
+- 90 till 130 ord i mejltexten
 - Använd endast kandidatens förnamn, aldrig efternamn
-- Nämn 2-3 konkreta styrkor eller erfarenheter från underlaget
-- Nämn gärna avstånd om det stärker relevansen
-- Skriv inte ut några procenttal eller tekniska scorevärden
-- Om matchnivå finns, använd endast formulering som "Perfekt match", "Mycket bra match" eller "Bra match"
-- Be om intresse för att ta del av kandidatens CV eller ta ett kort samtal
-- Signera alltid med exakt:
+- Låt mänsklig, trygg och konkret
+- Nämn högst 2 till 3 skarpa skäl till varför kandidaten är relevant
+- Om avstånd hjälper får det nämnas kort
+- Skriv aldrig ut procent, vektorscore eller intern teknisk terminologi
+- Om matchnivå nämns, använd bara: "Perfekt match", "Mycket bra match" eller "Bra match"
+- Skriv inte "AI", "algoritm", "semantisk likhet" eller liknande
+- Använd inte engelska ord eller engelska meningar om det inte är ett egennamn eller en jobbtitel som måste citeras
+- Undvik fluff och generiska fraser
+- Avsluta med en tydlig CTA till bokningslänken om den finns
+- Signera alltid exakt:
 "Med vänliga hälsningar,
 JobbNu
 info@jobbnu.se"
 
-FORMAT (exakt):
-Subject: [ämnesrad]
+FORMAT:
+Subject: [kort ämnesrad]
 
-[mejltext]`
+[kort mejltext]`
 
 export async function POST(req: Request) {
   const supabase = await getServerSupabase()
@@ -133,6 +142,7 @@ export async function POST(req: Request) {
     distanceKm,
     occupationGroupLabel,
     bookingLink,
+    interviewAnalysis,
   } = body
 
   if (!jobId && !jobHeadline) {
@@ -222,6 +232,23 @@ export async function POST(req: Request) {
         keywordMissCount: keywordMisses.length,
       })
 
+      const bookingCallToAction =
+        typeof bookingLink === "string" && bookingLink.trim()
+          ? `Här kan ni se kandidatprofilen, varför matchningen är relevant och boka intervju direkt: ${bookingLink.trim()}`
+          : "Be mottagaren svara på mejlet om de vill gå vidare."
+      const whyFitLines = [
+        keywordHits.length > 0 ? `Träffade nyckelord: ${keywordHits.slice(0, 5).join(", ")}` : "",
+        matchedRequiredSkills.length > 0
+          ? `Matchade kravkompetenser: ${matchedRequiredSkills.slice(0, 4).join(", ")}`
+          : "",
+        matchedPreferredSkills.length > 0
+          ? `Matchade meriterande kompetenser: ${matchedPreferredSkills.slice(0, 4).join(", ")}`
+          : "",
+        experienceTitles.length > 0 ? `Relevant erfarenhet: ${experienceTitles.slice(0, 4).join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+
       const userPrompt = `Kandidatens förnamn: ${firstName}
 Roll: ${jobHeadline || ""} på ${company || "företaget"}
 Bolag: ${company || "företaget"}
@@ -229,16 +256,20 @@ Ort: ${jobCity || ""}
 Avstånd: ${typeof distanceKm === "number" ? `${distanceKm.toFixed(1)} km` : "okänt"}
 Matchnivå: ${fitLabel}
 Taxonomimatch: ${taxonomyFit ? "Ja" : "Nej"}
-Semantisk likhet: ${semanticSimilarity !== null ? semanticSimilarity.toFixed(3) : "okänt"}
-Träffade nyckelord: ${keywordHits.length > 0 ? keywordHits.join(", ") : "inga tydliga nyckelord"}
-Saknade nyckelord: ${keywordMisses.length > 0 ? keywordMisses.join(", ") : "inga tydliga saknade nyckelord"}
-Matchade kravkompetenser: ${matchedRequiredSkills.length > 0 ? matchedRequiredSkills.join(", ") : "inga tydliga"}
-Matchade meriterande kompetenser: ${matchedPreferredSkills.length > 0 ? matchedPreferredSkills.join(", ") : "inga tydliga"}
 Erfarenhetsroller: ${experienceTitles.length > 0 ? experienceTitles.join(", ") : "saknas"}
 Utbildning: ${educationTitles.length > 0 ? educationTitles.join(", ") : "saknas"}
 Erfarenhetssammanfattning: ${profileRow?.experience_summary || "saknas"}
 Seniority: ${profileRow?.seniority_reason || "saknas"}
-Booking-lank: ${typeof bookingLink === "string" && bookingLink.trim() ? bookingLink.trim() : "saknas"}
+JobbNu intervjuanalys: ${
+        typeof interviewAnalysis === "string" && interviewAnalysis.trim()
+          ? interviewAnalysis.trim()
+          : "saknas"
+      }
+Evidens:
+${whyFitLines || "Ingen tydlig evidens tillgänglig"}
+
+Det länken ska beskrivas som:
+${bookingCallToAction}
 
 Jobbannons (utdrag):
 ${jobDescription || "saknas"}
@@ -246,9 +277,14 @@ ${jobDescription || "saknas"}
 Kandidatens CV/bakgrund:
 ${String(cvText || "").slice(0, 2200)}
 
-Skriv ett professionellt kort outreachmejl till ${company || "företaget"} om ${firstName}.
-Mejlet ska låta mänskligt och tryggt, inte AI-genererat.
-Om booking-lank finns ska mottagaren uppmanas att godkänna villkor och boka intervju direkt via länken.`
+Skriv ett kort första kontaktmejl till ${company || "företaget"} om ${firstName}.
+Mejlet ska få mottagaren att klicka vidare, inte förklara allt.
+Inkludera:
+- en stark första mening om varför kandidaten är relevant
+- 2 eller högst 3 konkreta skäl
+- om JobbNu intervjuanalys finns, använd den som stöd för trovärdig mänsklig bedömning
+- en tydlig uppmaning att öppna länken för kandidatprofil och bokning
+- att länken visar kandidatprofil, matchmotivering och tider för intervju`
 
       try {
         const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -305,7 +341,14 @@ Roll: ${jobHeadline || ""} på ${company || "företaget"}
 Avstånd: ${typeof distanceKm === "number" ? `${distanceKm.toFixed(1)} km` : "okänt"}
 Matchnivå: ${fitLabel}
 Träffade nyckelord: ${keywordHits.length > 0 ? keywordHits.join(", ") : "inga tydliga nyckelord"}
-Booking-lank: ${typeof bookingLink === "string" && bookingLink.trim() ? bookingLink.trim() : "saknas"}
+JobbNu intervjuanalys: ${
+    typeof interviewAnalysis === "string" && interviewAnalysis.trim() ? interviewAnalysis.trim() : "saknas"
+  }
+Länk/CTA: ${
+    typeof bookingLink === "string" && bookingLink.trim()
+      ? `Här kan mottagaren se kandidatprofilen, varför matchningen är relevant och boka intervju direkt: ${bookingLink.trim()}`
+      : "Be mottagaren svara på mejlet om de vill gå vidare."
+  }
 
 Jobbannons (utdrag):
 ${jobDescription || "saknas"}
@@ -313,8 +356,8 @@ ${jobDescription || "saknas"}
 Kandidatens CV/bakgrund:
 ${String(cvText || "").slice(0, 2200)}
 
-Skriv ett professionellt kort outreachmejl till ${company || "företaget"} om ${firstName}.
-Om booking-lank finns ska den användas som CTA i stället for telefonnummer.`
+Skriv ett kort första kontaktmejl till ${company || "företaget"} om ${firstName}.
+Mejlet ska vara skarpt, konkret och leda till klick vidare.`
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {

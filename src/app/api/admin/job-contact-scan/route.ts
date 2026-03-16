@@ -51,6 +51,24 @@ function extractEmails(html: string) {
   return uniqueStrings(found).filter((email) => !looksLikeGenericEmail(email))
 }
 
+function extractPlainEmailBlocks(html: string) {
+  const text = stripHtml(html)
+  const blocks: Array<{ email: string; context: string }> = []
+  let match: RegExpExecArray | null
+  const regex = new RegExp(EMAIL_REGEX)
+
+  while ((match = regex.exec(text))) {
+    const email = match[0]?.trim()
+    if (!email || looksLikeGenericEmail(email)) continue
+    const start = Math.max(0, match.index - 220)
+    const end = Math.min(text.length, regex.lastIndex + 220)
+    const context = text.slice(start, end).trim()
+    blocks.push({ email, context })
+  }
+
+  return blocks
+}
+
 function extractMailtoBlocks(html: string) {
   const blocks: Array<{ email: string; context: string }> = []
   const regex = /<a[^>]+href=["']mailto:([^"'?#]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi
@@ -82,6 +100,41 @@ function extractNameAndRole(context: string) {
     contact_name: nameMatch?.[1] ?? null,
     contact_role: roleMatch?.[1] ?? null,
   }
+}
+
+function scoreContactBlock(block: { email: string; context: string }) {
+  const meta = extractNameAndRole(block.context)
+  const lower = block.context.toLocaleLowerCase("sv-SE")
+  let score = 0
+
+  if (meta.contact_name) score += 2
+  if (meta.contact_role) score += 2
+
+  if (/\b(ansökan|ansokan|ansök|ansok|skicka din ansökan|skicka ansökan|sök jobbet|apply|application)\b/i.test(lower)) {
+    score += 5
+  }
+
+  if (/\b(intervju|urval|rekrytering|rekryteringsprocess|rekryteringskonsult|kontakt|frågor besvaras)\b/i.test(lower)) {
+    score += 3
+  }
+
+  if (/\b(cv|personligt brev|ansökningshandlingar)\b/i.test(lower)) {
+    score += 2
+  }
+
+  if (/\b(noreply|no-reply|privacy|gdpr)\b/i.test(lower)) {
+    score -= 4
+  }
+
+  return score
+}
+
+function pickBestContactBlock(blocks: Array<{ email: string; context: string }>) {
+  if (blocks.length === 0) return null
+
+  const ranked = [...blocks].sort((a, b) => scoreContactBlock(b) - scoreContactBlock(a))
+
+  return ranked[0] || null
 }
 
 function classifyUrl(url: string | null) {
@@ -150,9 +203,12 @@ async function scanSingleJob(job: ScanInputJob) {
     const finalUrlMeta = classifyUrl(page.finalUrl || sourceUrl)
     const emails = extractEmails(page.html)
     const mailtoBlocks = extractMailtoBlocks(page.html)
-    const bestMailto = mailtoBlocks[0] ?? null
-    const bestEmail = bestMailto?.email ?? emails[0] ?? null
-    const person = bestMailto ? extractNameAndRole(bestMailto.context) : { contact_name: null, contact_role: null }
+    const plainBlocks = extractPlainEmailBlocks(page.html)
+    const bestMailto = pickBestContactBlock(mailtoBlocks)
+    const bestPlain = pickBestContactBlock(plainBlocks)
+    const bestBlock = bestMailto ?? bestPlain
+    const bestEmail = bestBlock?.email ?? emails[0] ?? null
+    const person = bestBlock ? extractNameAndRole(bestBlock.context) : { contact_name: null, contact_role: null }
     const outreachType =
       bestEmail
         ? "direct_email"

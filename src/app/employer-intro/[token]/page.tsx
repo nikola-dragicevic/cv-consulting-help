@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label"
 
 type IntroSlot = {
   id: string
+  source_slot_id: string
   slot_date: string
   start_time: string
   end_time: string
@@ -25,10 +26,12 @@ type IntroData = {
     occupation_group_label: string | null
     search_keyword: string | null
     candidate_cv_text: string | null
+    interview_analysis?: string | null
   } | null
   candidate: {
     full_name: string | null
     city: string | null
+    category_tags: string[] | null
     search_keywords: string[] | null
     experience_titles: string[] | null
     education_titles: string[] | null
@@ -36,6 +39,20 @@ type IntroData = {
     experience_summary: string | null
     skills_text: string | null
   } | null
+  analysis: {
+    firstName: string
+    fitLabel: "Perfekt match" | "Mycket bra match" | "Bra match"
+    semanticSimilarity: number | null
+    keywordHits: string[]
+    keywordMisses: string[]
+    matchedRequiredSkills: string[]
+    matchedPreferredSkills: string[]
+    whyFit: string[]
+    taxonomyFit: boolean
+    swedishProfileSummary: string
+    swedishSenioritySummary: string
+  }
+  interviewerAnalysis: string | null
   slots: IntroSlot[]
   acceptance: {
     id: string
@@ -92,6 +109,7 @@ export default function EmployerIntroPage() {
   }, [token])
 
   const experienceLines = useMemo(() => data?.candidate?.experience_titles?.slice(0, 4) || [], [data])
+  const educationLines = useMemo(() => data?.candidate?.education_titles?.slice(0, 3) || [], [data])
   const skillLines = useMemo(() => {
     const raw = data?.candidate?.skills_text || ""
     return raw
@@ -100,6 +118,14 @@ export default function EmployerIntroPage() {
       .filter(Boolean)
       .slice(0, 8)
   }, [data])
+  const headline = data?.savedJob?.headline || "den aktuella tjänsten"
+  const company = data?.savedJob?.company || "arbetsgivaren"
+  const fitToneClass =
+    data?.analysis.fitLabel === "Perfekt match"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : data?.analysis.fitLabel === "Mycket bra match"
+        ? "bg-blue-50 text-blue-700 border-blue-200"
+        : "bg-amber-50 text-amber-700 border-amber-200"
 
   async function handleAcceptTerms() {
     setSubmittingAcceptance(true)
@@ -131,11 +157,18 @@ export default function EmployerIntroPage() {
     setBookingLoading(true)
     setError("")
     try {
+      const selectedSlot = data?.slots.find((slot) => slot.id === selectedSlotId)
+      if (!selectedSlot) {
+        throw new Error("Välj en tid först.")
+      }
+
       const res = await fetch(`/api/employer-intro/${token}/book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          slotId: selectedSlotId,
+          slotId: selectedSlot.source_slot_id,
+          startTime: selectedSlot.start_time,
+          endTime: selectedSlot.end_time,
           acceptanceId,
           companyName,
           contactName,
@@ -166,17 +199,22 @@ export default function EmployerIntroPage() {
     <div className="mx-auto max-w-4xl px-4 py-10">
       <div className="mb-6">
         <h1 className="text-3xl font-semibold text-slate-900">
-          Kandidatintroduktion for {data?.savedJob?.company || "arbetsgivare"}
+          Kandidatintroduktion för {company}
         </h1>
         <p className="mt-2 text-slate-600">
-          JobbNu presenterar en kandidat för rollen {data?.savedJob?.headline || "den aktuella tjänsten"}.
+          Här ser ni varför {data?.analysis.firstName || "kandidaten"} kan vara relevant för rollen {headline}.
         </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <Card>
           <CardHeader>
-            <CardTitle>{data?.savedJob?.candidate_label || data?.candidate?.full_name || "Kandidaten"}</CardTitle>
+            <div className="flex flex-wrap items-center gap-3">
+              <CardTitle>{data?.analysis.firstName || data?.savedJob?.candidate_label || data?.candidate?.full_name || "Kandidaten"}</CardTitle>
+              <span className={`rounded-full border px-3 py-1 text-xs font-medium ${fitToneClass}`}>
+                {data?.analysis.fitLabel || "Bra match"}
+              </span>
+            </div>
             <CardDescription>
               {data?.candidate?.city || data?.savedJob?.city || ""}{" "}
               {typeof data?.savedJob?.distance_km === "number" ? `• ${data.savedJob.distance_km.toFixed(1)} km från tjänsten` : ""}
@@ -184,18 +222,47 @@ export default function EmployerIntroPage() {
           </CardHeader>
           <CardContent className="space-y-5">
             <section>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Varfor kandidaten ar relevant</h2>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Kort profil</h2>
               <p className="mt-2 text-sm text-slate-700">
-                {data?.candidate?.experience_summary ||
+                {data?.analysis?.swedishProfileSummary ||
                   "Kandidaten har relevant erfarenhet, tydlig rollmatch och bakgrund som passar tjänsten."}
               </p>
             </section>
+
+            {data?.analysis?.whyFit?.length ? (
+              <section>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Varför kandidaten kan passa er</h2>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  {data.analysis.whyFit.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {data?.interviewerAnalysis ? (
+              <section>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">JobbNu:s bedömning efter intervju</h2>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{data.interviewerAnalysis}</p>
+              </section>
+            ) : null}
 
             {experienceLines.length > 0 && (
               <section>
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Relevant erfarenhet</h2>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
                   {experienceLines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {educationLines.length > 0 && (
+              <section>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Utbildning</h2>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  {educationLines.map((line) => (
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
@@ -215,20 +282,39 @@ export default function EmployerIntroPage() {
               </section>
             )}
 
-            {data?.candidate?.search_keywords?.length ? (
+            {data?.analysis?.keywordHits?.length || data?.analysis?.matchedRequiredSkills?.length || data?.analysis?.matchedPreferredSkills?.length ? (
               <section>
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Match mot rollen</h2>
-                <p className="mt-2 text-sm text-slate-700">
-                  Kandidatens profil är särskilt relevant inom: {data.candidate.search_keywords.slice(0, 6).join(", ")}.
-                  {data.savedJob?.occupation_group_label ? ` Rollen ligger inom ${data.savedJob.occupation_group_label}.` : ""}
-                </p>
+                <div className="mt-2 space-y-2 text-sm text-slate-700">
+                  {data.analysis.keywordHits.length > 0 ? (
+                    <p>
+                      <span className="font-medium">Träffade nyckelord:</span> {data.analysis.keywordHits.join(", ")}
+                    </p>
+                  ) : null}
+                  {data.analysis.matchedRequiredSkills.length > 0 ? (
+                    <p>
+                      <span className="font-medium">Matchade krav:</span> {data.analysis.matchedRequiredSkills.join(", ")}
+                    </p>
+                  ) : null}
+                  {data.analysis.matchedPreferredSkills.length > 0 ? (
+                    <p>
+                      <span className="font-medium">Matchade meriterande kompetenser:</span>{" "}
+                      {data.analysis.matchedPreferredSkills.join(", ")}
+                    </p>
+                  ) : null}
+                  {data.savedJob?.occupation_group_label ? (
+                    <p>
+                      <span className="font-medium">Rollområde:</span> {data.savedJob.occupation_group_label}
+                    </p>
+                  ) : null}
+                </div>
               </section>
             ) : null}
 
             {data?.candidate?.seniority_reason && (
               <section>
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Erfarenhetsniva</h2>
-                <p className="mt-2 text-sm text-slate-700">{data.candidate.seniority_reason}</p>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Erfarenhetsnivå</h2>
+                <p className="mt-2 text-sm text-slate-700">{data.analysis.swedishSenioritySummary}</p>
               </section>
             )}
           </CardContent>
@@ -237,9 +323,9 @@ export default function EmployerIntroPage() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Godkann villkor</CardTitle>
+              <CardTitle>Godkänn villkor</CardTitle>
               <CardDescription>
-                Genom att godkanna villkoren bekräftar ni att JobbNu introducerat kandidaten till er.
+                Genom att godkänna villkoren bekräftar ni att JobbNu introducerat kandidaten till er.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -284,7 +370,7 @@ export default function EmployerIntroPage() {
           <Card>
             <CardHeader>
               <CardTitle>Boka intervju</CardTitle>
-              <CardDescription>Valj en tid som kandidaten redan godkänt för intervju.</CardDescription>
+              <CardDescription>Välj en 60-minutersintervju med 30 minuters startsteg inom kandidatens tillgängliga block.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {data?.slots?.length ? (

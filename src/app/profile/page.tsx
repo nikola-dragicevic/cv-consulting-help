@@ -99,6 +99,7 @@ export default function ProfilePage() {
   const [slotStartTime, setSlotStartTime] = useState("09:00");
   const [slotEndTime, setSlotEndTime] = useState("09:30");
   const [slotMessage, setSlotMessage] = useState("");
+  const [profileSaved, setProfileSaved] = useState(false);
 
   // Rate limiting state
   const [isRateLimited, setIsRateLimited] = useState(false);
@@ -148,6 +149,7 @@ export default function ProfilePage() {
           // Fresh profile
           setJobOfferConsent(false);
           setGdprAccepted(false);
+          setProfileSaved(false);
         } else {
           setProfile(data);
           setEntryMode('cv_upload');
@@ -158,6 +160,7 @@ export default function ProfilePage() {
 
           // ✅ Reduce friction: profile already exists => keep checkbox 1 checked
           setGdprAccepted(true);
+          setProfileSaved(true);
         }
 
         const docsRes = await fetch("/api/profile/generated-documents", { method: "GET" });
@@ -182,6 +185,11 @@ export default function ProfilePage() {
   }, [router, supabase, t]);
 
   const refreshInterviewSlots = async () => {
+    if (!profileSaved) {
+      setSlotMessage(t("Spara din profil först innan du lägger till intervjutider.", "Save your profile first before adding interview slots."));
+      setInterviewSlots([]);
+      return;
+    }
     setSlotsLoading(true);
     try {
       const res = await fetch("/api/profile/interview-slots", { method: "GET" });
@@ -196,6 +204,11 @@ export default function ProfilePage() {
   };
 
   const handleAddInterviewSlot = async () => {
+    if (!profileSaved) {
+      setSlotMessage(t("Spara din profil först innan du lägger till intervjutider.", "Save your profile first before adding interview slots."));
+      return;
+    }
+
     if (!slotDate || !slotStartTime || !slotEndTime) {
       setSlotMessage(t("Välj datum och tid först.", "Choose date and time first."));
       return;
@@ -292,6 +305,7 @@ export default function ProfilePage() {
         setProfile((prev) => (prev ? { ...prev, cv_file_url: result.newCvUrl } : prev));
       }
       setProfile((prev) => (prev ? { ...prev, candidate_text_vector: cvTextInput } : prev));
+      setProfileSaved(true);
 
       // Rate limiter
       setIsRateLimited(true);
@@ -545,8 +559,16 @@ export default function ProfilePage() {
                       "Add time slots when employers can book an interview with you through a private link."
                     )}
                   </p>
+                  {!profileSaved && (
+                    <p className="mt-2 text-sm text-amber-700">
+                      {t(
+                        "Spara din profil först, sedan kan du lägga till intervjutider.",
+                        "Save your profile first, then you can add interview slots."
+                      )}
+                    </p>
+                  )}
                 </div>
-                <Button type="button" variant="outline" onClick={() => void refreshInterviewSlots()}>
+                <Button type="button" variant="outline" onClick={() => void refreshInterviewSlots()} disabled={!profileSaved}>
                   {t("Uppdatera", "Refresh")}
                 </Button>
               </div>
@@ -554,19 +576,19 @@ export default function ProfilePage() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="slot-date">{t("Datum", "Date")}</Label>
-                  <Input id="slot-date" type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} />
+                  <Input id="slot-date" type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} disabled={!profileSaved} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="slot-start">{t("Starttid", "Start time")}</Label>
-                  <Input id="slot-start" type="time" value={slotStartTime} onChange={(e) => setSlotStartTime(e.target.value)} />
+                  <Input id="slot-start" type="time" value={slotStartTime} onChange={(e) => setSlotStartTime(e.target.value)} disabled={!profileSaved} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="slot-end">{t("Sluttid", "End time")}</Label>
-                  <Input id="slot-end" type="time" value={slotEndTime} onChange={(e) => setSlotEndTime(e.target.value)} />
+                  <Input id="slot-end" type="time" value={slotEndTime} onChange={(e) => setSlotEndTime(e.target.value)} disabled={!profileSaved} />
                 </div>
               </div>
 
-              <Button type="button" onClick={() => void handleAddInterviewSlot()}>
+              <Button type="button" onClick={() => void handleAddInterviewSlot()} disabled={!profileSaved}>
                 {t("Lägg till intervjutid", "Add interview slot")}
               </Button>
 
