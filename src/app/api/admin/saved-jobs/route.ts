@@ -1,12 +1,8 @@
 // src/app/api/admin/saved-jobs/route.ts
 import { NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
 import { getServerSupabase } from "@/lib/supabaseServer"
 import { isAdminOrModerator } from "@/lib/admin"
-
-function getSupabaseAdmin() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
-}
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin"
 
 export async function GET(req: Request) {
   const supabase = await getServerSupabase()
@@ -31,7 +27,147 @@ export async function GET(req: Request) {
   const { data, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ data: data || [] })
+
+  const jobs = data || []
+  if (jobs.length === 0) {
+    return NextResponse.json({ data: [] })
+  }
+
+  const savedJobIds = jobs.map((job) => job.id)
+  const { data: introLinks, error: introLinksError } = await admin
+    .from("employer_intro_links")
+    .select("id,admin_saved_job_id")
+    .in("admin_saved_job_id", savedJobIds)
+
+  if (introLinksError) return NextResponse.json({ error: introLinksError.message }, { status: 500 })
+
+  const linkIds = (introLinks || []).map((link) => link.id)
+
+  const [{ data: messages, error: messagesError }, { data: pageEvents, error: pageEventsError }, { data: bookings, error: bookingsError }, acceptanceResult] =
+    await Promise.all([
+      admin
+        .from("outreach_messages")
+        .select("id,admin_saved_job_id,recipient_email,subject,text_body,send_status,sent_at,created_at,first_delivered_at,opened_at,first_clicked_at")
+        .in("admin_saved_job_id", savedJobIds)
+        .order("created_at", { ascending: false }),
+      admin
+        .from("employer_intro_page_events")
+        .select("admin_saved_job_id,event_type")
+        .in("admin_saved_job_id", savedJobIds),
+      admin
+        .from("employer_interview_bookings")
+        .select("admin_saved_job_id")
+        .in("admin_saved_job_id", savedJobIds),
+      linkIds.length > 0
+        ? admin
+            .from("employer_intro_acceptances")
+            .select("employer_intro_link_id")
+            .in("employer_intro_link_id", linkIds)
+        : Promise.resolve({ data: [], error: null }),
+    ])
+
+  if (messagesError) return NextResponse.json({ error: messagesError.message }, { status: 500 })
+  if (pageEventsError) return NextResponse.json({ error: pageEventsError.message }, { status: 500 })
+  if (bookingsError) return NextResponse.json({ error: bookingsError.message }, { status: 500 })
+  if (acceptanceResult.error) return NextResponse.json({ error: acceptanceResult.error.message }, { status: 500 })
+
+  const linkToSavedJobId = new Map<string, string>()
+  for (const link of introLinks || []) {
+    linkToSavedJobId.set(link.id, link.admin_saved_job_id)
+  }
+
+  const summaryByJobId = new Map<string, {
+    messagesSent: number
+    deliveredMessages: number
+    openedMessages: number
+    clickedMessages: number
+    pageViews: number
+    acceptances: number
+    bookings: number
+    lastSentAt: string | null
+    lastRecipient: string | null
+    lastSendStatus: string | null
+  }>()
+
+  const latestMessageByJobId = new Map<string, {
+    id: string
+    recipient_email: string
+    subject: string
+    text_body: string
+    send_status: string
+    sent_at: string | null
+    created_at: string
+  }>()
+
+  const getSummary = (savedJobId: string) => {
+    if (!summaryByJobId.has(savedJobId)) {
+      summaryByJobId.set(savedJobId, {
+        messagesSent: 0,
+        deliveredMessages: 0,
+        openedMessages: 0,
+        clickedMessages: 0,
+        pageViews: 0,
+        acceptances: 0,
+        bookings: 0,
+        lastSentAt: null,
+        lastRecipient: null,
+        lastSendStatus: null,
+      })
+    }
+    return summaryByJobId.get(savedJobId)!
+  }
+
+  for (const message of messages || []) {
+    const summary = getSummary(message.admin_saved_job_id)
+    if (!latestMessageByJobId.has(message.admin_saved_job_id)) {
+      latestMessageByJobId.set(message.admin_saved_job_id, message)
+      summary.lastSentAt = message.sent_at || null
+      summary.lastRecipient = message.recipient_email || null
+      summary.lastSendStatus = message.send_status || null
+    }
+    if (message.send_status === "sent") summary.messagesSent += 1
+    if (message.first_delivered_at) summary.deliveredMessages += 1
+    if (message.opened_at) summary.openedMessages += 1
+    if (message.first_clicked_at) summary.clickedMessages += 1
+  }
+
+  for (const pageEvent of pageEvents || []) {
+    if (!pageEvent.admin_saved_job_id) continue
+    const summary = getSummary(pageEvent.admin_saved_job_id)
+    if (pageEvent.event_type === "page_view") summary.pageViews += 1
+  }
+
+  for (const acceptance of acceptanceResult.data || []) {
+    const savedJobId = linkToSavedJobId.get(acceptance.employer_intro_link_id)
+    if (!savedJobId) continue
+    const summary = getSummary(savedJobId)
+    summary.acceptances += 1
+  }
+
+  for (const booking of bookings || []) {
+    if (!booking.admin_saved_job_id) continue
+    const summary = getSummary(booking.admin_saved_job_id)
+    summary.bookings += 1
+  }
+
+  const enrichedJobs = jobs.map((job) => ({
+    ...job,
+    latest_outreach_message: latestMessageByJobId.get(job.id) || null,
+    outreach_summary: summaryByJobId.get(job.id) || {
+      messagesSent: 0,
+      deliveredMessages: 0,
+      openedMessages: 0,
+      clickedMessages: 0,
+      pageViews: 0,
+      acceptances: 0,
+      bookings: 0,
+      lastSentAt: null,
+      lastRecipient: null,
+      lastSendStatus: null,
+    },
+  }))
+
+  return NextResponse.json({ data: enrichedJobs })
 }
 
 export async function POST(req: Request) {

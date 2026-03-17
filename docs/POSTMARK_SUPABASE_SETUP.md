@@ -71,6 +71,47 @@ The app-side mailer now supports dedicated business SMTP environment variables:
 
 If these are not set, it falls back to the current `SMTP_*` variables.
 
+## Outreach Automation
+
+For automated employer outreach via Postmark, set:
+
+- `POSTMARK_SERVER_API_TOKEN`
+- `POSTMARK_MESSAGE_STREAM`
+  Usually `outbound`
+- `OUTREACH_FROM_EMAIL`
+  Example: `info@jobbnu.se`
+- `OUTREACH_FROM_NAME`
+  Example: `JobbNu`
+- `POSTMARK_WEBHOOK_TOKEN`
+  Optional custom bearer token that you define yourself and send as a webhook header
+- `OUTREACH_SIGNER_NAME`
+  Example: `Nikola Dragicevic`
+- `OUTREACH_SIGNER_TITLE`
+  Example: `Grundare, JobbNu`
+- `OUTREACH_SITE_URL`
+  Example: `https://jobbnu.se`
+- `OUTREACH_LOGO_URL`
+  Public URL to your logo in Supabase Storage
+- `OUTREACH_BADGE_URL`
+  Public URL to your signature image or sigill in Supabase Storage
+
+The admin dashboard can then:
+
+- generate outreach email copy
+- send it directly through Postmark
+- save the exact sent message
+- track deliveries, opens, clicks, employer page views, acceptances, and bookings
+
+Configure Postmark webhooks to point to:
+
+- `/api/webhooks/postmark`
+
+If you use `POSTMARK_WEBHOOK_TOKEN`, send it as:
+
+- `Authorization: Bearer YOUR_TOKEN`
+
+The outreach sender now appends an HTML signature block automatically and can use your Supabase-hosted assets for logo and sigill.
+
 ## Confirmation Redirect
 
 The app already sets signup email redirects to:

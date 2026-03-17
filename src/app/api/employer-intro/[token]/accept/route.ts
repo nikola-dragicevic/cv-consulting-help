@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-
-function getSupabaseAdmin() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
-}
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { getClientIp } from "@/lib/outreach"
 
 export async function POST(
   req: Request,
@@ -24,7 +21,7 @@ export async function POST(
   const admin = getSupabaseAdmin()
   const { data: link, error: linkError } = await admin
     .from("employer_intro_links")
-    .select("id,terms_version,status")
+    .select("id,admin_saved_job_id,candidate_profile_id,terms_version,status")
     .eq("token", token)
     .eq("status", "active")
     .single()
@@ -53,6 +50,22 @@ export async function POST(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  await admin.from("employer_intro_page_events").insert({
+    employer_intro_link_id: link.id,
+    admin_saved_job_id: link.admin_saved_job_id,
+    candidate_profile_id: link.candidate_profile_id,
+    acceptance_id: data.id,
+    event_type: "accept_completed",
+    occurred_at: data.accepted_at,
+    ip_address: getClientIp(req),
+    user_agent: req.headers.get("user-agent"),
+    referrer: req.headers.get("referer"),
+    metadata: {
+      companyName,
+      contactEmail,
+    },
+  })
 
   return NextResponse.json({ data })
 }

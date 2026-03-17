@@ -127,10 +127,26 @@ export default function EmployerIntroPage() {
         ? "bg-blue-50 text-blue-700 border-blue-200"
         : "bg-amber-50 text-amber-700 border-amber-200"
 
+  async function trackEvent(eventType: "accept_started" | "booking_started", metadata?: Record<string, unknown>) {
+    try {
+      await fetch(`/api/employer-intro/${token}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventType, metadata: metadata || {} }),
+      })
+    } catch {
+      // Best effort only; analytics should not block the employer flow.
+    }
+  }
+
   async function handleAcceptTerms() {
     setSubmittingAcceptance(true)
     setError("")
     try {
+      await trackEvent("accept_started", {
+        hasCompanyName: Boolean(companyName.trim()),
+        hasContactEmail: Boolean(contactEmail.trim()),
+      })
       const res = await fetch(`/api/employer-intro/${token}/accept`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -161,6 +177,10 @@ export default function EmployerIntroPage() {
       if (!selectedSlot) {
         throw new Error("Välj en tid först.")
       }
+
+      await trackEvent("booking_started", {
+        selectedSlotId: selectedSlot.source_slot_id,
+      })
 
       const res = await fetch(`/api/employer-intro/${token}/book`, {
         method: "POST",

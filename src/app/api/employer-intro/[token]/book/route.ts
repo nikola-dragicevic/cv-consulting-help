@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-
-function getSupabaseAdmin() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
-}
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { getClientIp } from "@/lib/outreach"
 
 function toMinutes(timeValue: string) {
   const [hours, minutes] = timeValue.slice(0, 5).split(":").map(Number)
@@ -105,12 +102,30 @@ export async function POST(
       status: "confirmed",
       admin_followup_status: "booked",
     })
-    .select("id,booking_date,start_time,end_time,status")
+    .select("id,booking_date,start_time,end_time,status,created_at")
     .single()
 
   if (bookingError) {
     return NextResponse.json({ error: bookingError.message }, { status: 500 })
   }
+
+  await admin.from("employer_intro_page_events").insert({
+    employer_intro_link_id: link.id,
+    admin_saved_job_id: link.admin_saved_job_id,
+    candidate_profile_id: link.candidate_profile_id,
+    acceptance_id: acceptanceId,
+    booking_id: booking.id,
+    event_type: "booking_completed",
+    occurred_at: booking.created_at || new Date().toISOString(),
+    ip_address: getClientIp(req),
+    user_agent: req.headers.get("user-agent"),
+    referrer: req.headers.get("referer"),
+    metadata: {
+      companyName,
+      contactEmail,
+      slotId: slot.id,
+    },
+  })
 
   return NextResponse.json({ data: booking })
 }

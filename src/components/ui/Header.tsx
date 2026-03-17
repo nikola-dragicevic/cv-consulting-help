@@ -72,8 +72,8 @@ export default function Header() {
               <Image
                 src="/JobbNuColor.png"
                 alt="JobbNu"
-                width={100}
-                height={28}
+                width={596}
+                height={168}
                 className="h-7 w-auto"
                 priority
               />

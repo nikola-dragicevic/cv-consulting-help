@@ -793,10 +793,10 @@ export default function UnifiedLandingPage() {
               <div className="relative w-full max-w-none">
                 <div className="absolute inset-0 bg-blue-200 rounded-full blur-3xl opacity-20" />
                 <Image
-                  src="/star-business-award-2026-masked.png"
+                  src="/star-business-award.png"
                   alt={t("Star Business Awards utmärkelse", "Star Business Awards certificate")}
-                  width={2400}
-                  height={3200}
+                  width={1728}
+                  height={2464}
                   quality={100}
                   sizes="(max-width: 640px) 42vw, (max-width: 1024px) 40vw, 34vw"
                   className="relative mx-auto w-[42vw] max-w-[420px] sm:w-[40vw] sm:max-w-[460px] lg:w-[34vw] lg:max-w-[560px] xl:max-w-[620px] drop-shadow-2xl object-contain"

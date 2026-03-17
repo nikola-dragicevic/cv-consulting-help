@@ -114,10 +114,8 @@ REGLER:
 - Använd inte engelska ord eller engelska meningar om det inte är ett egennamn eller en jobbtitel som måste citeras
 - Undvik fluff och generiska fraser
 - Avsluta med en tydlig CTA till bokningslänken om den finns
-- Signera alltid exakt:
-"Med vänliga hälsningar,
-JobbNu
-info@jobbnu.se"
+- Skriv ingen signatur eller kontaktuppgifter i mejltexten
+- Skriv inte ut rå länken på egen rad om bokningslänken finns; hänvisa i stället naturligt till länken
 
 FORMAT:
 Subject: [kort ämnesrad]

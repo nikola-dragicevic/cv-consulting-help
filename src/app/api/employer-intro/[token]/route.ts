@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-
-function getSupabaseAdmin() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
-}
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { getClientIp } from "@/lib/outreach"
 
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -158,7 +155,7 @@ function buildSwedishSenioritySummary(params: {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ token: string }> }
 ) {
   const { token } = await ctx.params
@@ -177,6 +174,20 @@ export async function GET(
   if (!link) {
     return NextResponse.json({ error: "Link not found" }, { status: 404 })
   }
+
+  await admin.from("employer_intro_page_events").insert({
+    employer_intro_link_id: link.id,
+    admin_saved_job_id: link.admin_saved_job_id,
+    candidate_profile_id: link.candidate_profile_id,
+    event_type: "page_view",
+    occurred_at: new Date().toISOString(),
+    ip_address: getClientIp(req),
+    user_agent: req.headers.get("user-agent"),
+    referrer: req.headers.get("referer"),
+    metadata: {
+      termsVersion: link.terms_version,
+    },
+  })
 
   const [{ data: savedJob }, { data: candidate }, { data: jobRow }, { data: slots }, { data: acceptance }, { data: bookings }] = await Promise.all([
     admin

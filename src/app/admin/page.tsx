@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { isAdminUser, isAdminOrModerator } from "@/lib/admin"
+import { parseGeneratedEmail } from "@/lib/outreach"
 import { getBrowserSupabase } from "@/lib/supabaseBrowser"
 
 const supabase = getBrowserSupabase()
@@ -113,6 +114,27 @@ type SavedJob = {
   search_address: string | null
   search_radius_km: number | null
   candidate_cv_text: string | null
+  latest_outreach_message?: {
+    id: string
+    recipient_email: string
+    subject: string
+    text_body: string
+    send_status: string
+    sent_at: string | null
+    created_at: string
+  } | null
+  outreach_summary?: {
+    messagesSent: number
+    deliveredMessages: number
+    openedMessages: number
+    clickedMessages: number
+    pageViews: number
+    acceptances: number
+    bookings: number
+    lastSentAt: string | null
+    lastRecipient: string | null
+    lastSendStatus: string | null
+  } | null
 }
 
 type InterviewBooking = {
@@ -170,17 +192,6 @@ function normalizeKeywordCandidates(candidate: CandidateRow): string {
   return normalizeKeywordSeed(candidate.primary_occupation_field)
 }
 
-function parseGeneratedEmail(emailText: string) {
-  const raw = emailText.trim()
-  const subjectMatch = raw.match(/^Subject:\s*(.+)$/im)
-  const subject = subjectMatch?.[1]?.trim() || "Kandidat från JobbNu"
-  const body = raw
-    .replace(/^Subject:\s*.+$/im, "")
-    .trim()
-
-  return { subject, body }
-}
-
 function buildGmailComposeUrl(params: { to: string; subject: string; body: string }) {
   const url = new URL("https://mail.google.com/mail/")
   url.searchParams.set("view", "cm")
@@ -189,6 +200,19 @@ function buildGmailComposeUrl(params: { to: string; subject: string; body: strin
   url.searchParams.set("su", params.subject)
   url.searchParams.set("body", params.body)
   return url.toString()
+}
+
+function formatFollowupStatus(status: string | null | undefined) {
+  switch (status) {
+    case "contacted_candidate":
+      return "contacted_candidate"
+    case "prepared":
+      return "prepared"
+    case "interview_completed":
+      return "interview_completed"
+    default:
+      return "booked"
+  }
 }
 
 export default function AdminDashboard() {
@@ -258,6 +282,7 @@ export default function AdminDashboard() {
   const [interviewBookings, setInterviewBookings] = useState<InterviewBooking[]>([])
   const [bookingStatusLoadingId, setBookingStatusLoadingId] = useState<string | null>(null)
   const [emailGenLoading, setEmailGenLoading] = useState<string | null>(null)
+  const [emailSendLoading, setEmailSendLoading] = useState<string | null>(null)
   const [generatedEmails, setGeneratedEmails] = useState<Record<string, string>>({})
   const [introLinkLoading, setIntroLinkLoading] = useState<string | null>(null)
   const [employerIntroLinks, setEmployerIntroLinks] = useState<Record<string, string>>({})
@@ -414,6 +439,16 @@ export default function AdminDashboard() {
         const next = { ...prev }
         for (const j of jobs) {
           if (!(j.id in next)) next[j.id] = j.manual_contact_email || ""
+        }
+        return next
+      })
+      setGeneratedEmails((prev) => {
+        const next = { ...prev }
+        for (const j of jobs) {
+          if (next[j.id]) continue
+          const latest = j.latest_outreach_message
+          if (!latest?.subject || !latest?.text_body) continue
+          next[j.id] = `Subject: ${latest.subject}\n\n${latest.text_body}`
         }
         return next
       })
@@ -789,6 +824,44 @@ export default function AdminDashboard() {
     } catch (err) {
       console.error(err)
       alert("Kunde inte markera e-post som skickad")
+    }
+  }
+
+  const handleSendOutreachEmail = async (job: SavedJob) => {
+    const generated = generatedEmails[job.id]
+    if (!generated?.trim()) {
+      alert("Generera e-post först.")
+      return
+    }
+
+    const contact = savedJobContactScans[job.id]
+    const recipientEmail = (savedJobManualEmails[job.id] || job.manual_contact_email || contact?.contactEmail || "").trim()
+    if (!recipientEmail) {
+      alert("Ange manuellt kontaktmail eller skanna kontaktinfo först.")
+      return
+    }
+
+    setEmailSendLoading(job.id)
+    try {
+      const res = await fetch("/api/admin/send-outreach-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          savedJobId: job.id,
+          recipientEmail,
+          recipientName: contact?.contactName || "",
+          emailText: generated,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kunde inte skicka e-post")
+
+      await fetchSavedJobs(savedJobsCandidateFilter || null)
+      alert(`E-post skickad till ${recipientEmail}`)
+    } catch (err) {
+      alert("Kunde inte skicka e-post: " + (err instanceof Error ? err.message : "okänt fel"))
+    } finally {
+      setEmailSendLoading(null)
     }
   }
 
@@ -1884,7 +1957,7 @@ export default function AdminDashboard() {
                             {booking.contact_phone ? ` · ${booking.contact_phone}` : ""}
                           </p>
                           <p className="mt-1 text-xs text-emerald-700">
-                            Status: {booking.admin_followup_status || "booked"}
+                            Status: {formatFollowupStatus(booking.admin_followup_status)}
                           </p>
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Button
@@ -1963,6 +2036,16 @@ export default function AdminDashboard() {
                         {job.email_sent && (
                           <p className="text-xs text-green-700 mt-0.5">
                             E-post skickad {job.email_sent_at ? new Date(job.email_sent_at).toLocaleDateString("sv-SE") : ""}
+                          </p>
+                        )}
+                        {job.outreach_summary && (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Funnel: skickade {job.outreach_summary.messagesSent} · levererade {job.outreach_summary.deliveredMessages} · öppnade {job.outreach_summary.openedMessages} · klick {job.outreach_summary.clickedMessages} · sidvisningar {job.outreach_summary.pageViews} · godkännanden {job.outreach_summary.acceptances} · bokningar {job.outreach_summary.bookings}
+                          </p>
+                        )}
+                        {job.outreach_summary?.lastRecipient && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Senaste mottagare: {job.outreach_summary.lastRecipient}
                           </p>
                         )}
                         {job.notes && (
@@ -2072,6 +2155,18 @@ export default function AdminDashboard() {
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => void handleSendOutreachEmail(job)}
+                        disabled={
+                          emailSendLoading === job.id ||
+                          !generatedEmails[job.id] ||
+                          !(savedJobManualEmails[job.id] || job.manual_contact_email || savedJobContactScans[job.id]?.contactEmail)
+                        }
+                      >
+                        {emailSendLoading === job.id ? "Skickar..." : "Skicka via Postmark"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => handleOpenInGmail(job)}
                         disabled={
                           !generatedEmails[job.id] ||
@@ -2125,6 +2220,11 @@ export default function AdminDashboard() {
                             Kopiera
                           </button>
                         </div>
+                        {job.latest_outreach_message?.sent_at && (
+                          <p className="mb-2 text-xs text-emerald-700">
+                            Senast skickat {new Date(job.latest_outreach_message.sent_at).toLocaleString("sv-SE")}
+                          </p>
+                        )}
                         <pre className="text-xs text-slate-800 whitespace-pre-wrap font-mono leading-relaxed">
                           {generatedEmails[job.id]}
                         </pre>
