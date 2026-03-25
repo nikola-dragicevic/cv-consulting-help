@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JobbNu Apply Helper</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 14px;
+        width: 340px;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 12px;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+      }
+      .title {
+        font-size: 15px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+      .copy {
+        font-size: 12px;
+        line-height: 1.45;
+        color: #475569;
+        margin-bottom: 10px;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        margin-top: 8px;
+      }
+      .primary {
+        background: #0f172a;
+        color: white;
+      }
+      .secondary {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      .status {
+        margin-top: 10px;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+      .muted {
+        color: #64748b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="title">JobbNu Apply Helper</div>
+      <div class="copy">
+        Fyll vanliga ansökningsfält med din profil från JobbNu. Extensionen försöker fylla kontaktuppgifter, CV och ett jobbspecifikt personligt brev när en matchad jobbannons känns igen.
+      </div>
+      <div class="copy muted">
+        Chrome-extensionen lanseras snart offentligt. När den är live blir flödet: 1 klick för att installera, 1 klick för att fylla formuläret.
+      </div>
+      <button id="fill-button" class="primary">Fyll ansökningsformulär</button>
+      <button id="scan-button" class="secondary">Skanna sidan</button>
+      <div id="status" class="status muted">Redo.</div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

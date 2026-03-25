@@ -43,6 +43,7 @@ export async function PATCH(
   if ("notes" in body) patch.notes = body.notes
   if ("interviewAnalysis" in body) patch.interview_analysis = body.interviewAnalysis
   if ("manualContactEmail" in body) patch.manual_contact_email = body.manualContactEmail
+  if ("applicationReference" in body) patch.application_reference = body.applicationReference
   if ("emailSent" in body) patch.email_sent = body.emailSent
   if (body.emailSent === true) patch.email_sent_at = new Date().toISOString()
 
@@ -54,5 +55,16 @@ export async function PATCH(
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  if ("interviewAnalysis" in body) {
+    await admin
+      .from("employer_intro_links")
+      .update({
+        cached_intro_snapshot: null,
+        cached_intro_generated_at: null,
+      })
+      .eq("admin_saved_job_id", id)
+  }
+
   return NextResponse.json({ data })
 }

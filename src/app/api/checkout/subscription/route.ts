@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getStripeClient } from "@/lib/stripeServer";
 
-const stripe = getStripeClient();
-const MONTHLY_PRICE_SEK = 100;
+const MONTHLY_PRICE_SEK = 99;
 
 export async function POST() {
   try {
+    const stripe = getStripeClient();
     const supabase = await getServerSupabase();
     const { data: { user } } = await supabase.auth.getUser();
 

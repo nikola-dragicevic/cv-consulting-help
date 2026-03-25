@@ -26,7 +26,6 @@ interface MatchInsightsProps {
   vectorSimilarity?: number;
   keywordScore?: number;
   keywordMissRate?: number;
-  categoryBonus?: number;
   finalScore?: number;
 
   // Layer 3: Manager re-ranker
@@ -53,7 +52,6 @@ export function MatchInsights({
   vectorSimilarity,
   keywordScore,
   keywordMissRate,
-  categoryBonus,
   finalScore,
   managerScore,
   managerExplanation,
@@ -68,53 +66,39 @@ export function MatchInsights({
 
   return (
     <div className="space-y-4">
-      {/* Layer 2: Weighted Scores */}
+      {/* Candidate-facing summary: keep this useful without exposing the scoring recipe. */}
       {finalScore !== undefined && (
         <Card className="p-4">
           <h3 className="font-semibold mb-3">
-            {scoreMode === "jobbnu" ? t("Analys för AI Manager", "AI Manager analysis") : t("Analys för Keyword Match", "Keyword Match analysis")}
+            {scoreMode === "jobbnu" ? t("Varför jobbet passar dig", "Why this job fits you") : t("Matchsammanfattning", "Match summary")}
           </h3>
           <p className="mb-3 text-sm text-slate-600">
             {scoreMode === "jobbnu"
               ? t(
-                  "AI Manager väger semantisk likhet mot din profil, nyckelordsträffar och avdrag för saknade nyckelord.",
-                  "AI Manager weighs semantic similarity to your profile, keyword hits, and deductions for missing keywords."
+                  "Det här jobbet har valts ut utifrån hur väl din profil, erfarenhet och dina nyckelkompetenser passar annonsen.",
+                  "This job was selected based on how well your profile, experience, and key skills fit the ad."
                 )
               : t(
-                  "Keyword Match räknar bara hur många av dina nyckelord som faktiskt finns i jobbannonsen.",
-                  "Keyword Match only counts how many of your keywords actually appear in the job ad."
+                  "Vi har jämfört din profil med innehållet i annonsen för att uppskatta hur stark matchningen är.",
+                  "We compared your profile with the content of the ad to estimate how strong the match is."
                 )}
           </p>
           <div className="space-y-2 text-sm">
-            {scoreMode === "jobbnu" && (
-              <ScoreBar
-                label={t("Semantisk likhet", "Semantic similarity")}
-                value={vectorSimilarity || 0}
-                color="blue"
-              />
-            )}
             <ScoreBar
-              label={t("Nyckelordsträffar", "Keyword hits")}
-              value={keywordScore || 0}
+              label={t("Relevanta kompetenser", "Relevant skills")}
+              value={keywordScore || vectorSimilarity || 0}
               color="green"
             />
             {scoreMode === "jobbnu" && (
               <ScoreBar
-                label={t("Avdrag för saknade nyckelord", "Deduction for missing keywords")}
+                label={t("Täckning mot kravprofil", "Coverage against role requirements")}
                 value={1 - (keywordMissRate || 0)}
                 color="amber"
               />
             )}
-            {scoreMode === "jobbnu" && categoryBonus !== undefined && categoryBonus > 0 && (
-              <ScoreBar
-                label={t("Kategoriboost", "Category Boost")}
-                value={categoryBonus}
-                color="purple"
-              />
-            )}
             <div className="pt-2 border-t">
               <ScoreBar
-                label={scoreMode === "jobbnu" ? t("AI Manager-score", "AI Manager score") : t("Keyword Match-score", "Keyword Match score")}
+                label={scoreMode === "jobbnu" ? t("Total matchning", "Overall match") : t("Total matchning", "Overall match")}
                 value={finalScore}
                 color="indigo"
                 bold

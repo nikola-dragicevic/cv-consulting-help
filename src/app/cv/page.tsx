@@ -55,7 +55,7 @@ export default function CvPage() {
               href="#order"
               className="inline-flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-500 px-6 py-3 text-sm font-semibold transition-colors"
             >
-              Beställ mitt CV – 119 kr →
+              Beställ mitt CV – 129 kr →
             </a>
             <span className="text-slate-400 text-xs">Inkl. moms · Genereras direkt</span>
           </div>
@@ -159,7 +159,7 @@ export default function CvPage() {
         <StaticOrderForm
           config={{
             name: "CV",
-            amount: 119,
+            amount: 129,
             flow: "cv_intake",
             includesLetter: false,
             includesConsultation: false,

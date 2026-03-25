@@ -12,10 +12,23 @@ export async function POST(
   const contactName = typeof body?.contactName === "string" ? body.contactName.trim() : ""
   const contactEmail = typeof body?.contactEmail === "string" ? body.contactEmail.trim() : ""
   const contactPhone = typeof body?.contactPhone === "string" ? body.contactPhone.trim() : ""
+  const compensationModel = typeof body?.compensationModel === "string" ? body.compensationModel.trim() : ""
+  const oneTimeFeeSek =
+    typeof body?.oneTimeFeeSek === "number"
+      ? body.oneTimeFeeSek
+      : typeof body?.oneTimeFeeSek === "string"
+        ? Number.parseInt(body.oneTimeFeeSek.replace(/[^\d]/g, ""), 10)
+        : null
   const acceptedTerms = body?.acceptedTerms === true
 
   if (!companyName || !contactName || !contactEmail || !acceptedTerms) {
     return NextResponse.json({ error: "Missing required acceptance fields" }, { status: 400 })
+  }
+  if (!["monthly_percentage", "one_time_offer"].includes(compensationModel)) {
+    return NextResponse.json({ error: "Compensation model is required" }, { status: 400 })
+  }
+  if (compensationModel === "one_time_offer" && (!oneTimeFeeSek || oneTimeFeeSek <= 0)) {
+    return NextResponse.json({ error: "One-time fee is required" }, { status: 400 })
   }
 
   const admin = getSupabaseAdmin()
@@ -41,10 +54,13 @@ export async function POST(
       accepted_terms: true,
       accepted_at: new Date().toISOString(),
       terms_version: link.terms_version,
+      compensation_model: compensationModel,
+      monthly_percentage: compensationModel === "monthly_percentage" ? 2 : null,
+      one_time_fee_sek: compensationModel === "one_time_offer" ? oneTimeFeeSek : null,
       ip_address: req.headers.get("x-forwarded-for") || null,
       user_agent: req.headers.get("user-agent") || null,
     })
-    .select("id,company_name,contact_name,contact_email,accepted_at")
+    .select("id,company_name,contact_name,contact_email,contact_phone,accepted_at,compensation_model,monthly_percentage,one_time_fee_sek")
     .single()
 
   if (error) {
@@ -64,6 +80,8 @@ export async function POST(
     metadata: {
       companyName,
       contactEmail,
+      compensationModel,
+      oneTimeFeeSek,
     },
   })
 

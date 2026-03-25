@@ -1,11 +1,17 @@
+import { randomBytes } from "crypto"
 import { NextResponse } from "next/server"
 import { getServerSupabase } from "@/lib/supabaseServer"
 import { isAdminOrModerator } from "@/lib/admin"
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin"
-import { buildOutreachHtml, formatFromHeader, parseGeneratedEmail } from "@/lib/outreach"
+import { buildBrandedEmailHtml, formatFromHeader, parseGeneratedEmail } from "@/lib/outreach"
 
 export const runtime = "nodejs"
 export const maxDuration = 30
+
+function buildPublicUrl(token: string) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://jobbnu.se"
+  return `${baseUrl}/employer-intro/${token}`
+}
 
 function getOutreachSender() {
   const email =
@@ -54,9 +60,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: savedJobError?.message || "Saved job not found" }, { status: 404 })
   }
 
-  const { data: introLink, error: introLinkError } = await admin
+  const { data: existingIntroLink, error: introLinkError } = await admin
     .from("employer_intro_links")
-    .select("id")
+    .select("id,token")
     .eq("admin_saved_job_id", savedJobId)
     .eq("status", "active")
     .order("created_at", { ascending: false })
@@ -67,8 +73,45 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: introLinkError.message }, { status: 500 })
   }
 
+  let introLink = existingIntroLink
+  if (!introLink?.token) {
+    const token = randomBytes(20).toString("hex")
+    const { data: createdIntroLink, error: createIntroLinkError } = await admin
+      .from("employer_intro_links")
+      .insert({
+        admin_saved_job_id: savedJobId,
+        candidate_profile_id: savedJob.candidate_profile_id,
+        job_id: savedJob.job_id,
+        token,
+        created_by_user_id: user?.id ?? null,
+        status: "active",
+        terms_version: "candidate_intro_terms_v2",
+      })
+      .select("id,token")
+      .single()
+
+    if (createIntroLinkError || !createdIntroLink) {
+      return NextResponse.json({
+        error: createIntroLinkError?.message || "Could not create employer intro link",
+      }, { status: 500 })
+    }
+
+    introLink = createdIntroLink
+  }
+
   const parsed = parseGeneratedEmail(emailText)
-  const htmlBody = buildOutreachHtml(parsed.body)
+  const bookingLink = introLink?.token ? buildPublicUrl(introLink.token) : ""
+  const bodyWithCta =
+    bookingLink && !parsed.body.includes(bookingLink)
+      ? `${parsed.body}\n\nSe kandidatprofil och boka intervju här: ${bookingLink}`
+      : parsed.body
+  const htmlBody = buildBrandedEmailHtml(bodyWithCta, {
+    primaryButtonUrl: bookingLink || null,
+    primaryButtonLabel: bookingLink ? "Se kandidatprofil och boka intervju" : null,
+    primaryButtonHint: bookingLink
+      ? "Länken går till jobbnu.se där arbetsgivaren kan läsa kandidatprofilen, godkänna villkoren och boka intervju."
+      : null,
+  })
   const sender = getOutreachSender()
   const messageStream = process.env.POSTMARK_MESSAGE_STREAM || "outbound"
 
@@ -86,12 +129,13 @@ export async function POST(req: Request) {
       recipient_email: recipientEmail,
       recipient_name: recipientName || null,
       subject: parsed.subject,
-      text_body: parsed.body,
+      text_body: bodyWithCta,
       html_body: htmlBody,
       send_status: "pending",
       metadata: {
         savedJobId,
         employerIntroLinkId: introLink?.id || null,
+        bookingLink: bookingLink || null,
         sentByUserId: user?.id || null,
       },
     })
@@ -115,7 +159,7 @@ export async function POST(req: Request) {
         From: formatFromHeader(sender),
         To: recipientEmail,
         Subject: parsed.subject,
-        TextBody: parsed.body,
+        TextBody: bodyWithCta,
         HtmlBody: htmlBody,
         ReplyTo: sender.email,
         TrackOpens: true,

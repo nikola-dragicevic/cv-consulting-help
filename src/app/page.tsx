@@ -394,6 +394,9 @@ export default function UnifiedLandingPage() {
 
   // Supabase session
   const [user, setUser] = useState<SupabaseUser | null>(null)
+  const [autoApplyCheckoutLoading, setAutoApplyCheckoutLoading] = useState(false)
+  const [heroJobCount, setHeroJobCount] = useState<number | null>(null)
+  const [heroAnimatedCount, setHeroAnimatedCount] = useState(0)
   const supabase = getBrowserSupabase()
 
   useEffect(() => {
@@ -414,6 +417,87 @@ export default function UnifiedLandingPage() {
     return () => { sub.subscription?.unsubscribe() }
   }, [])
 
+  useEffect(() => {
+    const loadHeroJobCount = async () => {
+      try {
+        const res = await fetch("/api/job-categories")
+        const json = await res.json()
+        if (!res.ok) return
+        setHeroJobCount(typeof json?.total === "number" ? json.total : null)
+      } catch {
+        // non-blocking
+      }
+    }
+
+    void loadHeroJobCount()
+  }, [])
+
+  useEffect(() => {
+    const target = heroJobCount ?? 60000
+    if (heroAnimatedCount >= target) return
+
+    const durationMs = heroJobCount != null ? 600 : 1400
+    const steps = 24
+    const increment = Math.max(1, Math.ceil((target - heroAnimatedCount) / steps))
+    const interval = window.setInterval(() => {
+      setHeroAnimatedCount((prev) => {
+        const next = Math.min(prev + increment, target)
+        if (next >= target) {
+          window.clearInterval(interval)
+        }
+        return next
+      })
+    }, Math.max(25, Math.floor(durationMs / steps)))
+
+    return () => window.clearInterval(interval)
+  }, [heroAnimatedCount, heroJobCount])
+
+  const startAutoApplyCheckout = async () => {
+    if (!user) {
+      router.push("/login")
+      return
+    }
+
+    try {
+      setAutoApplyCheckoutLoading(true)
+      const res = await fetch("/api/checkout/representation-subscription", { method: "POST" })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Could not start auto apply checkout")
+      if (json?.url) {
+        window.location.href = json.url
+        return
+      }
+      throw new Error("Missing checkout url")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Kunde inte starta betalning")
+    } finally {
+      setAutoApplyCheckoutLoading(false)
+    }
+  }
+
+  const startDashboardCheckout = async () => {
+    if (!user) {
+      router.push("/login")
+      return
+    }
+
+    try {
+      setSubscriptionCheckoutLoading(true)
+      const res = await fetch("/api/checkout/subscription", { method: "POST" })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Could not start dashboard checkout")
+      if (json?.url) {
+        window.location.href = json.url
+        return
+      }
+      throw new Error("Missing checkout url")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Kunde inte starta betalning")
+    } finally {
+      setSubscriptionCheckoutLoading(false)
+    }
+  }
+
   // Job matching state
   const [city, setCity] = useState("")
   const [cvText, setCvText] = useState("")
@@ -433,6 +517,7 @@ export default function UnifiedLandingPage() {
   const [showIntakeModal, setShowIntakeModal] = useState(false)
   const [intakeSavedMessage, setIntakeSavedMessage] = useState("")
   const [intakeSubmitting, setIntakeSubmitting] = useState(false)
+  const [subscriptionCheckoutLoading, setSubscriptionCheckoutLoading] = useState(false)
   const [cvIntakeDraft, setCvIntakeDraft] = useState<CvIntakeDraft>(() => createInitialCvIntakeDraft(""))
   const canBypassPayment = isAdminOrModerator(user)
 
@@ -743,26 +828,41 @@ export default function UnifiedLandingPage() {
           <div className="grid gap-8 lg:grid-cols-[0.85fr_1.9fr] items-center">
             <div className="space-y-6">
               <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 text-balance">
-                {t("Hitta det perfekta jobbet för dig med hjälp av en AI-manager", "Find the right job for you with the help of an AI manager")}
-              </h1>
-              
-              <p className="text-xl text-slate-700">
-                {t("Ange dina kvalifikationer och din erfarenhet så hittar vi det perfekta jobbet för dig", "Share your qualifications and experience, and we will find the right jobs for you")}
-              </p>
-              
-              <blockquote className="border-l-4 border-blue-600 pl-4 italic text-slate-700">
                 {t(
-                  '"I takt med den snabba automatiseringen och digitaliseringen har nya yrkesområden uppstått som ännu inte är tydligt definierade. Vi hjälper dig – ange dina önskemål och kvalifikationer så hittar vi jobb som passar dig."',
-                  '"As automation and digitalization accelerate, new job areas are emerging that are not yet clearly defined. We help you identify roles that fit your qualifications and goals."'
+                  "Vi tar fram jobb bara du är kvalificerad för!",
+                  "We bring forward jobs that you are actually qualified for!"
                 )}
-              </blockquote>
+              </h1>
+
+              <a
+                href="#job-categories"
+                className="block rounded-2xl border border-blue-100 bg-white/80 px-5 py-4 text-base text-slate-700 shadow-sm backdrop-blur-sm transition hover:border-blue-300 hover:bg-blue-50/70"
+              >
+                <span className="font-semibold text-slate-900">
+                  {t(
+                    `${heroAnimatedCount.toLocaleString("sv-SE")} jobb i Sverige just nu.`,
+                    `${heroAnimatedCount.toLocaleString("en-US")} jobs in Sweden right now.`
+                  )}
+                </span>{" "}
+                {t(
+                  "Tryck för att utforska alla kategorier och underkategorier.",
+                  "Click to explore all categories and subcategories."
+                )}
+              </a>
+
+              <p className="border-l-4 border-blue-600 pl-4 text-lg text-slate-700">
+                {t(
+                  "JobbNu plockar ut jobben du passar för och sorterar dem från mest relevant med ett klick.",
+                  "JobbNu pulls out the jobs you fit and sorts them from most relevant in one click."
+                )}
+              </p>
 
               <div className="flex flex-wrap gap-4">
-                <Button size="lg" className="bg-blue-600 hover:bg-blue-700" asChild>
-                  <a href="#packages">🎯 {t("Välj ditt paket", "Choose your package")}</a>
+                <Button size="lg" className="bg-amber-500 text-slate-950 hover:bg-amber-400" asChild>
+                  <Link href="/dashboard">📊 {t("Börja matcha", "Start matching")}</Link>
                 </Button>
-                <Button size="lg" variant="outline" asChild>
-                  <Link href="/dashboard">📊 {t("Matcha jobb", "Find job")}</Link>
+                <Button size="lg" className="bg-blue-600 hover:bg-blue-700" asChild>
+                  <Link href="/cv">🎯 {t("Är du i behov av ett perfekt CV?", "Do you need a perfect CV?")}</Link>
                 </Button>
               </div>
               
@@ -774,19 +874,6 @@ export default function UnifiedLandingPage() {
                 </div>
                 <span className="font-semibold">{t("Högsta betyg", "Top rating")}</span>
                 <span>{t("från verifierade kandidater", "from verified candidates")}</span>
-              </div>
-              <div className="rounded-2xl border border-blue-100 bg-white/80 px-4 py-3 text-sm text-slate-700 shadow-sm backdrop-blur-sm">
-                <span className="font-semibold text-slate-900">
-                  {t("Mitt mål med JobbNu:", "My goal with JobbNu:")}
-                </span>{" "}
-                {t(
-                  "att hjälpa 10 000 personer hitta jobb genom smartare och mer träffsäker matchning.",
-                  "to help 10,000 people find jobs through smarter and more accurate matching."
-                )}
-              </div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                <Users className="h-3.5 w-3.5" />
-                {t("Ny tjänst: Kandidatrepresentation 300 kr/mån", "New service: Candidate Representation 300 SEK/month")}
               </div>
             </div>
             <div className="flex justify-center lg:justify-end">
@@ -817,26 +904,33 @@ export default function UnifiedLandingPage() {
             </h2>
             <p className="text-base text-slate-500 max-w-xl mx-auto">
               {t(
-                "Köp CV:t en gång, hitta matchande jobb i dashboarden och beställ personliga brev för varje jobb du söker.",
-                "Buy the CV once, find matching jobs in the dashboard, then order a cover letter for each job you apply to."
+                "Steg 2 passar dig som vill matcha jobb själv i dashboarden. Steg 3 är det större Auto Apply-paketet och inkluderar jobbmatchningen från steg 2.",
+                "Step 2 is for users who want to match jobs themselves in the dashboard. Step 3 is the larger Auto Apply package and already includes the matching flow from step 2."
               )}
             </p>
           </div>
 
           {/* Step flow */}
-          <div className="flex items-center justify-center gap-0 mb-12 max-w-md mx-auto text-xs">
-            {(lang === "sv"
-              ? [["1", "Skapa CV"], ["2", "Hitta jobb"], ["3", "Beställ brev"]]
-              : [["1", "Create CV"], ["2", "Find jobs"], ["3", "Order letters"]]
-            ).map(([num, label], i, arr) => (
-              <React.Fragment key={num}>
-                <div className="flex flex-col items-center gap-1.5">
-                  <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">{num}</div>
-                  <span className="text-slate-600 font-medium whitespace-nowrap">{label}</span>
+          <div className="mb-12 mx-auto max-w-5xl text-xs">
+            <div className="grid grid-cols-[1fr_1fr_auto_1fr] items-start gap-6 text-center">
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">1</div>
+                <span className="text-slate-600 font-medium whitespace-nowrap">{t("Skapa CV", "Create CV")}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">2</div>
+                <span className="text-slate-600 font-medium whitespace-nowrap">{t("Matcha jobb själv", "Match jobs yourself")}</span>
+              </div>
+              <div className="flex items-center justify-center pt-1">
+                <div className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
+                  {t("Eller", "Or")}
                 </div>
-                {i < arr.length - 1 && <div className="flex-1 h-px bg-slate-300 mx-3 mb-5" />}
-              </React.Fragment>
-            ))}
+              </div>
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">3</div>
+                <span className="text-slate-600 font-medium whitespace-nowrap">{t("Auto Apply inkl. matchning", "Auto Apply incl. matching")}</span>
+              </div>
+            </div>
           </div>
 
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
@@ -847,11 +941,11 @@ export default function UnifiedLandingPage() {
                 <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">{t("Steg 1", "Step 1")}</div>
                 <CardTitle className="text-xl">CV</CardTitle>
                 <div className="mt-3">
-                  <span className="text-4xl font-bold text-slate-900">119 kr</span>
+                  <span className="text-4xl font-bold text-slate-900">129 kr</span>
                   <span className="text-sm text-slate-400 ml-1">{t("engångs", "one-time")}</span>
                 </div>
                 <CardDescription className="mt-2 text-xs">
-                  {t("AI skriver ditt CV på 60 sekunder – anpassat mot jobbet du söker.", "AI writes your CV in 60 seconds – tailored to the job you are applying for.")}
+                  {t("AI skriver ditt CV på 60 sekunder och bygger ett starkt underlag för matchning, ansökningar och intervjuer.", "AI writes your CV in 60 seconds and creates a strong base for matching, applications, and interviews.")}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col flex-1">
@@ -867,37 +961,32 @@ export default function UnifiedLandingPage() {
                   ))}
                 </ul>
                 <Button className="w-full" variant="outline" size="lg" asChild>
-                  <Link href="/cv">{t("Beställ CV →", "Order CV →")}</Link>
+                  <Link href="/cv">{t("Saknar du CV? →", "Need a CV? →")}</Link>
                 </Button>
               </CardContent>
             </Card>
 
             {/* Card 2 — Dashboard Premium (featured) */}
             <Card className="relative border-2 border-blue-600 shadow-xl flex flex-col">
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
-                <Badge className="bg-blue-600 text-white px-4 py-1 text-xs">
-                  <Star className="h-3 w-3 mr-1 inline" /> {t("Rekommenderas", "Recommended")}
-                </Badge>
-              </div>
               <CardHeader className="text-center pt-8 pb-4">
                 <div className="text-xs font-semibold text-blue-500 uppercase tracking-widest mb-2">{t("Steg 2", "Step 2")}</div>
                 <CardTitle className="text-xl">{t("Dashboard Premium", "Dashboard Premium")}</CardTitle>
                 <div className="mt-3">
-                  <span className="text-4xl font-bold text-slate-900">100 kr</span>
+                  <span className="text-4xl font-bold text-slate-900">99 kr</span>
                   <span className="text-sm text-slate-400 ml-1">{t("/mån", "/mo")}</span>
                 </div>
                 <CardDescription className="mt-2 text-xs">
                   {t(
-                    "AI jämför ditt CV mot tusentals riktiga platsannonser och rankar de jobb som passar dig bäst – varje dag.",
-                    "AI compares your CV against thousands of real job listings and ranks the jobs that fit you best – every day."
+                    "Dashboarden använder AI Manager-logiken för att hitta de jobb du faktiskt har störst chans på och visar om du kan ansöka direkt eller externt.",
+                    "The dashboard uses AI Manager logic to find the jobs you have the strongest shot at and shows whether you can apply directly or externally."
                   )}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col flex-1">
                 <ul className="space-y-2.5 mb-6 flex-1">
                   {(lang === "sv"
-                    ? ["Tusentals jobb matchade mot ditt CV","AI rankar efter erfarenhet, titel, kompetens & ort","Se vilka skills du saknar per jobb","Gratis = 4 jobb · Premium = alla resultat","Nya annonser matchas automatiskt varje dag","Avsluta prenumerationen när som helst"]
-                    : ["Thousands of jobs matched to your CV","AI ranks by experience, title, skills & location","See which skills you are missing per job","Free = 4 jobs · Premium = all results","New listings matched automatically every day","Cancel subscription at any time"]
+                    ? ["AI Manager matchar mot erfarenhet, roll, kompetens och ort","Se vilka jobb du kan ansöka till direkt via email","Separera externa ansökningar från direkta outreach-jobb","Gratis = 4 jobb · Premium = full tillgång till dashboarden","Nya annonser matchas automatiskt varje dag","Avsluta prenumerationen när som helst"]
+                    : ["AI Manager matches by experience, role, skills, and location","See which jobs you can apply to directly by email","Separate external applications from direct-outreach jobs","Free = 4 jobs · Premium = full dashboard access","New listings are matched automatically every day","Cancel anytime"]
                   ).map((item) => (
                     <li key={item} className="flex items-start gap-2">
                       <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
@@ -906,7 +995,7 @@ export default function UnifiedLandingPage() {
                   ))}
                 </ul>
                 <Button className="w-full bg-blue-600 hover:bg-blue-700" size="lg" asChild>
-                  <Link href="/dashboard">{t("Prova gratis →", "Try for free →")}</Link>
+                  <Link href="/dashboard">{t("Börja matcha →", "Start matching →")}</Link>
                 </Button>
                 <p className="text-center text-xs text-slate-400 mt-2">
                   {t("4 matcher gratis. Uppgradera när du vill.", "4 free matches. Upgrade whenever.")}
@@ -915,38 +1004,70 @@ export default function UnifiedLandingPage() {
             </Card>
 
             {/* Card 3 — Personligt Brev */}
-            <Card className="border-2 border-slate-200 flex flex-col">
+            <Card className="relative border-2 border-amber-300 bg-gradient-to-br from-amber-50 via-white to-yellow-50 shadow-lg flex flex-col">
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                <Badge className="bg-amber-500 text-white px-4 py-1 text-xs">
+                  <Star className="h-3 w-3 mr-1 inline" /> {t("Rekommenderas", "Recommended")}
+                </Badge>
+              </div>
               <CardHeader className="text-center pb-4">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">{t("Steg 3", "Step 3")}</div>
-                <CardTitle className="text-xl">{t("Personligt Brev", "Cover Letter")}</CardTitle>
+                <div className="text-xs font-semibold text-amber-600 uppercase tracking-widest mb-2">{t("Steg 3", "Step 3")}</div>
+                <div className="mb-2 inline-flex items-center justify-center rounded-full border border-amber-300 bg-white px-3 py-1 text-[11px] font-semibold text-amber-700">
+                  {t("Inkluderar Dashboard Premium", "Includes Dashboard Premium")}
+                </div>
+                <CardTitle className="text-xl">{t("Auto Apply", "Auto Apply")}</CardTitle>
                 <div className="mt-3">
-                  <span className="text-4xl font-bold text-slate-900">{t("fr. 99 kr", "from 99 SEK")}</span>
+                  <span className="text-4xl font-bold text-slate-900">300 kr</span>
+                  <span className="text-sm text-amber-700 ml-1">{t("/mån", "/mo")}</span>
                 </div>
                 <CardDescription className="mt-2 text-xs">
                   {t(
-                    "Hämta jobblänken från din Dashboard. AI läser hela annonsen och skriver ett unikt brev mot just den tjänsten.",
-                    "Grab the job link from your Dashboard. AI reads the full posting and writes a unique letter for that exact role."
+                    "Auto Apply mot tusentals jobb. Här ingår matchningen, men också allt som krävs för att faktiskt söka: personligt email, CV-flöde, extern ansökningshjälp och intervjuförberedelse.",
+                    "Auto Apply across thousands of jobs. It includes the matching flow, but also what you need to actually apply: personal email generation, CV flow, external application help, and interview preparation."
                   )}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col flex-1">
                 <ul className="space-y-2.5 mb-4 flex-1">
                   {(lang === "sv"
-                    ? ["1 brev = 99 kr · varje extra jobb +30 kr","AI läser jobbannonsen automatiskt","Unikt brev per tjänst – aldrig generiskt","Klart på under 30 sekunder","Svenska eller engelska"]
-                    : ["1 letter = 99 SEK · each extra job +30 SEK","AI reads the job posting automatically","Unique letter per role – never generic","Ready in under 30 seconds","Swedish or English"]
+                    ? [
+                        "Auto Apply-flöde som gör det möjligt att söka många fler jobb med några få klick",
+                        "Auto-matchar fram rätt jobb att prioritera först",
+                        "Skriver ett personligt email som jämför ditt CV med jobbets krav och lyfter rätt styrkor",
+                        "Bygger ett personligt brev/email för varje jobb så ansökan känns personlig i stället för massutskick",
+                        "Skickar från din egen inkopplade mailbox när du har granskat texten",
+                        "Intervjuförberedelse som läser på om rollen och bolaget inför nästa steg",
+                      ]
+                    : [
+                        "Auto Apply flow that helps you apply to far more jobs with just a few clicks",
+                        "Automatically surfaces the jobs worth prioritizing first",
+                        "Writes a personal email that compares your CV to the role and highlights the right strengths",
+                        "Builds a tailored cover-letter style email for each role so the application feels personal instead of mass-sent",
+                        "Sends from your connected mailbox after you review the draft",
+                        "Interview preparation that researches the role and company before the next step",
+                      ]
                   ).map((item) => (
                     <li key={item} className="flex items-start gap-2">
-                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <Check className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                       <span className="text-sm text-slate-600">{item}</span>
                     </li>
                   ))}
                 </ul>
-                <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700 mb-4">
-                  {t("Tips: Hämta jobblänkarna från din", "Tip: Get your job links from your")}{" "}
-                  <Link href="/dashboard" className="font-semibold underline hover:text-blue-900">{t("Matchningsdashboard →", "Matching Dashboard →")}</Link>
+                <div className="rounded-lg border border-amber-200 bg-amber-100/70 px-3 py-2 text-xs text-amber-800 mb-4">
+                  {t(
+                    "Målet är enkelt: fler kvalitativa ansökningar, snabbare utskick och en process som gör att du faktiskt orkar söka brett.",
+                    "The goal is simple: more high-quality applications, faster outreach, and a workflow that makes it realistic to apply broadly."
+                  )}
                 </div>
-                <Button className="w-full" variant="outline" size="lg" asChild>
-                  <Link href="/pb">{t("Beställ brev →", "Order letter →")}</Link>
+                <Button
+                  className="w-full border-amber-400 bg-amber-500 text-white hover:bg-amber-600"
+                  size="lg"
+                  onClick={() => void startAutoApplyCheckout()}
+                  disabled={autoApplyCheckoutLoading}
+                >
+                  {autoApplyCheckoutLoading
+                    ? t("Startar betalning...", "Starting checkout...")
+                    : t("Starta Auto Apply →", "Start Auto Apply →")}
                 </Button>
               </CardContent>
             </Card>
@@ -961,70 +1082,6 @@ export default function UnifiedLandingPage() {
               {t("för att slutföra köp.", "to complete your purchase.")}
             </p>
           )}
-        </div>
-      </section>
-
-      <section id="representation" className="py-16 bg-emerald-50 border-y border-emerald-100">
-        <div className="container mx-auto px-4">
-          <div className="max-w-5xl mx-auto">
-            <Card className="border-2 border-emerald-200 shadow-sm bg-white">
-              <CardHeader>
-                <div className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  <Badge className="bg-emerald-600 text-white">{t("Nytt", "New")}</Badge>
-                  <span>{t("Representationsprogram", "Representation Program")}</span>
-                </div>
-                <CardTitle className="mt-3 text-2xl lg:text-3xl text-slate-900">
-                  {t("Kandidatrepresentation – jag representerar dig mot arbetsgivare", "Candidate Representation - I represent you toward employers")}
-                </CardTitle>
-                <CardDescription className="text-slate-700">
-                  {t(
-                    "För dig som vill ha aktiv hjälp i jobbsökandet. Med mitt diplom i grunden arbetar jag som din partner och kontaktar arbetsgivare för att öppna dörrar till relevanta roller.",
-                    "For you who want active support in your job search. With my diploma as a foundation, I act as your partner and contact employers to open doors to relevant roles."
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-6 lg:grid-cols-[1.2fr_auto] lg:items-center">
-                <div>
-                  <ul className="space-y-2.5">
-                    {(lang === "sv"
-                      ? [
-                          "Pris: 300 kr per månad",
-                          "Personlig representation av din profil mot arbetsgivare",
-                          "Aktiv kontakt med relevanta företag och rekryterare",
-                          "Löpande återkoppling om dialoger, möjligheter och nästa steg",
-                          "Målet är intervjuer och faktisk rörelse mot nytt jobb"
-                        ]
-                      : [
-                          "Price: 300 SEK per month",
-                          "Personal representation of your profile toward employers",
-                          "Active outreach to relevant companies and recruiters",
-                          "Continuous feedback on conversations, opportunities, and next steps",
-                          "The goal is interviews and real movement toward a new job"
-                        ]).map((item) => (
-                      <li key={item} className="flex items-start gap-2">
-                        <Check className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-                        <span className="text-sm text-slate-700">{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="flex flex-col gap-3 lg:min-w-[220px]">
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
-                    <div className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">{t("Månadspris", "Monthly price")}</div>
-                    <div className="text-3xl font-bold text-slate-900">300 kr</div>
-                  </div>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700" asChild>
-                    <a href="mailto:info@jobbnu.se?subject=Intresse%20f%C3%B6r%20kandidatrepresentation%20300%20kr/m%C3%A5n">
-                      {t("Ansök om representation", "Apply for representation")}
-                    </a>
-                  </Button>
-                  <Button variant="outline" asChild>
-                    <a href="#contact">{t("Ställ en fråga först", "Ask a question first")}</a>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </div>
       </section>
 
@@ -1108,8 +1165,8 @@ export default function UnifiedLandingPage() {
               </div>
               <div className="text-center space-y-4">
                 <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto"><Award className="h-8 w-8 text-blue-600" /></div>
-                <h3 className="text-xl font-semibold">{t("Personlig Coaching", "Personal Coaching")}</h3>
-                <p className="text-slate-600">{t("Fokus på verktyg och strategier som fungerar långsiktigt – inte bara en engångstext.", "Focus on tools and strategies that work long term, not just a one-off document.")}</p>
+                <h3 className="text-xl font-semibold">{t("Auto Apply", "Auto Apply")}</h3>
+                <p className="text-slate-600">{t("Fokus på fler skickade ansökningar, bättre personliga brev/email och en process som faktiskt gör jobbsökandet snabbare.", "Focused on more applications sent, better personal emails, and a workflow that genuinely makes job hunting faster.")}</p>
               </div>
             </div>
           </div>
@@ -1124,23 +1181,23 @@ export default function UnifiedLandingPage() {
           <div className="max-w-3xl mx-auto">
             <Accordion type="single" collapsible>
               <AccordionItem value="item-1">
-                <AccordionTrigger>{t("Vad ingår i konsultationen?", "What is included in the consultation?")}</AccordionTrigger>
-                <AccordionContent>{t("Konsultationen är ett 45‑minuters personligt möte (video eller telefon) där vi går igenom din karriär, diskuterar dina mål, och skapar en konkret jobbsökningsstrategi.", "The consultation is a 45-minute personal meeting (video or phone) where we review your career, discuss your goals, and create a concrete job search strategy.")}</AccordionContent>
+                <AccordionTrigger>{t("Vad ingår i Dashboard Premium?", "What is included in Dashboard Premium?")}</AccordionTrigger>
+                <AccordionContent>{t("Dashboard Premium ger dig full tillgång till jobbmatchningen: fler jobbkort, AI Manager-ranking, direkt-emailjobb, externa ansökningslänkar och den löpande matchningen av nya annonser varje dag.", "Dashboard Premium gives you full access to job matching: more job cards, AI Manager ranking, direct-email jobs, external application links, and ongoing matching of new listings every day.")}</AccordionContent>
               </AccordionItem>
               <AccordionItem value="item-2">
-                <AccordionTrigger>{t("Hur lång tid tar leverans?", "How long is the delivery time?")}</AccordionTrigger>
-                <AccordionContent>{t("CV inom 3‑5 dagar, CV + Brev 5‑7 dagar, paket med konsultation 7‑10 dagar.", "CV within 3-5 days, CV + letter in 5-7 days, consultation package in 7-10 days.")}</AccordionContent>
+                <AccordionTrigger>{t("Hur snabbt kan jag komma igång?", "How quickly can I get started?")}</AccordionTrigger>
+                <AccordionContent>{t("CV:t skapas direkt när du fyllt i underlaget. Dashboarden fungerar så snart profilen är klar, och Auto Apply börjar hjälpa dig direkt med genererat email, personligt brev, CV-flöde och intervjuförberedelse.", "Your CV is generated as soon as you complete the input. The dashboard works once your profile is ready, and Auto Apply starts helping immediately with generated email, cover-letter flow, CV handling, and interview preparation.")}</AccordionContent>
               </AccordionItem>
               <AccordionItem value="item-3">
-                <AccordionTrigger>{t("Kan jag få dokument på engelska?", "Can I get the documents in English?")}</AccordionTrigger>
-                <AccordionContent>{t("Ja, alla tjänster kan levereras på svenska eller engelska.", "Yes, all services can be delivered in Swedish or English.")}</AccordionContent>
+                <AccordionTrigger>{t("Kan jag redigera texten innan jag skickar?", "Can I edit the text before I send it?")}</AccordionTrigger>
+                <AccordionContent>{t("Ja. JobbNu genererar ett förslag, men du kan alltid justera emailtexten, ladda ner den som text eller PDF och själv välja vad som ska skickas eller laddas upp.", "Yes. JobbNu generates a draft, but you can always adjust the email text, download it as text or PDF, and decide what gets sent or uploaded.")}</AccordionContent>
               </AccordionItem>
               <AccordionItem value="item-4">
-                <AccordionTrigger>{t("Vad är kandidatrepresentation (300 kr/mån)?", "What is candidate representation (300 SEK/month)?")}</AccordionTrigger>
+                <AccordionTrigger>{t("Vad är Auto Apply (300 kr)?", "What is Auto Apply (300 SEK)?")}</AccordionTrigger>
                 <AccordionContent>
                   {t(
-                    "Det är en aktiv tjänst där jag representerar dig mot arbetsgivare, kontaktar relevanta företag och hjälper dig driva processen framåt. Målet är konkreta intervjuer och bättre möjligheter till anställning.",
-                    "It is an active service where I represent you toward employers, contact relevant companies, and help move your process forward. The goal is concrete interviews and better hiring opportunities."
+                    "Auto Apply hjälper dig gå från matchning till färdig ansökan snabbare. JobbNu identifierar rätt jobb, bygger ett personligt email/personligt brev från ditt CV och jobbets krav, hjälper dig skicka via din egen mailbox och förbereder dig inför intervjun när arbetsgivaren svarar.",
+                    "Auto Apply helps you move from matching to a ready application faster. JobbNu identifies the right jobs, builds a personal application email from your CV and the job requirements, helps you send through your own mailbox, and prepares you for the interview when employers respond."
                   )}
                 </AccordionContent>
               </AccordionItem>
@@ -1173,8 +1230,8 @@ export default function UnifiedLandingPage() {
               <h3 className="text-xl font-bold mb-4">{t("Tjänster", "Services")}</h3>
               <div className="space-y-2 text-slate-300">
                 {(lang === "sv"
-                  ? ["Professionell CV‑skrivning","Personliga brev","Kandidatrepresentation (300 kr/mån)","Jobbkonsultation & coaching","Intervjuförberedelse","Jobbsökningsstrategier","AI‑drivna jobbförslag"]
-                  : ["Professional CV writing","Cover letters","Candidate representation (300 SEK/month)","Career consultation & coaching","Interview preparation","Job search strategies","AI-driven job suggestions"]).map((item) => <p key={item}>{item}</p>)}
+                  ? ["Professionell CV‑skrivning","Dashboard Premium","Auto Apply","Intervjuförberedelse","Jobbsökningsstrategier","AI‑drivna jobbförslag"]
+                  : ["Professional CV writing","Dashboard Premium","Auto Apply","Interview preparation","Job search strategies","AI-driven job suggestions"]).map((item) => <p key={item}>{item}</p>)}
               </div>
               <p className="mt-4 text-sm text-slate-400">
                 {t("Målet: hjälpa 10 000 personer hitta jobb.", "Goal: help 10,000 people find jobs.")}
@@ -1182,7 +1239,7 @@ export default function UnifiedLandingPage() {
             </div>
           </div>
           <div className="border-t border-slate-700 mt-12 pt-8 text-center text-slate-400">
-            <p>{t("© 2025 Nikola - CV & Jobbkonsultation. Alla rättigheter förbehållna.", "© 2025 Nikola - CV & Career Consulting. All rights reserved.")}</p>
+            <p>{t("© 2025 JobbNu. Alla rättigheter förbehållna.", "© 2025 JobbNu. All rights reserved.")}</p>
           </div>
         </div>
       </footer>

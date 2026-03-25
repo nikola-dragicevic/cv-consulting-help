@@ -6,10 +6,20 @@ import { createClient } from "@supabase/supabase-js";
 import { categorizeCVWithLLM } from "@/lib/categorization";
 import { rerankJobsWithManager } from "@/lib/managerReranker";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+
+  if (!supabaseUrl) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL is required");
+  }
+
+  if (!serviceRoleKey) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY is required");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey);
+}
 
 interface MatchRequest {
   user_id: string;
@@ -31,6 +41,7 @@ interface MatchRequest {
  */
 export async function POST(req: NextRequest) {
   try {
+    const supabase = getSupabaseAdmin();
     const body: MatchRequest = await req.json();
     const { user_id, location } = body;
 

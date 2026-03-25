@@ -1,5 +1,5 @@
-import { LetterOrderForm } from "@/components/orders/LetterOrderForm"
+import { redirect } from "next/navigation"
 
-export default function PersonligtBrevPage() {
-  return <LetterOrderForm />
+export default function PersonligtBrevRedirect() {
+  redirect("/dashboard")
 }

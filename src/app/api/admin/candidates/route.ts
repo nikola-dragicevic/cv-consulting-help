@@ -18,7 +18,7 @@ export async function GET() {
   const supabaseAdmin = getSupabaseAdmin()
   const { data, error } = await supabaseAdmin
     .from("candidate_profiles")
-    .select("id,user_id,full_name,email,age,city,street,location_lat,location_lon,commute_radius_km,cv_file_url,cv_bucket_path,category_tags,primary_occupation_field,manual_premium,created_at,candidate_text_vector,search_keywords,experience_titles,education_titles,seniority_reason,relevant_experience_years")
+    .select("id,user_id,full_name,email,age,city,street,location_lat,location_lon,commute_radius_km,cv_file_url,cv_bucket_path,category_tags,primary_occupation_field,manual_premium,representation_active,representation_status,representation_current_period_end,created_at,candidate_text_vector,search_keywords,experience_titles,education_titles,seniority_reason,relevant_experience_years")
     .order("created_at", { ascending: false })
     .limit(300)
 

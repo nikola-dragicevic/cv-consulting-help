@@ -3,6 +3,12 @@ export type ParsedOutreachEmail = {
   body: string
 }
 
+type BrandedEmailOptions = {
+  primaryButtonUrl?: string | null
+  primaryButtonLabel?: string | null
+  primaryButtonHint?: string | null
+}
+
 export function parseGeneratedEmail(emailText: string): ParsedOutreachEmail {
   const raw = emailText.trim()
   const normalized = raw.replace(/^\*\*(Subject:\s*.+?)\*\*\s*$/im, "$1")
@@ -105,8 +111,19 @@ function buildOutreachSignatureHtml() {
 }
 
 export function buildOutreachHtml(textBody: string) {
+  return buildBrandedEmailHtml(textBody, {
+    primaryButtonUrl: extractPrimaryUrl(stripGeneratedSignature(textBody)).url,
+    primaryButtonLabel: "Se kandidatprofil",
+    primaryButtonHint: "Länken går till jobbnu.se där ni kan läsa kandidatprofilen och boka intervju direkt.",
+  })
+}
+
+export function buildBrandedEmailHtml(textBody: string, options: BrandedEmailOptions = {}) {
   const cleanedText = stripGeneratedSignature(textBody)
   const { body, url } = extractPrimaryUrl(cleanedText)
+  const primaryButtonUrl = options.primaryButtonUrl?.trim() || url
+  const primaryButtonLabel = options.primaryButtonLabel?.trim() || null
+  const primaryButtonHint = options.primaryButtonHint?.trim() || null
   const escaped = escapeHtml(body)
   const linked = linkifyText(escaped)
   const paragraphs = linked
@@ -125,11 +142,13 @@ export function buildOutreachHtml(textBody: string) {
     '<body style="margin:0;padding:24px;background:#f8fafc;font-family:Arial,sans-serif;">',
     '<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:32px;">',
     ...htmlParagraphs,
-    url
+    primaryButtonUrl && primaryButtonLabel
       ? [
           '<div style="margin:8px 0 22px 0;">',
-          `<a href="${escapeHtml(url)}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#0b5fff;color:#ffffff;font-size:15px;font-weight:700;line-height:20px;text-decoration:none;">Se kandidatprofil</a>`,
-          '<p style="margin:12px 0 0 0;font-size:13px;line-height:20px;color:#64748b;">Länken går till jobbnu.se där ni kan läsa kandidatprofilen och boka intervju direkt.</p>',
+          `<a href="${escapeHtml(primaryButtonUrl)}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#0b5fff;color:#ffffff;font-size:15px;font-weight:700;line-height:20px;text-decoration:none;">${escapeHtml(primaryButtonLabel)}</a>`,
+          primaryButtonHint
+            ? `<p style="margin:12px 0 0 0;font-size:13px;line-height:20px;color:#64748b;">${escapeHtml(primaryButtonHint)}</p>`
+            : "",
           "</div>",
         ].join("")
       : "",

@@ -13,6 +13,22 @@ function buildPublicUrl(token: string) {
   return `${baseUrl}/employer-intro/${token}`
 }
 
+function buildApiUrl(req: Request, token: string) {
+  const reqUrl = new URL(req.url)
+  const baseUrl =
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    `${reqUrl.protocol}//${reqUrl.host}`
+  return `${baseUrl}/api/employer-intro/${token}?warm=1`
+}
+
+async function warmEmployerIntro(req: Request, token: string) {
+  try {
+    await fetch(buildApiUrl(req, token), { method: "GET", cache: "no-store" })
+  } catch {
+    // Best effort only. The page can still generate its snapshot on first real open.
+  }
+}
+
 export async function GET(req: Request) {
   const supabase = await getServerSupabase()
   const {
@@ -83,6 +99,7 @@ export async function POST(req: Request) {
   }
 
   if (existing?.token) {
+    await warmEmployerIntro(req, existing.token)
     return NextResponse.json({
       data: {
         ...existing,
@@ -114,7 +131,7 @@ export async function POST(req: Request) {
       token,
       created_by_user_id: user?.id ?? null,
       status: "active",
-      terms_version: "candidate_intro_terms_v1",
+      terms_version: "candidate_intro_terms_v2",
     })
     .select("id,token,status,expires_at,created_at")
     .single()
@@ -122,6 +139,8 @@ export async function POST(req: Request) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  await warmEmployerIntro(req, data.token)
 
   return NextResponse.json({
     data: {

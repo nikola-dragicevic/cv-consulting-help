@@ -33,6 +33,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ data: [] })
   }
 
+  const candidateProfileIds = Array.from(
+    new Set(jobs.map((job) => job.candidate_profile_id).filter((value): value is string => typeof value === "string"))
+  )
+
   const savedJobIds = jobs.map((job) => job.id)
   const { data: introLinks, error: introLinksError } = await admin
     .from("employer_intro_links")
@@ -43,11 +47,11 @@ export async function GET(req: Request) {
 
   const linkIds = (introLinks || []).map((link) => link.id)
 
-  const [{ data: messages, error: messagesError }, { data: pageEvents, error: pageEventsError }, { data: bookings, error: bookingsError }, acceptanceResult] =
+  const [{ data: messages, error: messagesError }, { data: pageEvents, error: pageEventsError }, { data: bookings, error: bookingsError }, acceptanceResult, slotResult] =
     await Promise.all([
       admin
         .from("outreach_messages")
-        .select("id,admin_saved_job_id,recipient_email,subject,text_body,send_status,sent_at,created_at,first_delivered_at,opened_at,first_clicked_at")
+        .select("id,admin_saved_job_id,recipient_email,subject,text_body,send_status,sent_at,created_at,first_delivered_at,opened_at,first_clicked_at,metadata")
         .in("admin_saved_job_id", savedJobIds)
         .order("created_at", { ascending: false }),
       admin
@@ -64,16 +68,28 @@ export async function GET(req: Request) {
             .select("employer_intro_link_id")
             .in("employer_intro_link_id", linkIds)
         : Promise.resolve({ data: [], error: null }),
+      candidateProfileIds.length > 0
+        ? admin
+            .from("candidate_interview_slots")
+            .select("candidate_profile_id")
+            .in("candidate_profile_id", candidateProfileIds)
+        : Promise.resolve({ data: [], error: null }),
     ])
 
   if (messagesError) return NextResponse.json({ error: messagesError.message }, { status: 500 })
   if (pageEventsError) return NextResponse.json({ error: pageEventsError.message }, { status: 500 })
   if (bookingsError) return NextResponse.json({ error: bookingsError.message }, { status: 500 })
   if (acceptanceResult.error) return NextResponse.json({ error: acceptanceResult.error.message }, { status: 500 })
+  if (slotResult.error) return NextResponse.json({ error: slotResult.error.message }, { status: 500 })
 
   const linkToSavedJobId = new Map<string, string>()
   for (const link of introLinks || []) {
     linkToSavedJobId.set(link.id, link.admin_saved_job_id)
+  }
+  const slotCountByCandidateId = new Map<string, number>()
+  for (const slot of slotResult.data || []) {
+    if (!slot.candidate_profile_id) continue
+    slotCountByCandidateId.set(slot.candidate_profile_id, (slotCountByCandidateId.get(slot.candidate_profile_id) || 0) + 1)
   }
 
   const summaryByJobId = new Map<string, {
@@ -118,6 +134,18 @@ export async function GET(req: Request) {
   }
 
   for (const message of messages || []) {
+    const messageKind =
+      message?.metadata && typeof message.metadata === "object" && "messageKind" in message.metadata
+        ? String((message.metadata as { messageKind?: unknown }).messageKind || "")
+        : ""
+    if (
+      messageKind === "candidate_interview_invite" ||
+      messageKind === "employer_interview_followup" ||
+      messageKind === "employer_booking_confirmation"
+    ) {
+      continue
+    }
+
     const summary = getSummary(message.admin_saved_job_id)
     if (!latestMessageByJobId.has(message.admin_saved_job_id)) {
       latestMessageByJobId.set(message.admin_saved_job_id, message)
@@ -152,6 +180,7 @@ export async function GET(req: Request) {
 
   const enrichedJobs = jobs.map((job) => ({
     ...job,
+    interview_slot_count: job.candidate_profile_id ? (slotCountByCandidateId.get(job.candidate_profile_id) || 0) : 0,
     latest_outreach_message: latestMessageByJobId.get(job.id) || null,
     outreach_summary: summaryByJobId.get(job.id) || {
       messagesSent: 0,
@@ -209,6 +238,7 @@ export async function POST(req: Request) {
       occupation_group_label: body.occupationGroupLabel || null,
       notes: body.notes || null,
       interview_analysis: body.interviewAnalysis || null,
+      application_reference: body.applicationReference || null,
       search_mode: body.searchMode || null,
       search_keyword: body.searchKeyword || null,
       search_address: body.searchAddress || null,

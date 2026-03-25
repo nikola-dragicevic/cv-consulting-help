@@ -43,6 +43,10 @@ type RawJobRow = {
     required_skills?: string[];
     preferred_skills?: string[];
   } | null;
+  contact_email?: string | null;
+  has_contact_email?: boolean | null;
+  application_url?: string | null;
+  application_channel?: string | null;
 };
 
 type DashboardStateRow = {
@@ -195,7 +199,49 @@ function normalizeJobRow(row: RawJobRow, keywordHits: string[] = []) {
     final_score: row.display_score ?? null,
     keyword_hits: keywordHits,
     skills_data: row.skills_data ?? null,
+    contact_email: row.contact_email ?? null,
+    has_contact_email: row.has_contact_email ?? null,
+    application_url: row.application_url ?? null,
+    application_channel: row.application_channel ?? null,
   };
+}
+
+async function enrichJobsWithApplicationMeta(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  rows: ReturnType<typeof normalizeJobRow>[]
+) {
+  const jobIds = rows.map((row) => row.id).filter(Boolean);
+  if (jobIds.length === 0) return rows;
+
+  const { data, error } = await supabase
+    .from("job_ads")
+    .select("id, contact_email, has_contact_email, application_url, application_channel")
+    .in("id", jobIds);
+
+  if (error) {
+    const message = getErrorMessage(error);
+    if (isMissingColumnError(message)) {
+      return rows;
+    }
+    throw new Error(`job_ads metadata lookup failed: ${message}`);
+  }
+
+  const metaById = new Map(
+    ((data as RawJobRow[] | null) ?? []).map((row) => [
+      String(row.id ?? ""),
+      {
+        contact_email: row.contact_email ?? null,
+        has_contact_email: row.has_contact_email ?? null,
+        application_url: row.application_url ?? null,
+        application_channel: row.application_channel ?? null,
+      },
+    ])
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    ...metaById.get(row.id),
+  }));
 }
 
 const createSupabaseRouteHandlerClient = async () => {
@@ -436,7 +482,7 @@ async function sortModePayload(
     normalizeJobRow(row, findKeywordHits(row, params.cvKeywords))
   );
 
-  return rows;
+  return enrichJobsWithApplicationMeta(supabase, rows);
 }
 
 async function loadProfile(
@@ -529,7 +575,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const scoreMode = toScoreMode(body?.score_mode);
     const lat = typeof body?.lat === "number" ? body.lat : profile.location_lat;
     const lon = typeof body?.lon === "number" ? body.lon : profile.location_lon;
     const radiusKm = Number(body?.radius_km ?? profile.commute_radius_km ?? 40);
@@ -594,24 +639,14 @@ export async function POST(req: Request) {
     const baseHash = hashJobIds(baseIds);
     const nowIso = new Date().toISOString();
 
-  const [jobbnuRows, keywordRows] = await Promise.all([
-      sortModePayload(supabase, {
-        profileVector: profile.profile_vector,
-        cvKeywords,
-        jobIds: baseIds,
-        groupNames,
-        categoryNames: normalizedOccupationFields,
-        scoreMode: "jobbnu",
-      }),
-      sortModePayload(supabase, {
-        profileVector: profile.profile_vector,
-        cvKeywords,
-        jobIds: baseIds,
-        groupNames,
-        categoryNames: normalizedOccupationFields,
-        scoreMode: "keyword_match",
-      }),
-    ]);
+    const jobbnuRows = await sortModePayload(supabase, {
+      profileVector: profile.profile_vector,
+      cvKeywords,
+      jobIds: baseIds,
+      groupNames,
+      categoryNames: normalizedOccupationFields,
+      scoreMode: "jobbnu",
+    });
 
     const primaryStateWrite = await supabase
       .from("dashboard_match_state")
@@ -620,7 +655,7 @@ export async function POST(req: Request) {
           user_id: user.id,
           base_job_ids: baseIds,
           ai_manager_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
-          keyword_match_job_ids: keywordRows.map((row) => row.id).filter(Boolean),
+          keyword_match_job_ids: [],
           query_meta: {
             lat,
             lon,
@@ -630,7 +665,7 @@ export async function POST(req: Request) {
           },
           base_updated_at: nowIso,
           ai_manager_updated_at: nowIso,
-          keyword_match_updated_at: nowIso,
+          keyword_match_updated_at: null,
           updated_at: nowIso,
         },
         { onConflict: "user_id" }
@@ -644,7 +679,7 @@ export async function POST(req: Request) {
             user_id: user.id,
             base_job_ids: baseIds,
             ai_manager_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
-            ats_job_ids: keywordRows.map((row) => row.id).filter(Boolean),
+            ats_job_ids: [],
             taxonomy_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
             query_meta: {
               lat,
@@ -655,7 +690,7 @@ export async function POST(req: Request) {
             },
             base_updated_at: nowIso,
             ai_manager_updated_at: nowIso,
-            ats_updated_at: nowIso,
+            ats_updated_at: null,
             taxonomy_updated_at: nowIso,
             updated_at: nowIso,
           },
@@ -675,30 +710,14 @@ export async function POST(req: Request) {
       matchedAt: nowIso,
       base_ready: true,
     };
-    const keywordPayload: DashboardCachePayload = {
-      jobs: keywordRows,
-      score_mode: "keyword_match",
-      matchedAt: nowIso,
-      base_ready: true,
-    };
-
     await Promise.all([
       saveDashboardCache(supabase, user.id, "jobbnu", JSON.stringify({ baseHash, scoreMode: "jobbnu" }), jobbnuPayload),
-      saveDashboardCache(
-        supabase,
-        user.id,
-        "keyword_match",
-        JSON.stringify({ baseHash, scoreMode: "keyword_match" }),
-        keywordPayload
-      ),
       recordDashboardRun(supabase, user.id),
     ]);
-
-    const responsePayload = scoreMode === "keyword_match" ? keywordPayload : jobbnuPayload;
     const updatedLimitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
 
     return NextResponse.json({
-      ...responsePayload,
+      ...jobbnuPayload,
       candidate_cv_text: profile.candidate_text_vector ?? "",
       cached: false,
       cachedAt: nowIso,

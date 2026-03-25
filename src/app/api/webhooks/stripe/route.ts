@@ -5,16 +5,65 @@ import { createClient } from '@supabase/supabase-js';
 import { getStripeClient } from '@/lib/stripeServer';
 import { runGeneration } from '@/app/api/generate-cv/route';
 
-const stripe = getStripeClient();
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set<Stripe.Subscription.Status>(["active", "trialing", "past_due"]);
 
-// Initiera Supabase Admin (för att kunna skriva till DB utan inloggad användare)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY! // VIKTIGT: Använd Service Key här, inte Anon key
-);
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL is required");
+  }
+
+  if (!serviceKey) {
+    throw new Error("SUPABASE_SERVICE_KEY or SUPABASE_SERVICE_ROLE_KEY is required");
+  }
+
+  return createClient(supabaseUrl, serviceKey);
+}
+
+async function updateRepresentationStatus(params: {
+  userId: string;
+  active: boolean;
+  status: string | null;
+  currentPeriodEnd?: number | null;
+  subscriptionId?: string | null;
+  customerId?: string | null;
+  startedAt?: string | null;
+}) {
+  const supabaseAdmin = getSupabaseAdmin();
+  const patch: Record<string, unknown> = {
+    representation_active: params.active,
+    representation_status: params.status,
+    representation_current_period_end: params.currentPeriodEnd
+      ? new Date(params.currentPeriodEnd * 1000).toISOString()
+      : null,
+    representation_subscription_id: params.subscriptionId || null,
+    representation_customer_id: params.customerId || null,
+  };
+
+  if (params.startedAt) {
+    patch.representation_started_at = params.startedAt;
+  }
+
+  const { error } = await supabaseAdmin
+    .from("candidate_profiles")
+    .update(patch)
+    .eq("user_id", params.userId);
+
+  if (error) {
+    console.error("Fel vid uppdatering av representation_status:", error);
+  }
+}
 
 export async function POST(req: Request) {
+  const stripe = getStripeClient();
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    return NextResponse.json({ error: "STRIPE_WEBHOOK_SECRET is missing" }, { status: 500 });
+  }
+
+  const supabaseAdmin = getSupabaseAdmin();
   const body = await req.text();
   const h = await headers();
   const signature = h.get("stripe-signature");
@@ -88,6 +137,53 @@ if (!signature) {
       runGeneration(document_order_id).catch((err) =>
         console.error("[webhook] CV generation failed for order", document_order_id, err)
       );
+    }
+
+    if (session.metadata?.order_type === "representation_subscription" && session.metadata?.user_id) {
+      const subscriptionId =
+        typeof session.subscription === "string"
+          ? session.subscription
+          : session.subscription?.id ?? null;
+
+      let currentPeriodEnd: number | null = null;
+      let subscriptionStatus: string | null = null;
+
+      if (subscriptionId) {
+        try {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          currentPeriodEnd = subscription.items.data[0]?.current_period_end ?? null;
+          subscriptionStatus = subscription.status ?? null;
+        } catch (err) {
+          console.error("Kunde inte hämta representation-subscription:", err);
+        }
+      }
+
+      await updateRepresentationStatus({
+        userId: session.metadata.user_id,
+        active: subscriptionStatus ? ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus as Stripe.Subscription.Status) : true,
+        status: subscriptionStatus || "active",
+        currentPeriodEnd,
+        subscriptionId,
+        customerId:
+          typeof session.customer === "string"
+            ? session.customer
+            : session.customer?.id ?? null,
+        startedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
+    const subscription = event.data.object as Stripe.Subscription;
+    if (subscription.metadata?.order_type === "representation_subscription" && subscription.metadata?.user_id) {
+      await updateRepresentationStatus({
+        userId: subscription.metadata.user_id,
+        active: ACTIVE_SUBSCRIPTION_STATUSES.has(subscription.status),
+        status: subscription.status,
+        currentPeriodEnd: subscription.items.data[0]?.current_period_end ?? null,
+        subscriptionId: subscription.id,
+        customerId: typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id ?? null,
+      });
     }
   }
 

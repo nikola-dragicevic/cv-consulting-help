@@ -4,9 +4,23 @@ import { createClient } from "@supabase/supabase-js"
 import { randomUUID } from "crypto"
 import { Readable } from "stream"
 
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl) {
+    throw new Error("SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL is required");
+  }
+
+  if (!serviceKey) {
+    throw new Error("SUPABASE_SERVICE_KEY or SUPABASE_SERVICE_ROLE_KEY is required");
+  }
+
+  return createClient(supabaseUrl, serviceKey)
+}
 
 export async function POST(req: Request) {
+  const supabase = getSupabaseAdmin()
   const formData = await req.formData()
 
   const fullName = formData.get("fullName") as string
@@ -45,7 +59,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "File upload failed" }, { status: 500 })
     }
 
-    cv_url = `${process.env.SUPABASE_URL}/storage/v1/object/public/cvs/${cvFilename}`
+    const publicBaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
+    cv_url = publicBaseUrl ? `${publicBaseUrl}/storage/v1/object/public/cvs/${cvFilename}` : null
   }
 
   // === Save to DB ===

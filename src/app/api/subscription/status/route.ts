@@ -4,8 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { isAdminUser } from "@/lib/admin";
 import { getStripeClient } from "@/lib/stripeServer";
-
-const stripe = getStripeClient();
+import { countCandidateApplications, FREE_AUTO_APPLY_APPLICATIONS } from "@/lib/applicationUsage";
 
 const ACTIVE_STATUSES = new Set<Stripe.Subscription.Status>([
   "active",
@@ -19,25 +18,42 @@ function getSupabaseAdmin() {
 
 export async function GET() {
   try {
+    const stripe = getStripeClient();
     const supabase = await getServerSupabase();
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
     if (!user) {
-      return NextResponse.json({ hasActiveSubscription: false }, { status: 200 });
+      return NextResponse.json({
+        hasActiveSubscription: false,
+        hasRepresentationSubscription: false,
+        freeApplicationsUsed: 0,
+        freeApplicationsRemaining: FREE_AUTO_APPLY_APPLICATIONS,
+      }, { status: 200 });
     }
 
     if (!user.email) {
-      return NextResponse.json({ hasActiveSubscription: false }, { status: 200 });
+      return NextResponse.json({
+        hasActiveSubscription: false,
+        hasRepresentationSubscription: false,
+        freeApplicationsUsed: 0,
+        freeApplicationsRemaining: FREE_AUTO_APPLY_APPLICATIONS,
+      }, { status: 200 });
     }
+
+    const freeApplicationsUsed = await countCandidateApplications(user.id);
+    const freeApplicationsRemaining = Math.max(0, FREE_AUTO_APPLY_APPLICATIONS - freeApplicationsUsed);
 
     if (isAdminUser(user)) {
       return NextResponse.json({
         hasActiveSubscription: true,
+        hasRepresentationSubscription: true,
         status: "admin_override",
         currentPeriodEnd: null,
         isAdmin: true,
+        freeApplicationsUsed,
+        freeApplicationsRemaining: FREE_AUTO_APPLY_APPLICATIONS,
       });
     }
 
@@ -45,15 +61,22 @@ export async function GET() {
     const supabaseAdmin = getSupabaseAdmin();
     const { data: profile } = await supabaseAdmin
       .from("candidate_profiles")
-      .select("manual_premium")
+      .select("manual_premium,representation_active,representation_status,representation_current_period_end")
       .eq("user_id", user.id)
       .single();
+
+    const representationActive = profile?.representation_active === true;
 
     if (profile?.manual_premium === true) {
       return NextResponse.json({
         hasActiveSubscription: true,
+        hasRepresentationSubscription: representationActive,
         status: "manual_premium",
         currentPeriodEnd: null,
+        representationStatus: profile?.representation_status ?? null,
+        representationCurrentPeriodEnd: profile?.representation_current_period_end ?? null,
+        freeApplicationsUsed,
+        freeApplicationsRemaining: representationActive ? FREE_AUTO_APPLY_APPLICATIONS : freeApplicationsRemaining,
       });
     }
 
@@ -73,17 +96,35 @@ export async function GET() {
       if (activeSub) {
         return NextResponse.json({
           hasActiveSubscription: true,
+          hasRepresentationSubscription: representationActive,
           status: activeSub.status,
           currentPeriodEnd: activeSub.items.data[0]?.current_period_end ?? null,
+          representationStatus: profile?.representation_status ?? null,
+          representationCurrentPeriodEnd: profile?.representation_current_period_end ?? null,
+          freeApplicationsUsed,
+          freeApplicationsRemaining: representationActive ? FREE_AUTO_APPLY_APPLICATIONS : freeApplicationsRemaining,
         });
       }
     }
 
-    return NextResponse.json({ hasActiveSubscription: false });
+    return NextResponse.json({
+      hasActiveSubscription: false,
+      hasRepresentationSubscription: representationActive,
+      representationStatus: profile?.representation_status ?? null,
+      representationCurrentPeriodEnd: profile?.representation_current_period_end ?? null,
+      freeApplicationsUsed,
+      freeApplicationsRemaining: representationActive ? FREE_AUTO_APPLY_APPLICATIONS : freeApplicationsRemaining,
+    });
   } catch (err: unknown) {
     console.error("Subscription status error:", err);
     return NextResponse.json(
-      { hasActiveSubscription: false, error: err instanceof Error ? err.message : "Unknown error" },
+      {
+        hasActiveSubscription: false,
+        hasRepresentationSubscription: false,
+        freeApplicationsUsed: 0,
+        freeApplicationsRemaining: FREE_AUTO_APPLY_APPLICATIONS,
+        error: err instanceof Error ? err.message : "Unknown error",
+      },
       { status: 200 }
     );
   }

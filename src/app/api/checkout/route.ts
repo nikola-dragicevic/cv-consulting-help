@@ -5,7 +5,6 @@ import { getStripeClient } from '@/lib/stripeServer';
 import { isAdminUser } from '@/lib/admin';
 import { runGeneration } from '@/app/api/generate-cv/route';
 
-const stripe = getStripeClient();
 const oneTimePriceByFlow: Record<string, string | undefined> = {
   booking: process.env.STRIPE_PRICE_ID_BOOKING?.trim(),
   cv_intake: process.env.STRIPE_PRICE_ID_CV_ONLY?.trim(),
@@ -90,6 +89,7 @@ function normalizeIntakeEducation(input: unknown): IntakeEducation | null {
 
 export async function POST(req: Request) {
   try {
+    const stripe = getStripeClient();
     const supabase = await getServerSupabase();
     const { data: { user } } = await supabase.auth.getUser();
 

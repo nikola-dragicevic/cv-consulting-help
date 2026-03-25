@@ -1,7 +1,7 @@
 // src/app/admin/page.tsx
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import type { User } from "@supabase/supabase-js"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { isAdminUser, isAdminOrModerator } from "@/lib/admin"
 import { parseGeneratedEmail } from "@/lib/outreach"
+import { formatEmployerFollowupStatus } from "@/lib/interviewFollowup"
 import { getBrowserSupabase } from "@/lib/supabaseBrowser"
 
 const supabase = getBrowserSupabase()
@@ -35,6 +36,9 @@ type CandidateRow = {
   relevant_experience_years: Record<string, number | string> | null
   candidate_text_vector: string | null
   manual_premium: boolean | null
+  representation_active: boolean | null
+  representation_status: string | null
+  representation_current_period_end: string | null
   created_at: string | null
 }
 
@@ -91,6 +95,7 @@ type JobResult = {
 }
 
 type TabKey = "candidates" | "jobsearch" | "orders" | "calendar" | "cvgen" | "cvmatch" | "savedjobs"
+type SavedJobsCategory = "all" | "unsent" | "has_comment" | "email_sent"
 
 type SavedJob = {
   id: string
@@ -106,7 +111,9 @@ type SavedJob = {
   occupation_group_label: string | null
   notes: string | null
   interview_analysis: string | null
+  application_reference: string | null
   manual_contact_email: string | null
+  interview_slot_count?: number | null
   email_sent: boolean
   email_sent_at: string | null
   search_mode: string | null
@@ -145,11 +152,26 @@ type InterviewBooking = {
   contact_name: string
   contact_email: string
   contact_phone: string | null
+  meeting_link: string | null
   booking_date: string
   start_time: string
   end_time: string
   status: string
   admin_followup_status?: string | null
+  followup_token?: string | null
+  followup_url?: string | null
+  employer_followup_email_sent_at?: string | null
+  employer_followup_completed_at?: string | null
+  employer_followup_notes?: string | null
+  agreed_base_salary_sek?: number | null
+  employment_start_date?: string | null
+  employment_type?: string | null
+  employment_contract_signed?: boolean | null
+  proof_document_name?: string | null
+  proof_document_url?: string | null
+  salary_confirmed_at?: string | null
+  active_billing_at?: string | null
+  employment_ended_at?: string | null
   created_at: string
 }
 
@@ -200,19 +222,6 @@ function buildGmailComposeUrl(params: { to: string; subject: string; body: strin
   url.searchParams.set("su", params.subject)
   url.searchParams.set("body", params.body)
   return url.toString()
-}
-
-function formatFollowupStatus(status: string | null | undefined) {
-  switch (status) {
-    case "contacted_candidate":
-      return "contacted_candidate"
-    case "prepared":
-      return "prepared"
-    case "interview_completed":
-      return "interview_completed"
-    default:
-      return "booked"
-  }
 }
 
 export default function AdminDashboard() {
@@ -275,17 +284,28 @@ export default function AdminDashboard() {
   const [deleteAllSavedJobsLoading, setDeleteAllSavedJobsLoading] = useState(false)
   const [savedJobNotes, setSavedJobNotes] = useState<Record<string, string>>({})
   const [savedJobInterviewAnalysis, setSavedJobInterviewAnalysis] = useState<Record<string, string>>({})
+  const [savedJobApplicationReferences, setSavedJobApplicationReferences] = useState<Record<string, string>>({})
   const [savedJobManualEmails, setSavedJobManualEmails] = useState<Record<string, string>>({})
   const [savedJobContactScans, setSavedJobContactScans] = useState<Record<string, ContactScanResult>>({})
   const [savedJobContactScanLoading, setSavedJobContactScanLoading] = useState<string | null>(null)
   const [savedJobsContactBatchLoading, setSavedJobsContactBatchLoading] = useState(false)
   const [interviewBookings, setInterviewBookings] = useState<InterviewBooking[]>([])
+  const [dueFollowupLoading, setDueFollowupLoading] = useState(false)
+  const [dueFollowupMessage, setDueFollowupMessage] = useState("")
   const [bookingStatusLoadingId, setBookingStatusLoadingId] = useState<string | null>(null)
   const [emailGenLoading, setEmailGenLoading] = useState<string | null>(null)
   const [emailSendLoading, setEmailSendLoading] = useState<string | null>(null)
+  const [emailPreviewLoading, setEmailPreviewLoading] = useState<string | null>(null)
   const [generatedEmails, setGeneratedEmails] = useState<Record<string, string>>({})
+  const [emailPreviews, setEmailPreviews] = useState<Record<string, {
+    subject: string
+    textBody: string
+    htmlBody: string
+    bookingLink: string | null
+  }>>({})
   const [introLinkLoading, setIntroLinkLoading] = useState<string | null>(null)
   const [employerIntroLinks, setEmployerIntroLinks] = useState<Record<string, string>>({})
+  const [savedJobsCategoryFilter, setSavedJobsCategoryFilter] = useState<SavedJobsCategory>("all")
 
   // Job search
   const [jsAddress, setJsAddress] = useState("")
@@ -435,6 +455,13 @@ export default function AdminDashboard() {
         }
         return next
       })
+      setSavedJobApplicationReferences((prev) => {
+        const next = { ...prev }
+        for (const j of jobs) {
+          if (!(j.id in next)) next[j.id] = j.application_reference || ""
+        }
+        return next
+      })
       setSavedJobManualEmails((prev) => {
         const next = { ...prev }
         for (const j of jobs) {
@@ -487,6 +514,39 @@ export default function AdminDashboard() {
     )
     setCmSavedJobIds(new Set(relevantSavedJobs.map((job) => job.job_id).filter(Boolean)))
   }, [savedJobs, cmMode, cmCandidate])
+
+  const savedJobsCategoryCounts = useMemo(() => {
+    let unsent = 0
+    let hasComment = 0
+    let emailSent = 0
+
+    for (const job of savedJobs) {
+      const hasCommentFlag = Boolean((job.notes || "").trim())
+      const emailSentFlag = Boolean(job.email_sent || (job.outreach_summary?.messagesSent || 0) > 0)
+      if (!emailSentFlag) unsent += 1
+      if (hasCommentFlag) hasComment += 1
+      if (emailSentFlag) emailSent += 1
+    }
+
+    return {
+      all: savedJobs.length,
+      unsent,
+      has_comment: hasComment,
+      email_sent: emailSent,
+    }
+  }, [savedJobs])
+
+  const filteredSavedJobs = useMemo(() => {
+    return savedJobs.filter((job) => {
+      const hasCommentFlag = Boolean((job.notes || "").trim())
+      const emailSentFlag = Boolean(job.email_sent || (job.outreach_summary?.messagesSent || 0) > 0)
+
+      if (savedJobsCategoryFilter === "unsent") return !emailSentFlag
+      if (savedJobsCategoryFilter === "has_comment") return hasCommentFlag
+      if (savedJobsCategoryFilter === "email_sent") return emailSentFlag
+      return true
+    })
+  }, [savedJobs, savedJobsCategoryFilter])
 
   const handleCvMatch = async (mode: "semantic" | "keyword") => {
     if (mode === "keyword" && !cmKeywords.trim()) {
@@ -791,6 +851,26 @@ export default function AdminDashboard() {
     }
   }
 
+  const handleSaveApplicationReference = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/saved-jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationReference: savedJobApplicationReferences[id] ?? "" }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Save failed")
+      setSavedJobs((prev) =>
+        prev.map((j) =>
+          j.id === id ? { ...j, application_reference: savedJobApplicationReferences[id] ?? "" } : j
+        )
+      )
+    } catch (err) {
+      alert("Kunde inte spara ansökningsreferens")
+      console.error(err)
+    }
+  }
+
   const handleSaveManualContactEmail = async (id: string) => {
     try {
       const res = await fetch(`/api/admin/saved-jobs/${id}`, {
@@ -862,6 +942,46 @@ export default function AdminDashboard() {
       alert("Kunde inte skicka e-post: " + (err instanceof Error ? err.message : "okänt fel"))
     } finally {
       setEmailSendLoading(null)
+    }
+  }
+
+  const handlePreviewOutreachEmail = async (job: SavedJob) => {
+    const generated = generatedEmails[job.id]
+    if (!generated?.trim()) {
+      alert("Generera e-post först.")
+      return
+    }
+
+    setEmailPreviewLoading(job.id)
+    try {
+      const res = await fetch("/api/admin/outreach-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          savedJobId: job.id,
+          emailText: generated,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kunde inte skapa förhandsgranskning")
+
+      const preview = json?.data
+      if (preview?.bookingLink) {
+        setEmployerIntroLinks((prev) => ({ ...prev, [job.id]: preview.bookingLink }))
+      }
+      setEmailPreviews((prev) => ({
+        ...prev,
+        [job.id]: {
+          subject: preview?.subject || "",
+          textBody: preview?.textBody || "",
+          htmlBody: preview?.htmlBody || "",
+          bookingLink: preview?.bookingLink || null,
+        },
+      }))
+    } catch (err) {
+      alert("Kunde inte skapa förhandsgranskning: " + (err instanceof Error ? err.message : "okänt fel"))
+    } finally {
+      setEmailPreviewLoading(null)
     }
   }
 
@@ -947,6 +1067,7 @@ export default function AdminDashboard() {
           occupationGroupLabel: job.occupation_group_label,
           bookingLink,
           interviewAnalysis: savedJobInterviewAnalysis[job.id] ?? job.interview_analysis ?? "",
+          applicationReference: savedJobApplicationReferences[job.id] ?? job.application_reference ?? "",
         }),
       })
       const json = await res.json()
@@ -1018,7 +1139,7 @@ export default function AdminDashboard() {
       setInterviewBookings((prev) =>
         prev.map((booking) =>
           booking.id === bookingId
-            ? { ...booking, admin_followup_status: adminFollowupStatus }
+            ? { ...booking, ...(json.data || {}), admin_followup_status: adminFollowupStatus }
             : booking
         )
       )
@@ -1026,6 +1147,22 @@ export default function AdminDashboard() {
       alert("Kunde inte uppdatera kandidatstatus: " + (err instanceof Error ? err.message : "okänt fel"))
     } finally {
       setBookingStatusLoadingId(null)
+    }
+  }
+
+  const handleSendDueInterviewFollowups = async () => {
+    setDueFollowupLoading(true)
+    setDueFollowupMessage("")
+    try {
+      const res = await fetch("/api/interview-followups/run", { method: "POST" })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Could not send follow-up emails")
+      setDueFollowupMessage(`Skickade ${json.sent ?? 0} uppföljningsmail${json.due ? ` av ${json.due} förfallna` : ""}.`)
+      await fetchInterviewBookings(savedJobsCandidateFilter || null)
+    } catch (err) {
+      setDueFollowupMessage(err instanceof Error ? err.message : "Okänt fel")
+    } finally {
+      setDueFollowupLoading(false)
     }
   }
 
@@ -1396,6 +1533,11 @@ export default function AdminDashboard() {
                           Premium
                         </span>
                       )}
+                      {c.representation_active && (
+                        <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+                          Representation aktiv
+                        </span>
+                      )}
                       {c.category_tags && c.category_tags.length > 0 && (
                         <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
                           {c.category_tags.length} tags
@@ -1424,6 +1566,15 @@ export default function AdminDashboard() {
                       {c.primary_occupation_field && (
                         <p className="text-xs text-slate-600">
                           <span className="font-medium">Primärt fält:</span> {c.primary_occupation_field}
+                        </p>
+                      )}
+
+                      {c.representation_status && (
+                        <p className="text-xs text-slate-600">
+                          <span className="font-medium">Kandidatrepresentation:</span> {c.representation_active ? "Betald" : c.representation_status}
+                          {c.representation_current_period_end
+                            ? ` · aktiv till ${new Date(c.representation_current_period_end).toLocaleDateString("sv-SE")}`
+                            : ""}
                         </p>
                       )}
 
@@ -1933,16 +2084,56 @@ export default function AdminDashboard() {
                 >
                   Uppdatera
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleSendDueInterviewFollowups()}
+                  disabled={dueFollowupLoading}
+                >
+                  {dueFollowupLoading ? "Skickar uppföljningar..." : "Skicka förfallna uppföljningar"}
+                </Button>
+                {dueFollowupMessage ? <p className="text-xs text-slate-500">{dueFollowupMessage}</p> : null}
               </div>
             </div>
 
+            <div className="mb-4 flex flex-wrap gap-2">
+              <Button
+                variant={savedJobsCategoryFilter === "all" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSavedJobsCategoryFilter("all")}
+              >
+                Alla ({savedJobsCategoryCounts.all})
+              </Button>
+              <Button
+                variant={savedJobsCategoryFilter === "unsent" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSavedJobsCategoryFilter("unsent")}
+              >
+                Unsent ({savedJobsCategoryCounts.unsent})
+              </Button>
+              <Button
+                variant={savedJobsCategoryFilter === "has_comment" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSavedJobsCategoryFilter("has_comment")}
+              >
+                Has comment ({savedJobsCategoryCounts.has_comment})
+              </Button>
+              <Button
+                variant={savedJobsCategoryFilter === "email_sent" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSavedJobsCategoryFilter("email_sent")}
+              >
+                Email sent ({savedJobsCategoryCounts.email_sent})
+              </Button>
+            </div>
+
             <div className="space-y-3">
-              {savedJobs.length === 0 && (
+              {filteredSavedJobs.length === 0 && (
                 <div className="bg-white rounded-lg border p-6 text-center text-slate-400">
                   Inga sparade jobb ännu. Spara jobb från CV Matchning-fliken.
                 </div>
               )}
-              {savedJobs.map((job) => (
+              {filteredSavedJobs.map((job) => (
                 <div key={job.id} className="bg-white rounded-lg border shadow-sm">
                   <div className="p-4">
                     {(() => {
@@ -1956,38 +2147,92 @@ export default function AdminDashboard() {
                             Bokad av {booking.contact_name} ({booking.contact_email})
                             {booking.contact_phone ? ` · ${booking.contact_phone}` : ""}
                           </p>
+                          {booking.meeting_link ? (
+                            <p className="mt-1 text-xs text-emerald-700">
+                              Möteslänk:{" "}
+                              <a
+                                href={booking.meeting_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="underline"
+                              >
+                                Öppna länk
+                              </a>
+                            </p>
+                          ) : null}
                           <p className="mt-1 text-xs text-emerald-700">
-                            Status: {formatFollowupStatus(booking.admin_followup_status)}
+                            Status: {formatEmployerFollowupStatus(booking.admin_followup_status)}
                           </p>
+                          {booking.followup_url ? (
+                            <p className="mt-1 text-xs text-emerald-700">
+                              Uppföljningslänk:{" "}
+                              <a href={booking.followup_url} target="_blank" rel="noreferrer" className="underline">
+                                Öppna formulär
+                              </a>
+                            </p>
+                          ) : null}
+                          {booking.employer_followup_email_sent_at ? (
+                            <p className="mt-1 text-xs text-emerald-700">
+                              Uppföljningsmail skickat: {new Date(booking.employer_followup_email_sent_at).toLocaleString("sv-SE")}
+                            </p>
+                          ) : null}
+                          {booking.employer_followup_completed_at ? (
+                            <p className="mt-1 text-xs text-emerald-700">
+                              Arbetsgivaren svarade: {new Date(booking.employer_followup_completed_at).toLocaleString("sv-SE")}
+                            </p>
+                          ) : null}
+                          {typeof booking.agreed_base_salary_sek === "number" ? (
+                            <p className="mt-1 text-xs text-emerald-700">
+                              Grundlön: {booking.agreed_base_salary_sek.toLocaleString("sv-SE")} kr/mån
+                              {booking.employment_start_date ? ` · Start ${booking.employment_start_date}` : ""}
+                              {booking.employment_type ? ` · ${booking.employment_type}` : ""}
+                            </p>
+                          ) : null}
+                          {booking.employment_contract_signed ? (
+                            <p className="mt-1 text-xs text-emerald-700">Signerat anställningsavtal bekräftat</p>
+                          ) : null}
+                          {booking.proof_document_url ? (
+                            <p className="mt-1 text-xs text-emerald-700">
+                              Underlag:{" "}
+                              <a href={booking.proof_document_url} target="_blank" rel="noreferrer" className="underline">
+                                {booking.proof_document_name || "Öppna fil"}
+                              </a>
+                            </p>
+                          ) : null}
+                          {booking.employer_followup_notes ? (
+                            <p className="mt-1 text-xs text-emerald-700">Kommentar: {booking.employer_followup_notes}</p>
+                          ) : null}
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleUpdateInterviewFollowup(booking.id, "contacted_candidate")}
+                              onClick={() => handleUpdateInterviewFollowup(booking.id, "active_billing")}
                               disabled={bookingStatusLoadingId === booking.id}
                             >
-                              Kontakta kandidat
+                              Aktivera debitering
                             </Button>
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleUpdateInterviewFollowup(booking.id, "prepared")}
+                              onClick={() => handleUpdateInterviewFollowup(booking.id, "employment_ended")}
                               disabled={bookingStatusLoadingId === booking.id}
                             >
-                              Förberedd
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleUpdateInterviewFollowup(booking.id, "interview_completed")}
-                              disabled={bookingStatusLoadingId === booking.id}
-                            >
-                              Intervju genomförd
+                              Anställning avslutad
                             </Button>
                           </div>
                         </div>
                       ) : null
                     })()}
+                    {job.interview_slot_count === 0 ? (
+                      <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+                        <p className="text-sm font-medium text-amber-800">
+                          Kandidaten har inte lagt in några intervjutider ännu.
+                        </p>
+                        <p className="mt-1 text-xs text-amber-700">
+                          Arbetsgivaren kommer inte kunna boka intervju förrän kandidaten har valt tider i sin profil.
+                        </p>
+                      </div>
+                    ) : null}
                     {(() => {
                       const contact = savedJobContactScans[job.id]
                       return contact ? (
@@ -2087,6 +2332,27 @@ export default function AdminDashboard() {
                     </div>
 
                     <div className="mb-3 space-y-2">
+                      <Label htmlFor={`application-reference-${job.id}`}>Ansökningsreferens</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id={`application-reference-${job.id}`}
+                          placeholder="t.ex. teamtailor-7178648-1890940"
+                          value={savedJobApplicationReferences[job.id] ?? ""}
+                          onChange={(e) =>
+                            setSavedJobApplicationReferences((prev) => ({ ...prev, [job.id]: e.target.value }))
+                          }
+                          className="text-sm"
+                        />
+                        <Button size="sm" variant="outline" onClick={() => handleSaveApplicationReference(job.id)}>
+                          Spara
+                        </Button>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Använd om annonsen kräver en särskild referens eller ett ärendenummer i ansökan.
+                      </p>
+                    </div>
+
+                    <div className="mb-3 space-y-2">
                       <Label htmlFor={`manual-contact-email-${job.id}`}>Manuellt kontaktmail</Label>
                       <div className="flex gap-2">
                         <Input
@@ -2151,6 +2417,14 @@ export default function AdminDashboard() {
                         disabled={emailGenLoading === job.id}
                       >
                         {emailGenLoading === job.id ? "Genererar..." : "Generera e-post"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handlePreviewOutreachEmail(job)}
+                        disabled={emailPreviewLoading === job.id || !generatedEmails[job.id]}
+                      >
+                        {emailPreviewLoading === job.id ? "Bygger preview..." : "Förhandsgranska"}
                       </Button>
                       <Button
                         size="sm"
@@ -2228,6 +2502,39 @@ export default function AdminDashboard() {
                         <pre className="text-xs text-slate-800 whitespace-pre-wrap font-mono leading-relaxed">
                           {generatedEmails[job.id]}
                         </pre>
+                      </div>
+                    )}
+
+                    {emailPreviews[job.id] && (
+                      <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-xs font-semibold text-emerald-900">Slutlig förhandsgranskning före skick</p>
+                          {emailPreviews[job.id].bookingLink ? (
+                            <a
+                              href={emailPreviews[job.id].bookingLink || "#"}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-emerald-700 underline"
+                            >
+                              Öppna bokningslänk
+                            </a>
+                          ) : null}
+                        </div>
+                        <p className="text-xs text-slate-700">
+                          <span className="font-medium">Ämne:</span> {emailPreviews[job.id].subject}
+                        </p>
+                        {emailPreviews[job.id].bookingLink ? (
+                          <p className="mt-1 break-all text-xs text-slate-600">
+                            <span className="font-medium">CTA-länk:</span> {emailPreviews[job.id].bookingLink}
+                          </p>
+                        ) : null}
+                        <div className="mt-3 overflow-hidden rounded-md border bg-white">
+                          <iframe
+                            title={`preview-${job.id}`}
+                            srcDoc={emailPreviews[job.id].htmlBody}
+                            className="h-[520px] w-full"
+                          />
+                        </div>
                       </div>
                     )}
                   </div>

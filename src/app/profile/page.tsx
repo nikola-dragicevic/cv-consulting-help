@@ -14,7 +14,7 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { User, Eye } from "lucide-react";
+import { User, Eye, Mail } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/components/i18n/LanguageProvider";
 import { CvPreview, LetterPreview } from "@/components/cv/CvPreview";
@@ -60,13 +60,25 @@ type GeneratedDocumentState = {
   latestLetter: GeneratedDocument | null;
 };
 
-type InterviewSlot = {
-  id: string;
-  slot_date: string;
-  start_time: string;
-  end_time: string;
-  is_booked: boolean;
-  created_at: string;
+type EmailAccountConnection = {
+  provider: "google" | "microsoft";
+  email: string | null;
+  displayName: string | null;
+  status: "connected" | "revoked" | "error";
+  scopes: string[];
+  connectedAt: string | null;
+  disconnectedAt: string | null;
+  lastTestedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+};
+
+type VectorStatus = {
+  status: "idle" | "pending" | "processing" | "success" | "failed";
+  requestedAt: string | null;
+  completedAt: string | null;
+  lastError: string | null;
+  attempts: number;
 };
 
 export default function ProfilePage() {
@@ -93,13 +105,13 @@ export default function ProfilePage() {
   const [generatedDocsLoading, setGeneratedDocsLoading] = useState(true);
   const [showGeneratedCv, setShowGeneratedCv] = useState(false);
   const [showGeneratedLetter, setShowGeneratedLetter] = useState(false);
-  const [interviewSlots, setInterviewSlots] = useState<InterviewSlot[]>([]);
-  const [slotsLoading, setSlotsLoading] = useState(true);
-  const [slotDate, setSlotDate] = useState("");
-  const [slotStartTime, setSlotStartTime] = useState("09:00");
-  const [slotEndTime, setSlotEndTime] = useState("09:30");
-  const [slotMessage, setSlotMessage] = useState("");
-  const [profileSaved, setProfileSaved] = useState(false);
+  const [emailAccounts, setEmailAccounts] = useState<EmailAccountConnection[]>([]);
+  const [emailAccountsLoading, setEmailAccountsLoading] = useState(true);
+  const [emailAccountsMessage, setEmailAccountsMessage] = useState("");
+  const [emailConnectLoading, setEmailConnectLoading] = useState<"google" | "microsoft" | null>(null);
+  const [emailDisconnectLoading, setEmailDisconnectLoading] = useState<"google" | "microsoft" | null>(null);
+  const [vectorStatus, setVectorStatus] = useState<VectorStatus | null>(null);
+  const [vectorRetryLoading, setVectorRetryLoading] = useState(false);
 
   // Rate limiting state
   const [isRateLimited, setIsRateLimited] = useState(false);
@@ -149,7 +161,6 @@ export default function ProfilePage() {
           // Fresh profile
           setJobOfferConsent(false);
           setGdprAccepted(false);
-          setProfileSaved(false);
         } else {
           setProfile(data);
           setEntryMode('cv_upload');
@@ -160,7 +171,6 @@ export default function ProfilePage() {
 
           // ✅ Reduce friction: profile already exists => keep checkbox 1 checked
           setGdprAccepted(true);
-          setProfileSaved(true);
         }
 
         const docsRes = await fetch("/api/profile/generated-documents", { method: "GET" });
@@ -169,82 +179,128 @@ export default function ProfilePage() {
           setGeneratedDocs(docs);
         }
 
-        const slotsRes = await fetch("/api/profile/interview-slots", { method: "GET" });
-        if (slotsRes.ok) {
-          const slotsJson = await slotsRes.json();
-          setInterviewSlots(slotsJson.data || []);
+        const emailAccountsRes = await fetch("/api/profile/email-accounts", { method: "GET" });
+        if (emailAccountsRes.ok) {
+          const emailAccountsJson = await emailAccountsRes.json();
+          setEmailAccounts(emailAccountsJson.data || []);
+        }
+
+        const vectorStatusRes = await fetch("/api/profile/vector-status", { method: "GET" });
+        if (vectorStatusRes.ok) {
+          const vectorStatusJson = await vectorStatusRes.json();
+          setVectorStatus(vectorStatusJson.data || null);
         }
       } catch (e) {
         console.error("Error fetching profile:", e);
       } finally {
         setLoading(false);
         setGeneratedDocsLoading(false);
-        setSlotsLoading(false);
+        setEmailAccountsLoading(false);
       }
     })();
   }, [router, supabase, t]);
 
-  const refreshInterviewSlots = async () => {
-    if (!profileSaved) {
-      setSlotMessage(t("Spara din profil först innan du lägger till intervjutider.", "Save your profile first before adding interview slots."));
-      setInterviewSlots([]);
-      return;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("mail_oauth");
+    const provider = params.get("provider");
+    const details = params.get("message");
+    if (!status) return;
+
+    if (status === "connected") {
+      setEmailAccountsMessage(
+        provider === "google"
+          ? t("Gmail är nu anslutet.", "Gmail is now connected.")
+          : t("Outlook är nu anslutet.", "Outlook is now connected.")
+      );
+    } else if (status === "error" || status === "provider_error") {
+      setEmailAccountsMessage(details ? decodeURIComponent(details) : t("E-postanslutningen misslyckades.", "Email connection failed."))
+    } else {
+      setEmailAccountsMessage(t("E-postanslutningen kunde inte slutföras.", "The email connection could not be completed."))
     }
-    setSlotsLoading(true);
+  }, [t]);
+
+  const refreshEmailAccounts = async () => {
+    setEmailAccountsLoading(true);
     try {
-      const res = await fetch("/api/profile/interview-slots", { method: "GET" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Kunde inte hämta intervjutider.");
-      setInterviewSlots(json.data || []);
-    } catch (err) {
-      setSlotMessage(err instanceof Error ? err.message : "Kunde inte hämta intervjutider.");
-    } finally {
-      setSlotsLoading(false);
-    }
-  };
-
-  const handleAddInterviewSlot = async () => {
-    if (!profileSaved) {
-      setSlotMessage(t("Spara din profil först innan du lägger till intervjutider.", "Save your profile first before adding interview slots."));
-      return;
-    }
-
-    if (!slotDate || !slotStartTime || !slotEndTime) {
-      setSlotMessage(t("Välj datum och tid först.", "Choose date and time first."));
-      return;
-    }
-
-    setSlotMessage("");
-    try {
-      const res = await fetch("/api/profile/interview-slots", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slotDate,
-          startTime: slotStartTime,
-          endTime: slotEndTime,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Kunde inte spara intervjutiden.");
-      setInterviewSlots((prev) => [...prev, json.data].sort((a, b) => `${a.slot_date}${a.start_time}`.localeCompare(`${b.slot_date}${b.start_time}`)));
-      setSlotMessage(t("Intervjutid sparad.", "Interview slot saved."));
-    } catch (err) {
-      setSlotMessage(err instanceof Error ? err.message : "Kunde inte spara intervjutiden.");
-    }
-  };
-
-  const handleDeleteInterviewSlot = async (id: string) => {
-    setSlotMessage("");
-    try {
-      const res = await fetch(`/api/profile/interview-slots/${id}`, { method: "DELETE" });
+      const res = await fetch("/api/profile/email-accounts", { method: "GET" });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Kunde inte ta bort intervjutiden.");
-      setInterviewSlots((prev) => prev.filter((slot) => slot.id !== id));
+      if (!res.ok) throw new Error(json?.error || "Could not load email accounts");
+      setEmailAccounts(json.data || []);
     } catch (err) {
-      setSlotMessage(err instanceof Error ? err.message : "Kunde inte ta bort intervjutiden.");
+      setEmailAccountsMessage(err instanceof Error ? err.message : "Could not load email accounts");
+    } finally {
+      setEmailAccountsLoading(false);
     }
   };
+
+  const refreshVectorStatus = async () => {
+    try {
+      const res = await fetch("/api/profile/vector-status", { method: "GET" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      setVectorStatus(json.data || null);
+    } catch {
+      // Non-blocking status refresh.
+    }
+  };
+
+  const handleConnectEmail = (provider: "google" | "microsoft") => {
+    setEmailConnectLoading(provider);
+    window.location.href = `/api/profile/email-accounts/connect?provider=${provider}`;
+  };
+
+  const handleDisconnectEmail = async (provider: "google" | "microsoft") => {
+    setEmailDisconnectLoading(provider);
+    setEmailAccountsMessage("");
+    try {
+      const res = await fetch("/api/profile/email-accounts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Could not disconnect email account");
+      await refreshEmailAccounts();
+      setEmailAccountsMessage(
+        provider === "google"
+          ? t("Gmail frånkopplades.", "Gmail disconnected.")
+          : t("Outlook frånkopplades.", "Outlook disconnected.")
+      );
+    } catch (err) {
+      setEmailAccountsMessage(err instanceof Error ? err.message : "Could not disconnect email account");
+    } finally {
+      setEmailDisconnectLoading(null);
+    }
+  };
+
+  const googleConnection = emailAccounts.find((account) => account.provider === "google");
+  const microsoftConnection = emailAccounts.find((account) => account.provider === "microsoft");
+
+  useEffect(() => {
+    if (!vectorStatus || (vectorStatus.status !== "pending" && vectorStatus.status !== "processing")) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshVectorStatus();
+    }, 3000);
+
+    return () => window.clearInterval(interval);
+  }, [vectorStatus]);
+
+  const normalizedVectorError = useMemo(() => {
+    if (!vectorStatus?.lastError) return null;
+    const lower = vectorStatus.lastError.toLowerCase();
+    if (lower.includes("fetch failed") || lower.includes("timed out")) {
+      return t(
+        "Kunde inte nå matchningstjänsten just nu. Försök igen om en liten stund.",
+        "Could not reach the matching service right now. Please try again in a moment."
+      );
+    }
+    return vectorStatus.lastError;
+  }, [t, vectorStatus?.lastError]);
 
   const handleUpdateProfile = async (e: FormEvent) => {
     e.preventDefault();
@@ -296,17 +352,22 @@ export default function ProfilePage() {
 
       setMessage(
         t(
-          "✅ Profil sparad! Matchningsvektorer uppdateras nu i bakgrunden (tar ~10 sekunder).",
-          "✅ Profile saved! Matching vectors are updating in the background (~10 seconds)."
+          "✅ Profil sparad! Matchningsvektorer uppdateras nu i bakgrunden. Du ser statusen nedan.",
+          "✅ Profile saved! Matching vectors are updating in the background. You can follow the status below."
         )
       );
+      setVectorStatus({
+        status: "pending",
+        requestedAt: new Date().toISOString(),
+        completedAt: null,
+        lastError: null,
+        attempts: 0,
+      });
 
       if (result.newCvUrl) {
         setProfile((prev) => (prev ? { ...prev, cv_file_url: result.newCvUrl } : prev));
       }
       setProfile((prev) => (prev ? { ...prev, candidate_text_vector: cvTextInput } : prev));
-      setProfileSaved(true);
-
       // Rate limiter
       setIsRateLimited(true);
       setCountdown(10);
@@ -327,6 +388,38 @@ export default function ProfilePage() {
       setCvFile(null);
       const fileInput = document.getElementById("cv-upload") as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
+    }
+  };
+
+  const handleRetryVectorGeneration = async () => {
+    setVectorRetryLoading(true);
+    setMessage("");
+
+    try {
+      const res = await fetch("/api/profile/vector-status", { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          json?.error || t("Kunde inte starta om vektorgenereringen.", "Could not restart vector generation.")
+        );
+      }
+
+      setVectorStatus((prev) => ({
+        status: "pending",
+        requestedAt: new Date().toISOString(),
+        completedAt: null,
+        lastError: null,
+        attempts: prev?.attempts || 0,
+      }));
+      setMessage(t("Vektorgenereringen startades om.", "Vector generation restarted."));
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : t("Kunde inte starta om vektorgenereringen.", "Could not restart vector generation.")
+      );
+    } finally {
+      setVectorRetryLoading(false);
     }
   };
 
@@ -372,8 +465,9 @@ export default function ProfilePage() {
   if (!profile) return <div className="p-8">{t("Kunde inte ladda din profil. Vänligen logga in igen.", "Could not load your profile. Please log in again.")}</div>;
 
   return (
-    <div className="container mx-auto max-w-2xl py-12 px-4">
-      <Card>
+    <div className="container mx-auto max-w-6xl px-4 py-12">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.8fr)_360px]">
+        <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-2xl">
             <User /> {t("Min Profil", "My Profile")}
@@ -401,7 +495,7 @@ export default function ProfilePage() {
                   <Input id="phone" name="phone" value={profile.phone} onChange={handleInputChange} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="age">{t("Ålder", "Age")}</Label>
+                  <Label htmlFor="age">{t("Ålder (frivilligt)", "Age (optional)")}</Label>
                   <Input
                     id="age"
                     name="age"
@@ -457,7 +551,7 @@ export default function ProfilePage() {
                     id="cv-text"
                     value={cvTextInput}
                     onChange={(e) => setCvTextInput(e.target.value)}
-                    rows={10}
+                    rows={6}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     placeholder={t(
                       "Klistra in hela eller delar av ditt CV här om du inte har en fil tillgänglig.",
@@ -473,154 +567,6 @@ export default function ProfilePage() {
                 </div>
               </div>
             )}
-
-            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">
-                  {t("Genererade dokument", "Generated documents")}
-                </h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  {t(
-                    "Här kan du öppna ditt senaste AI-genererade CV och personliga brev. Använd Skriv ut / Spara som PDF i förhandsvisningen.",
-                    "Here you can open your latest AI-generated CV and cover letter. Use Print / Save as PDF in the preview."
-                  )}
-                </p>
-              </div>
-
-              {generatedDocsLoading && (
-                <p className="text-sm text-slate-500">{t("Laddar dokument...", "Loading documents...")}</p>
-              )}
-
-              {!generatedDocsLoading && generatedDocs?.latestOrder?.generationStatus === "generating" && (
-                <p className="text-sm text-blue-700">
-                  {t("Ett dokument håller på att genereras just nu.", "A document is currently being generated.")}
-                </p>
-              )}
-
-              {!generatedDocsLoading && generatedDocs?.latestOrder && (
-                <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
-                  <span className="font-medium text-slate-700">{t("Senaste dokumentstatus:", "Latest document status:")}</span>{" "}
-                  <span className="text-slate-600">
-                    {generatedDocs.latestOrder.generationStatus === "done"
-                      ? t("klart", "done")
-                      : generatedDocs.latestOrder.generationStatus === "generating"
-                      ? t("genererar", "generating")
-                      : generatedDocs.latestOrder.generationStatus === "error"
-                      ? t("fel vid generering", "generation error")
-                      : generatedDocs.latestOrder.generationStatus === "pending" &&
-                        generatedDocs.latestOrder.packageFlow &&
-                        !generatedDocs.latestCv &&
-                        !generatedDocs.latestLetter
-                      ? t("väntar på betalning eller start av generering", "waiting for payment or generation start")
-                      : generatedDocs.latestOrder.generationStatus || t("okänd", "unknown")}
-                  </span>
-                </div>
-              )}
-
-              {!generatedDocsLoading && !generatedDocs?.latestCv && !generatedDocs?.latestLetter && (
-                <p className="text-sm text-slate-500">
-                  {t("Inga genererade dokument hittades ännu.", "No generated documents found yet.")}
-                </p>
-              )}
-
-              <div className="flex flex-wrap gap-3">
-                {generatedDocs?.latestCv && (
-                  <Button type="button" variant="outline" onClick={() => setShowGeneratedCv((prev) => !prev)}>
-                    {showGeneratedCv ? t("Dölj senaste CV", "Hide latest CV") : t("Visa senaste CV", "View latest CV")}
-                  </Button>
-                )}
-                {generatedDocs?.latestLetter && (
-                  <Button type="button" variant="outline" onClick={() => setShowGeneratedLetter((prev) => !prev)}>
-                    {showGeneratedLetter
-                      ? t("Dölj senaste personliga brev", "Hide latest cover letter")
-                      : t("Visa senaste personliga brev", "View latest cover letter")}
-                  </Button>
-                )}
-              </div>
-
-              {showGeneratedCv && generatedDocs?.latestCv?.content && (
-                <CvPreview raw={generatedDocs.latestCv.content} className="rounded-xl overflow-hidden border border-slate-200" />
-              )}
-
-              {showGeneratedLetter && generatedDocs?.latestLetter?.content && (
-                <LetterPreview raw={generatedDocs.latestLetter.content} className="rounded-xl overflow-hidden border border-slate-200" />
-              )}
-            </div>
-
-            <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">
-                    {t("Intervjutider", "Interview availability")}
-                  </h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {t(
-                      "Lägg upp tider då arbetsgivare kan boka intervju med dig via en privat länk.",
-                      "Add time slots when employers can book an interview with you through a private link."
-                    )}
-                  </p>
-                  {!profileSaved && (
-                    <p className="mt-2 text-sm text-amber-700">
-                      {t(
-                        "Spara din profil först, sedan kan du lägga till intervjutider.",
-                        "Save your profile first, then you can add interview slots."
-                      )}
-                    </p>
-                  )}
-                </div>
-                <Button type="button" variant="outline" onClick={() => void refreshInterviewSlots()} disabled={!profileSaved}>
-                  {t("Uppdatera", "Refresh")}
-                </Button>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label htmlFor="slot-date">{t("Datum", "Date")}</Label>
-                  <Input id="slot-date" type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} disabled={!profileSaved} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="slot-start">{t("Starttid", "Start time")}</Label>
-                  <Input id="slot-start" type="time" value={slotStartTime} onChange={(e) => setSlotStartTime(e.target.value)} disabled={!profileSaved} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="slot-end">{t("Sluttid", "End time")}</Label>
-                  <Input id="slot-end" type="time" value={slotEndTime} onChange={(e) => setSlotEndTime(e.target.value)} disabled={!profileSaved} />
-                </div>
-              </div>
-
-              <Button type="button" onClick={() => void handleAddInterviewSlot()} disabled={!profileSaved}>
-                {t("Lägg till intervjutid", "Add interview slot")}
-              </Button>
-
-              {slotMessage && <p className="text-sm text-slate-600">{slotMessage}</p>}
-
-              <div className="space-y-2">
-                {slotsLoading ? (
-                  <p className="text-sm text-slate-500">{t("Laddar tider...", "Loading slots...")}</p>
-                ) : interviewSlots.length === 0 ? (
-                  <p className="text-sm text-slate-500">
-                    {t("Inga intervjutider upplagda ännu.", "No interview slots added yet.")}
-                  </p>
-                ) : (
-                  interviewSlots.map((slot) => (
-                    <div key={slot.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3">
-                      <div className="text-sm text-slate-700">
-                        {slot.slot_date} • {slot.start_time.slice(0, 5)}-{slot.end_time.slice(0, 5)}
-                        {slot.is_booked && <span className="ml-2 text-emerald-700">{t("Bokad", "Booked")}</span>}
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => void handleDeleteInterviewSlot(slot.id)}
-                        disabled={slot.is_booked}
-                      >
-                        {t("Ta bort", "Remove")}
-                      </Button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
 
             {/* Manual Entry Mode */}
             {entryMode === 'manual_entry' && (
@@ -809,10 +755,16 @@ export default function ProfilePage() {
               />
               <div className="grid gap-1.5 leading-none">
                 <label htmlFor="gdpr-check" className="text-sm font-medium leading-snug cursor-pointer text-slate-700">
-                  {t("Jag godkänner att jobbnu.se behandlar och lagrar mina uppgifter för jobbanalys och matchning", "I consent to jobbnu.se processing and storing my data for job analysis and matching")}
+                  {t(
+                    "Jag godkänner att jobbnu.se behandlar och lagrar mina uppgifter enbart för matchningskriterier och relevanta jobbförslag",
+                    "I consent to jobbnu.se processing and storing my data only for matching criteria and relevant job suggestions"
+                  )}
                 </label>
                 <p className="text-xs text-slate-500">
-                  {t("Krävs för att kunna spara din profil och ge dig matchningar. Läs mer i vår", "Required to save your profile and provide matches. Read more in our")}{" "}
+                  {t(
+                    "Krävs för att spara din profil och kunna visa relevanta matchningar. Din profil används inte i interna kandidat-sökningar om du inte också godkänner det frivilliga samtycket till höger. Läs mer i vår",
+                    "Required to save your profile and show relevant matches. Your profile is not used in internal candidate searches unless you also approve the optional consent on the right. Read more in our"
+                  )}{" "}
                   <Link href="/integritetspolicy" target="_blank" className="text-blue-600 underline hover:text-blue-800">
                     {t("Integritetspolicy", "Privacy Policy")}
                   </Link>
@@ -821,33 +773,271 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* Checkbox 2 (optional) */}
-            <div className="flex items-start space-x-3 p-4 bg-white rounded-md border border-slate-200">
-              <input
-                id="job-offer-check"
-                type="checkbox"
-                checked={jobOfferConsent}
-                onChange={(e) => setJobOfferConsent(e.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600 cursor-pointer"
-              />
-              <div className="grid gap-1.5 leading-none">
-                <label htmlFor="job-offer-check" className="text-sm font-medium leading-snug cursor-pointer text-slate-700">
-                  {t("Jag vill att jobbnu.se kontaktar mig om konkreta jobberbjudanden eller intervjuer som matchar min profil", "I want jobbnu.se to contact me about specific job offers or interviews that match my profile")}
-                </label>
-                <p className="text-xs text-slate-500">
-                  {t("Valfritt. Vi kontaktar dig endast när vi har ett relevant jobberbjudande eller en intervju som matchar din profil. Du kan när som helst återkalla samtycket.", "Optional. We will only contact you when we have a relevant job offer or interview matching your profile. You can withdraw your consent at any time.")}
-                </p>
-              </div>
-            </div>
-
             <Button type="submit" disabled={loading || !gdprAccepted || isRateLimited} className="w-full">
               {loading ? t("Sparar...", "Saving...") : isRateLimited ? t(`Vänta innan du sparar igen (${countdown}s)`, `Wait before saving again (${countdown}s)`) : t("Spara ändringar", "Save changes")}
             </Button>
 
-            {message && <p className="text-sm text-center text-green-600 mt-4">{message}</p>}
+            {message && (
+              <p
+                className={`mt-4 text-center text-sm ${
+                  message.toLowerCase().includes("fel") || message.toLowerCase().includes("kunde inte")
+                    ? "text-red-600"
+                    : "text-green-600"
+                }`}
+              >
+                {message}
+              </p>
+            )}
           </form>
         </CardContent>
       </Card>
+
+        <div className="space-y-6 lg:sticky lg:top-24">
+          <Card>
+            <CardContent className="space-y-4 p-5">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start space-x-3">
+                  <input
+                    id="job-offer-check"
+                    type="checkbox"
+                    checked={jobOfferConsent}
+                    onChange={(e) => setJobOfferConsent(e.target.checked)}
+                    className="mt-1 h-4 w-4 cursor-pointer rounded border-gray-300 text-blue-600 focus:ring-blue-600"
+                  />
+                  <div className="grid gap-1.5 leading-none">
+                    <label htmlFor="job-offer-check" className="cursor-pointer text-sm font-medium leading-snug text-slate-700">
+                      {t(
+                        "Jag vill att JobbNu får använda min profil för att hitta relevanta jobbmöjligheter och kontakta mig vid stark matchning",
+                        "I want JobbNu to use my profile to find relevant opportunities and contact me when there is a strong match"
+                      )}
+                    </label>
+                    <p className="text-xs text-slate-500">
+                      {t(
+                        "Valfritt. Om du godkänner detta kan JobbNu använda din profil i interna sökningar för att hitta relevanta kandidater till jobb eller rekryteringsförfrågningar. Du kan när som helst återkalla samtycket.",
+                        "Optional. If you consent, JobbNu can use your profile in internal searches to find relevant candidates for jobs or recruiter requests. You can withdraw your consent at any time."
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                    <Mail className="h-4 w-4" />
+                    {t("Koppla e-post för ansökningar", "Connect email for applications")}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {t(
+                      "Anslut Gmail eller Outlook så att jobbansökningar kan skickas från din riktiga mailbox.",
+                      "Connect Gmail or Outlook so job applications can be sent from your real mailbox."
+                    )}
+                  </p>
+                </div>
+                <Button type="button" variant="outline" onClick={() => void refreshEmailAccounts()}>
+                  {t("Uppdatera", "Refresh")}
+                </Button>
+              </div>
+
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {t(
+                  "När Gmail/Outlook är kopplat kan du skicka skräddarsydda ansökningar direkt från JobbNu.",
+                  "Once Gmail/Outlook is connected, you can send tailored applications directly from JobbNu."
+                )}
+              </div>
+
+              {emailAccountsMessage && <p className="text-sm text-slate-700">{emailAccountsMessage}</p>}
+
+              {emailAccountsLoading ? (
+                <p className="text-sm text-slate-500">{t("Laddar e-postanslutningar...", "Loading email connections...")}</p>
+              ) : (
+                <div className="space-y-3">
+                  {([
+                    { provider: "google", label: "Gmail", account: googleConnection },
+                    { provider: "microsoft", label: "Outlook", account: microsoftConnection },
+                  ] as const).map(({ provider, label, account }) => {
+                    const isConnected = account?.status === "connected";
+                    return (
+                      <div key={provider} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="font-medium text-slate-900">{label}</h4>
+                            <p className="mt-1 text-sm text-slate-600">
+                              {isConnected
+                                ? account?.email || t("Ansluten", "Connected")
+                                : t("Inte ansluten ännu.", "Not connected yet.")}
+                            </p>
+                            {account?.lastError && account.status !== "connected" && (
+                              <p className="mt-2 text-xs text-red-600">{account.lastError}</p>
+                            )}
+                          </div>
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                              isConnected ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-700"
+                            }`}
+                          >
+                            {isConnected ? t("Ansluten", "Connected") : t("Ej ansluten", "Not connected")}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleConnectEmail(provider)}
+                            disabled={emailConnectLoading === provider}
+                          >
+                            {emailConnectLoading === provider
+                              ? t("Öppnar...", "Opening...")
+                              : isConnected
+                              ? t("Anslut igen", "Reconnect")
+                              : t("Koppla", "Connect")}
+                          </Button>
+                          {account && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void handleDisconnectEmail(provider)}
+                              disabled={emailDisconnectLoading === provider}
+                            >
+                              {emailDisconnectLoading === provider
+                                ? t("Kopplar från...", "Disconnecting...")
+                                : t("Koppla från", "Disconnect")}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="space-y-4 p-5">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  {t("Genererade dokument", "Generated documents")}
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  {t(
+                    "Här kan du öppna ditt senaste AI-genererade CV och personliga brev.",
+                    "Here you can open your latest AI-generated CV and cover letter."
+                  )}
+                </p>
+              </div>
+
+              {generatedDocsLoading && (
+                <p className="text-sm text-slate-500">{t("Laddar dokument...", "Loading documents...")}</p>
+              )}
+
+              {!generatedDocsLoading && generatedDocs?.latestOrder?.generationStatus === "generating" && (
+                <p className="text-sm text-blue-700">
+                  {t("Ett dokument håller på att genereras just nu.", "A document is currently being generated.")}
+                </p>
+              )}
+
+              {!generatedDocsLoading && generatedDocs?.latestOrder && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                  <span className="font-medium text-slate-700">{t("Senaste dokumentstatus:", "Latest document status:")}</span>{" "}
+                  <span className="text-slate-600">
+                    {generatedDocs.latestOrder.generationStatus === "done"
+                      ? t("klart", "done")
+                      : generatedDocs.latestOrder.generationStatus === "generating"
+                      ? t("genererar", "generating")
+                      : generatedDocs.latestOrder.generationStatus === "error"
+                      ? t("fel vid generering", "generation error")
+                      : generatedDocs.latestOrder.generationStatus === "pending" &&
+                        generatedDocs.latestOrder.packageFlow &&
+                        !generatedDocs.latestCv &&
+                        !generatedDocs.latestLetter
+                      ? t("väntar på betalning eller start av generering", "waiting for payment or generation start")
+                      : generatedDocs.latestOrder.generationStatus || t("okänd", "unknown")}
+                  </span>
+                </div>
+              )}
+
+              {!generatedDocsLoading && !generatedDocs?.latestCv && !generatedDocs?.latestLetter && (
+                <p className="text-sm text-slate-500">
+                  {t("Inga genererade dokument hittades ännu.", "No generated documents found yet.")}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-3">
+                {generatedDocs?.latestCv && (
+                  <Button type="button" variant="outline" onClick={() => setShowGeneratedCv((prev) => !prev)}>
+                    {showGeneratedCv ? t("Dölj senaste CV", "Hide latest CV") : t("Visa senaste CV", "View latest CV")}
+                  </Button>
+                )}
+                {generatedDocs?.latestLetter && (
+                  <Button type="button" variant="outline" onClick={() => setShowGeneratedLetter((prev) => !prev)}>
+                    {showGeneratedLetter
+                      ? t("Dölj senaste personliga brev", "Hide latest cover letter")
+                      : t("Visa senaste personliga brev", "View latest cover letter")}
+                  </Button>
+                )}
+              </div>
+
+              {showGeneratedCv && generatedDocs?.latestCv?.content && (
+                <CvPreview raw={generatedDocs.latestCv.content} className="overflow-hidden rounded-xl border border-slate-200" />
+              )}
+
+              {showGeneratedLetter && generatedDocs?.latestLetter?.content && (
+                <LetterPreview raw={generatedDocs.latestLetter.content} className="overflow-hidden rounded-xl border border-slate-200" />
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="space-y-4 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">
+                    {t("Matchningsstatus", "Matching status")}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {t(
+                      "Här ser du om dina matchningsvektorer har uppdaterats korrekt efter att profilen sparats.",
+                      "Here you can see whether your matching vectors were updated correctly after saving your profile."
+                    )}
+                  </p>
+                </div>
+                {vectorStatus?.status === "failed" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleRetryVectorGeneration()}
+                    disabled={vectorRetryLoading}
+                  >
+                    {vectorRetryLoading ? t("Försöker igen...", "Retrying...") : t("Försök igen", "Retry")}
+                  </Button>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                <div>
+                  <span className="font-medium">{t("Status:", "Status:")}</span>{" "}
+                  {vectorStatus?.status === "pending" && t("väntar på start", "pending")}
+                  {vectorStatus?.status === "processing" && t("bearbetar", "processing")}
+                  {vectorStatus?.status === "success" && t("klar", "success")}
+                  {vectorStatus?.status === "failed" && t("misslyckades", "failed")}
+                  {(!vectorStatus || vectorStatus.status === "idle") &&
+                    t("ingen uppdatering pågår", "no update in progress")}
+                </div>
+                {typeof vectorStatus?.attempts === "number" && vectorStatus.attempts > 0 && (
+                  <div className="mt-1 text-xs text-slate-500">
+                    {t("Antal försök:", "Attempts:")} {vectorStatus.attempts}
+                  </div>
+                )}
+                {normalizedVectorError && (
+                  <div className="mt-2 text-xs text-red-600">{normalizedVectorError}</div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

@@ -3,8 +3,7 @@ import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { cityToGeo } from "@/lib/city-geo";
 import { geocodeAddress } from "@/lib/geocoder";
-
-const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://worker:8000";
+import { triggerProfileVectorization } from "@/lib/profileVectorization";
 
 function normalizeExtractedText(raw: string): string {
   if (!raw) return "";
@@ -190,6 +189,19 @@ export async function POST(req: Request) {
       profileData.candidate_text_vector = extractedText;
     }
 
+    const hasCv = extractedText || profileData.cv_bucket_path || existingProfile?.cv_bucket_path;
+    const hasManualEntry = entryMode === 'manual_entry' && (
+      personaCurrent || personaTarget || skills || education
+    );
+    const shouldRegenerateVectors = Boolean(hasCv || hasManualEntry || extractedText);
+    if (shouldRegenerateVectors) {
+      profileData.vector_generation_status = "pending";
+      profileData.vector_generation_requested_at = new Date().toISOString();
+      profileData.vector_generation_completed_at = null;
+      profileData.vector_generation_last_error = null;
+      profileData.vector_generation_attempts = 0;
+    }
+
     const { error: upsertError } = await supabase
       .from("candidate_profiles")
       .upsert(profileData, { onConflict: "user_id" });
@@ -198,43 +210,31 @@ export async function POST(req: Request) {
       throw new Error(`Profile update failed: ${upsertError.message}`);
     }
 
-    const hasCv = extractedText || profileData.cv_bucket_path || existingProfile?.cv_bucket_path;
-    const hasManualEntry = entryMode === 'manual_entry' && (
-      personaCurrent || personaTarget || skills || education
-    );
-
-    // Only clear vectors (and trigger regeneration) when we have content to process.
-    // This prevents vectors from being permanently nulled when the webhook won't fire.
-    if (hasCv || hasManualEntry) {
-      await supabase
-        .from("candidate_profiles")
-        .update({
-          profile_vector: null,
-          persona_current_vector: null,
-          persona_target_vector: null,
-          persona_past_1_vector: null,
-          persona_past_2_vector: null,
-          persona_past_3_vector: null,
-        })
-        .eq("user_id", user.id);
-
+    if (shouldRegenerateVectors) {
       console.log("🚀 Triggering vector update webhook for user:", user.id, "mode:", entryMode);
-
       const cvText = extractedText || "";
-
-      fetch(`${WORKER_URL}/webhook/update-profile`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: user.id,
-          cv_text: cvText || ""
-        })
-      }).catch(err => console.error("Webhook trigger failed:", err));
+      triggerProfileVectorization(user.id, cvText).catch(async (err) => {
+        console.error("Webhook trigger failed:", err);
+        try {
+          await supabase
+            .from("candidate_profiles")
+            .update({
+              vector_generation_status: "failed",
+              vector_generation_completed_at: new Date().toISOString(),
+              vector_generation_last_error: err instanceof Error ? err.message : "Webhook trigger failed",
+              vector_generation_attempts: 1,
+            })
+            .eq("user_id", user.id);
+        } catch (updateErr) {
+          console.error("Failed to persist vector trigger error:", updateErr);
+        }
+      });
     }
 
     return NextResponse.json({
       success: true,
-      newCvUrl: profileData.cv_file_url
+      newCvUrl: profileData.cv_file_url,
+      vectorGenerationStatus: shouldRegenerateVectors ? "pending" : "idle",
     });
 
   } catch (err: unknown) {

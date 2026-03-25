@@ -8,6 +8,11 @@ from pathlib import Path
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
+try:
+    from scripts.job_contact_extractor import extract_job_contact_data
+except ModuleNotFoundError:
+    from job_contact_extractor import extract_job_contact_data
+
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -188,6 +193,22 @@ def fetch_and_upsert_new_jobs() -> None:
                     "category_tags": category_tags,
                 }
 
+                contact_data = extract_job_contact_data(
+                    description_text=description.get("text"),
+                    webpage_url=job.get("webpage_url"),
+                    source_snapshot=job,
+                )
+
+                job_data.update({
+                    "contact_email": contact_data["contact_email"],
+                    "has_contact_email": contact_data["has_contact_email"],
+                    "contact_email_source": contact_data["contact_email_source"],
+                    "application_url": contact_data["application_url"],
+                    "application_url_source": contact_data["application_url_source"],
+                    "application_channel": contact_data["application_channel"],
+                    "application_channel_reason": contact_data["application_channel_reason"],
+                })
+
                 job_batch.append(job_data)
 
             supabase.table("job_ads").upsert(job_batch, on_conflict="id").execute()
@@ -208,9 +229,71 @@ def fetch_and_upsert_new_jobs() -> None:
     save_last_run_date()
 
 
+def refresh_missing_contact_fields() -> None:
+    repair_limit = int(os.getenv("JOB_CONTACT_REPAIR_LIMIT", "250"))
+    if repair_limit <= 0:
+        print("ℹ️ Skipping contact-field repair pass (JOB_CONTACT_REPAIR_LIMIT <= 0).")
+        return
+
+    print(f"🔧 Repairing up to {repair_limit} older jobs missing contact classification...")
+    try:
+        response = (
+            supabase.table("job_ads")
+            .select("id, description_text, webpage_url, source_snapshot")
+            .is_("application_channel", "null")
+            .limit(repair_limit)
+            .execute()
+        )
+    except Exception as e:
+        print(f"❌ Failed to fetch jobs for repair pass: {e}")
+        return
+
+    rows = response.data or []
+    if not rows:
+        print("✅ No older jobs missing contact classification.")
+        return
+
+    updates = []
+    direct_email_count = 0
+    external_apply_count = 0
+
+    for row in rows:
+        contact = extract_job_contact_data(
+            description_text=row.get("description_text"),
+            webpage_url=row.get("webpage_url"),
+            source_snapshot=row.get("source_snapshot"),
+        )
+        if contact["has_contact_email"]:
+            direct_email_count += 1
+        elif contact["application_channel"] == "external_apply":
+            external_apply_count += 1
+
+        updates.append(
+            {
+                "id": row["id"],
+                "contact_email": contact["contact_email"],
+                "has_contact_email": contact["has_contact_email"],
+                "contact_email_source": contact["contact_email_source"],
+                "application_url": contact["application_url"],
+                "application_url_source": contact["application_url_source"],
+                "application_channel": contact["application_channel"],
+                "application_channel_reason": contact["application_channel_reason"],
+            }
+        )
+
+    try:
+        supabase.table("job_ads").upsert(updates, on_conflict="id").execute()
+        print(
+            f"✅ Repaired {len(updates)} older jobs. direct_email={direct_email_count}, external_apply={external_apply_count}"
+        )
+    except Exception as e:
+        print(f"❌ Failed to save repair-pass updates: {e}")
+
+
 def run_job_update() -> None:
     delete_expired_jobs()
     fetch_and_upsert_new_jobs()
+    refresh_missing_contact_fields()
 
 
 if __name__ == "__main__":

@@ -92,12 +92,6 @@ export default function Header() {
               >
                 CV
               </Link>
-              <Link
-                href="/pb"
-                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
-              >
-                {t("PB", "PB")}
-              </Link>
             </div>
           </div>
 

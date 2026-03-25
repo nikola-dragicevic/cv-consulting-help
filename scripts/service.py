@@ -5,6 +5,7 @@ import schedule
 import time
 import httpx
 import math
+from datetime import datetime
 from contextlib import asynccontextmanager
 from threading import Thread
 from fastapi import FastAPI, HTTPException
@@ -909,6 +910,24 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
     cv_text = req.cv_text
 
     try:
+        try:
+            profile_patch = (
+                supabase.table("candidate_profiles")
+                .select("vector_generation_attempts")
+                .eq("user_id", req.user_id)
+                .single()
+                .execute()
+            )
+            current_attempts = int((profile_patch.data or {}).get("vector_generation_attempts") or 0)
+            supabase.table("candidate_profiles").update({
+                "vector_generation_status": "processing",
+                "vector_generation_last_error": None,
+                "vector_generation_completed_at": None,
+                "vector_generation_attempts": current_attempts + 1,
+            }).eq("user_id", req.user_id).execute()
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] Failed to set processing status: {e}")
+
         # 1) Fetch profile
         profile_res = (
             supabase.table("candidate_profiles")
@@ -1107,12 +1126,23 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
             print(f"⚠️ [WEBHOOK] Profile signal extraction failed (non-critical): {e}")
 
         # Save all updates to DB
+        update_data["vector_generation_status"] = "success"
+        update_data["vector_generation_completed_at"] = datetime.utcnow().isoformat()
+        update_data["vector_generation_last_error"] = None
         supabase.table("candidate_profiles").update(update_data).eq("user_id", req.user_id).execute()
 
         print(f"✅ [WEBHOOK] Success for {req.user_id}")
         return {"status": "success", "user_id": req.user_id, "entry_mode": entry_mode}
 
-    except HTTPException:
+    except HTTPException as e:
+        try:
+            supabase.table("candidate_profiles").update({
+                "vector_generation_status": "failed",
+                "vector_generation_completed_at": datetime.utcnow().isoformat(),
+                "vector_generation_last_error": str(e.detail),
+            }).eq("user_id", req.user_id).execute()
+        except Exception as update_err:
+            print(f"⚠️ [WEBHOOK] Failed to persist HTTPException status: {update_err}")
         raise
     except Exception as e:
         print(f"❌ [WEBHOOK] Critical Error: {e}")
@@ -1120,7 +1150,10 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
         # attempt to store has_picture even on critical error
         try:
             supabase.table("candidate_profiles").update({
-                "has_picture": has_picture
+                "has_picture": has_picture,
+                "vector_generation_status": "failed",
+                "vector_generation_completed_at": datetime.utcnow().isoformat(),
+                "vector_generation_last_error": str(e),
             }).eq("user_id", req.user_id).execute()
         except Exception:
             pass

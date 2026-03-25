@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Bookmark, BookmarkCheck, Building2, Briefcase, ChevronDown, ChevronRight, Crown, MapPin, RefreshCw, User as UserIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bookmark, BookmarkCheck, Building2, Briefcase, ChevronDown, ChevronRight, Crown, Download, Mail, MapPin, RefreshCw, Send, Sparkles, User as UserIcon } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 
 import { analyzeSkillGap, extractCandidateSkills } from "@/lib/gapAnalysis";
@@ -40,6 +40,10 @@ interface Job {
   manager_explanation?: string;
   job_url?: string | null;
   webpage_url?: string | null;
+  contact_email?: string | null;
+  has_contact_email?: boolean | null;
+  application_url?: string | null;
+  application_channel?: string | null;
   skills_data?: {
     required_skills?: string[];
     preferred_skills?: string[];
@@ -75,9 +79,7 @@ const EMPTY_DASHBOARD_RESULTS: MatchResults = {
   },
 };
 
-type ScoreMode = "jobbnu" | "keyword_match";
-
-const SCORE_MODE_STORAGE_KEY = "dashboard-score-mode";
+type ScoreMode = "jobbnu";
 
 export function MatchesDashboard() {
   const { t } = useLanguage();
@@ -104,12 +106,17 @@ export function MatchesDashboard() {
   const [radiusInput, setRadiusInput] = useState("40");
   const [wholeSweden, setWholeSweden] = useState(false);
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
+  const [hasRepresentationSubscription, setHasRepresentationSubscription] = useState(false);
+  const [freeApplicationsUsed, setFreeApplicationsUsed] = useState(0);
+  const [freeApplicationsRemaining, setFreeApplicationsRemaining] = useState(2);
   const [isAdmin, setIsAdmin] = useState(false);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [subscriptionCheckoutLoading, setSubscriptionCheckoutLoading] = useState(false);
+  const [autoApplyCheckoutLoading, setAutoApplyCheckoutLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
   const [savedJobIds, setSavedJobIds] = useState<Set<string>>(new Set());
-  const [selectedScoreMode, setSelectedScoreMode] = useState<ScoreMode>("jobbnu");
-  const [hasRunMatchOnce, setHasRunMatchOnce] = useState(false);
+  const [submittedJobIds, setSubmittedJobIds] = useState<Set<string>>(new Set());
+  const selectedScoreMode: ScoreMode = "jobbnu";
 
   useEffect(() => {
     const supabase = getBrowserSupabase();
@@ -149,22 +156,21 @@ export function MatchesDashboard() {
   }, [savedJobIds, user?.id]);
 
   useEffect(() => {
-    const raw = window.localStorage.getItem(SCORE_MODE_STORAGE_KEY);
-    if (raw === "keyword_match" || raw === "ats") {
-      setSelectedScoreMode("keyword_match");
-      return;
+    const key = user?.id ? `submitted-jobs:${user.id}` : "submitted-jobs:guest";
+    try {
+      const raw = window.localStorage.getItem(key);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      const ids = Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+      setSubmittedJobIds(new Set(ids));
+    } catch {
+      setSubmittedJobIds(new Set());
     }
-    setSelectedScoreMode("jobbnu");
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
-    window.localStorage.setItem(SCORE_MODE_STORAGE_KEY, selectedScoreMode);
-  }, [selectedScoreMode]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    void loadSavedDashboardResults(selectedScoreMode, true);
-  }, [user?.id, selectedScoreMode]);
+    const key = user?.id ? `submitted-jobs:${user.id}` : "submitted-jobs:guest";
+    window.localStorage.setItem(key, JSON.stringify(Array.from(submittedJobIds)));
+  }, [submittedJobIds, user?.id]);
 
   async function fetchSubscriptionStatus() {
     try {
@@ -173,12 +179,36 @@ export function MatchesDashboard() {
       if (!res.ok) return;
       const data = await res.json();
       setHasActiveSubscription(Boolean(data?.hasActiveSubscription));
+      setHasRepresentationSubscription(Boolean(data?.hasRepresentationSubscription));
+      setFreeApplicationsUsed(typeof data?.freeApplicationsUsed === "number" ? data.freeApplicationsUsed : 0);
+      setFreeApplicationsRemaining(typeof data?.freeApplicationsRemaining === "number" ? data.freeApplicationsRemaining : 2);
       setIsAdmin(Boolean(data?.isAdmin || data?.status === "admin_override"));
     } catch {
       setHasActiveSubscription(false);
+      setHasRepresentationSubscription(false);
+      setFreeApplicationsUsed(0);
+      setFreeApplicationsRemaining(2);
       setIsAdmin(false);
     } finally {
       setSubscriptionLoading(false);
+    }
+  }
+
+  async function openBillingPortal() {
+    try {
+      setPortalLoading(true);
+      const res = await fetch("/api/billing/portal", { method: "POST" });
+      const json = await res.json();
+      if (json?.url) {
+        window.location.href = json.url;
+        return;
+      }
+      setError(json?.error || t("Kunde inte öppna kundportalen.", "Could not open customer portal."));
+    } catch (err) {
+      console.error(err);
+      setError(t("Kunde inte öppna kundportalen.", "Could not open customer portal."));
+    } finally {
+      setPortalLoading(false);
     }
   }
 
@@ -219,37 +249,45 @@ export function MatchesDashboard() {
     return normalized;
   }
 
-  function applyDashboardResponse(data: any) {
-    const normalized = normalizeLegacyJobs(data?.jobs);
+  function applyDashboardResponse(data: Record<string, unknown>) {
+    const rawJobs = Array.isArray(data?.jobs) ? data.jobs : undefined;
+    const candidateCvTextValue = typeof data?.candidate_cv_text === "string" ? data.candidate_cv_text : "";
+    const cachedAtValue =
+      typeof data?.cachedAt === "string"
+        ? data.cachedAt
+        : typeof data?.matchedAt === "string"
+          ? data.matchedAt
+          : new Date().toISOString();
+
+    const normalized = normalizeLegacyJobs(rawJobs);
     setResults((prev) => ({
       intent: prev?.intent || "show_multiple_tracks",
       matchType: "dashboard_legacy_for_user",
-      candidate_cv_text: data?.candidate_cv_text || prev?.candidate_cv_text || "",
+      candidate_cv_text: candidateCvTextValue || prev?.candidate_cv_text || "",
       buckets: {
         current: normalized,
         target: [],
         adjacent: [],
       },
     }));
-    setCandidateCvText(data?.candidate_cv_text || "");
+    setCandidateCvText(candidateCvTextValue);
     setCached(Boolean(data?.cached));
-    setCachedAt(data?.cachedAt || data?.matchedAt || new Date().toISOString());
+    setCachedAt(cachedAtValue);
     setCanRunBasePool(Boolean(data?.canRunBasePool ?? true));
     setRunsRemaining(typeof data?.runsRemaining === "number" ? data.runsRemaining : 3);
-    setNextRefreshTime(data?.nextAllowedTime || null);
+    setNextRefreshTime(typeof data?.nextAllowedTime === "string" ? data.nextAllowedTime : null);
     setHoursUntilRefresh(typeof data?.hoursUntilRefresh === "number" ? data.hoursUntilRefresh : 0);
     setMinutesUntilRefresh(typeof data?.minutesUntilRefresh === "number" ? data.minutesUntilRefresh : 0);
-    setHasRunMatchOnce(true);
   }
 
-  async function loadSavedDashboardResults(scoreMode: ScoreMode, silent = false) {
+  const loadSavedDashboardResults = useCallback(async (silent = false) => {
     try {
       if (!silent) {
         setError(null);
         setEmptyStateMessage(null);
       }
 
-      const res = await fetch(`/api/match/for-user?score_mode=${scoreMode}`, { method: "GET" });
+      const res = await fetch("/api/match/for-user", { method: "GET" });
       const { data, raw } = await safeParseResponse(res);
 
       if (res.ok) {
@@ -260,7 +298,7 @@ export function MatchesDashboard() {
       if (res.status === 404 && data?.noCacheFound) {
         setCanRunBasePool(Boolean(data?.canRunBasePool ?? true));
         setRunsRemaining(typeof data?.runsRemaining === "number" ? data.runsRemaining : 3);
-        setNextRefreshTime(data.nextAllowedTime || null);
+        setNextRefreshTime(typeof data?.nextAllowedTime === "string" ? data.nextAllowedTime : null);
         setHoursUntilRefresh(typeof data?.hoursUntilRefresh === "number" ? data.hoursUntilRefresh : 0);
         setMinutesUntilRefresh(typeof data?.minutesUntilRefresh === "number" ? data.minutesUntilRefresh : 0);
         if (!silent) {
@@ -278,7 +316,12 @@ export function MatchesDashboard() {
         setError(err instanceof Error ? err.message : "Kunde inte läsa sparade jobbförslag.");
       }
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    void loadSavedDashboardResults(true);
+  }, [user?.id, loadSavedDashboardResults]);
 
   async function safeParseResponse(res: Response) {
     const text = await res.text();
@@ -307,6 +350,24 @@ export function MatchesDashboard() {
     }
   }
 
+  async function startAutoApplyCheckout() {
+    try {
+      setAutoApplyCheckoutLoading(true);
+      const res = await fetch("/api/checkout/representation-subscription", { method: "POST" });
+      const json = await res.json();
+      if (json?.url) {
+        window.location.href = json.url;
+        return;
+      }
+      setError(json?.error || t("Kunde inte starta Auto Apply.", "Could not start Auto Apply."));
+    } catch (err) {
+      console.error(err);
+      setError(t("Kunde inte starta Auto Apply.", "Could not start Auto Apply."));
+    } finally {
+      setAutoApplyCheckoutLoading(false);
+    }
+  }
+
   async function runLegacyMatch() {
     try {
       setLegacyActionLoading(true);
@@ -332,13 +393,11 @@ export function MatchesDashboard() {
                 lat: 62,
                 lon: 15,
                 radius_km: 9999,
-                score_mode: selectedScoreMode,
               }
             : {
                 lat: profileLocation!.location_lat,
                 lon: profileLocation!.location_lon,
                 radius_km: radiusForQuery,
-                score_mode: selectedScoreMode,
               }
         ),
       });
@@ -380,15 +439,15 @@ export function MatchesDashboard() {
   const allJobs = dedupeJobsById([...buckets.current, ...buckets.target, ...buckets.adjacent]).sort(
     (a, b) => (getDisplayScore(b, selectedScoreMode) ?? 0) - (getDisplayScore(a, selectedScoreMode) ?? 0)
   );
+  const directApplyJobs = allJobs.filter((job) => isDirectApplyJob(job) && !submittedJobIds.has(job.id));
+  const externalApplyJobs = allJobs.filter((job) => !isDirectApplyJob(job) && !submittedJobIds.has(job.id));
+  const submittedJobs = allJobs.filter((job) => submittedJobIds.has(job.id));
   const savedJobs = allJobs.filter((job) => savedJobIds.has(job.id));
   const totalMatches = (buckets.current?.length || 0) + (buckets.target?.length || 0) + (buckets.adjacent?.length || 0);
-  const topMatch = [allJobs?.[0]]
+  const topMatch = [directApplyJobs[0] ?? allJobs?.[0]]
     .filter(Boolean)
     .sort((a, b) => (getDisplayScore(b, selectedScoreMode) ?? 0) - (getDisplayScore(a, selectedScoreMode) ?? 0))[0];
   const topMatchScore = topMatch ? getDisplayScore(topMatch, selectedScoreMode) : null;
-  const scoreModeLabel = selectedScoreMode === "jobbnu"
-    ? "AI Manager"
-    : "Keyword Match";
   const hasProfileGeo =
     typeof profileLocation?.location_lat === "number" &&
     typeof profileLocation?.location_lon === "number";
@@ -407,10 +466,17 @@ export function MatchesDashboard() {
       return next;
     });
   };
-  const handleScoreModeChange = (mode: ScoreMode) => {
-    setSelectedScoreMode(mode);
+  const toggleSubmittedJob = (jobId: string) => {
+    setSubmittedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) {
+        next.delete(jobId);
+      } else {
+        next.add(jobId);
+      }
+      return next;
+    });
   };
-
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_#dbeafe_0%,_#f8fafc_38%,_#f8fafc_100%)]">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -483,10 +549,35 @@ export function MatchesDashboard() {
               <div className="flex flex-wrap items-center gap-2">
                 <MetricPill label={t("Totalt", "Total")} value={String(totalMatches)} />
                 <MetricPill
-                  label={t(`Top ${scoreModeLabel}`, `Top ${scoreModeLabel}`)}
+                  label={t("Bästa direktansökan", "Best direct apply")}
                   value={topMatchScore !== null ? `${Math.round(topMatchScore)}%` : "-"}
                 />
-                <MetricPill label={t("Plan", "Plan")} value={subscriptionLoading ? "..." : hasActiveSubscription ? "Premium" : "Free"} />
+                <MetricPill
+                  label={t("Direkt via email", "Direct via email")}
+                  value={String(directApplyJobs.length)}
+                />
+                <MetricPill
+                  label={t("Extern ansökan", "External apply")}
+                  value={String(externalApplyJobs.length)}
+                />
+                <MetricPill
+                  label={t("Skickade ansökningar", "Submitted applications")}
+                  value={String(submittedJobs.length)}
+                />
+                <MetricPill
+                  label={t("Plan", "Plan")}
+                  value={
+                    subscriptionLoading
+                      ? "..."
+                      : hasActiveSubscription && hasRepresentationSubscription
+                        ? t("Premium + Auto Apply", "Premium + Auto Apply")
+                        : hasActiveSubscription
+                          ? "Premium"
+                          : hasRepresentationSubscription
+                            ? t("Auto Apply", "Auto Apply")
+                            : "Free"
+                  }
+                />
                 {isAdmin && (
                   <Badge className="border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-50">
                     {t("Admin", "Admin")} • override
@@ -518,7 +609,30 @@ export function MatchesDashboard() {
                     className="min-w-[176px] bg-amber-500 text-black hover:bg-amber-400"
                   >
                     <Crown />
-                    {subscriptionCheckoutLoading ? t("Startar...", "Starting...") : t("Prenumerera 100 kr/mån", "Subscribe 100 SEK/month")}
+                    {subscriptionCheckoutLoading ? t("Startar...", "Starting...") : t("Prenumerera 99 kr/mån", "Subscribe 99 SEK/month")}
+                  </Button>
+                )}
+                {!hasRepresentationSubscription && (
+                  <Button
+                    onClick={startAutoApplyCheckout}
+                    disabled={autoApplyCheckoutLoading}
+                    className="min-w-[196px] bg-emerald-600 text-white hover:bg-emerald-700"
+                  >
+                    <Sparkles />
+                    {autoApplyCheckoutLoading ? t("Startar...", "Starting...") : t("Starta Auto Apply 300 kr/mån", "Start Auto Apply 300 SEK/month")}
+                  </Button>
+                )}
+                {(hasActiveSubscription || hasRepresentationSubscription) && (
+                  <Button
+                    variant="outline"
+                    onClick={openBillingPortal}
+                    disabled={portalLoading}
+                    className="min-w-[176px]"
+                  >
+                    <Crown />
+                    {portalLoading
+                      ? t("Öppnar...", "Opening...")
+                      : t("Hantera prenumerationer", "Manage subscriptions")}
                   </Button>
                 )}
               </div>
@@ -528,32 +642,44 @@ export function MatchesDashboard() {
           {!hasActiveSubscription && (
             <div className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900">
               {t(
-                "Free-plan: Du ser 4 jobb per lista. Prenumeration (100 kr/mån) låser upp alla jobb.",
-                "Free plan: You can see 4 jobs per list. Subscription (100 SEK/month) unlocks all jobs."
+                "Free-plan: Du ser 4 jobb per lista. Prenumeration (99 kr/mån) låser upp alla jobb.",
+                "Free plan: You can see 4 jobs per list. Subscription (99 SEK/month) unlocks all jobs."
+              )}
+            </div>
+          )}
+
+          {!hasRepresentationSubscription && (
+            <div className="border-t border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-900">
+              {t(
+                `Auto Apply: Du har använt ${freeApplicationsUsed} av 2 fria ansökningar och har ${freeApplicationsRemaining} kvar. Auto Apply (300 kr/mån) låser upp obegränsade ansökningar, personliga email och intervjuförberedelse.`,
+                `Auto Apply: You have used ${freeApplicationsUsed} of 2 free applications and have ${freeApplicationsRemaining} left. Auto Apply (300 SEK/month) unlocks unlimited applications, personal emails, and interview preparation.`
               )}
             </div>
           )}
 
           <div className="border-t border-slate-200 bg-white px-5 py-4">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {t("Visningsläge för matchscore", "Match score view mode")}
+              {t("Ansökningsvägar", "Application routes")}
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {[
-                { mode: "jobbnu" as const, label: "AI Manager sortering" },
-                { mode: "keyword_match" as const, label: "Keyword Match" },
-              ].map((option) => (
-                <Button
-                  key={option.mode}
-                  type="button"
-                  variant={selectedScoreMode === option.mode ? "default" : "outline"}
-                  className={`h-11 text-sm font-semibold ${selectedScoreMode === option.mode ? "bg-slate-900 text-white hover:bg-slate-800" : "border-slate-300"}`}
-                  onClick={() => handleScoreModeChange(option.mode)}
-                  disabled={legacyActionLoading || !hasRunMatchOnce}
-                >
-                  {option.label}
-                </Button>
-              ))}
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div className="text-sm font-semibold text-emerald-950">
+                  {t("Jobben du kan ansöka till direkt", "Jobs you can apply to directly")}
+                </div>
+                <div className="mt-1 text-xs text-emerald-800">
+                  {t("Innehåller email i annonsen", "Contains email in the ad")}
+                </div>
+                <div className="mt-2 text-2xl font-semibold text-emerald-950">{directApplyJobs.length} jobb</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-sm font-semibold text-slate-950">
+                  {t("Jobb med extern ansökningslänk", "Jobs with external application link")}
+                </div>
+                <div className="mt-1 text-xs text-slate-600">
+                  {t("Ansökan sker via extern sida eller där email saknas", "Application happens on an external site or where email is missing")}
+                </div>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">{externalApplyJobs.length} jobb</div>
+              </div>
             </div>
           </div>
 
@@ -588,38 +714,101 @@ export function MatchesDashboard() {
           )}
         </div>
 
-        <Tabs defaultValue="all" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 rounded-xl bg-slate-100 p-2 sm:grid-cols-2">
-            <TabsTrigger value="all" className="rounded-lg py-2">
-              {t("Matchade jobb", "Matched jobs")} ({allJobs.length || 0})
+        <Tabs defaultValue="direct" className="w-full">
+          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 rounded-xl bg-slate-100 p-2 sm:grid-cols-4">
+            <TabsTrigger value="direct" className="rounded-lg py-2">
+              {t("Jobben du kan ansöka till direkt", "Jobs you can apply to directly")} ({directApplyJobs.length || 0})
+            </TabsTrigger>
+            <TabsTrigger value="external" className="rounded-lg py-2">
+              {t("Jobb med extern ansökningslänk", "Jobs with external application link")} ({externalApplyJobs.length || 0})
+            </TabsTrigger>
+            <TabsTrigger value="submitted" className="rounded-lg py-2">
+              {t("Skickade ansökningar", "Submitted applications")} ({submittedJobs.length || 0})
             </TabsTrigger>
             <TabsTrigger value="saved" className="rounded-lg py-2">
               {t("Sparade jobb", "Saved jobs")} ({savedJobs.length || 0})
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="all" className="mt-4">
+          <TabsContent value="direct" className="mt-4">
             <JobLane
-              jobs={allJobs}
-              type="all"
+              jobs={directApplyJobs}
+              type="direct"
+              emptyMessage={t("Inga jobb med kontakt-email hittades ännu i din matchning.", "No jobs with a contact email were found in your matches yet.")}
+              sectionDescription={t("Här visar vi matchade jobb där annonsen innehåller en emailadress och där du kan skicka din ansökan direkt.", "Here we show matched jobs where the ad contains an email address and you can send your application directly.")}
               scoreMode={selectedScoreMode}
               candidateCvText={candidateCvText}
               visibleLimit={visibleJobLimit}
               hasSubscription={hasActiveSubscription}
+              hasAutoApplySubscription={hasRepresentationSubscription}
+              freeApplicationsRemaining={freeApplicationsRemaining}
+              onApplicationRecorded={(used, remaining) => {
+                setFreeApplicationsUsed(used);
+                setFreeApplicationsRemaining(remaining);
+              }}
               savedJobIds={savedJobIds}
+              submittedJobIds={submittedJobIds}
               onToggleSavedJob={toggleSavedJob}
+              onToggleSubmittedJob={toggleSubmittedJob}
+            />
+          </TabsContent>
+          <TabsContent value="external" className="mt-4">
+            <JobLane
+              jobs={externalApplyJobs}
+              type="external"
+              emptyMessage={t("Inga externa ansökningsjobb hittades ännu.", "No external application jobs were found yet.")}
+              sectionDescription={t("Här visar vi matchade jobb där ansökan behöver göras via extern länk eller där email saknas i annonsen.", "Here we show matched jobs where the application needs to be completed via an external link or where the ad has no email.")}
+              scoreMode={selectedScoreMode}
+              candidateCvText={candidateCvText}
+              visibleLimit={visibleJobLimit}
+              hasSubscription={hasActiveSubscription}
+              hasAutoApplySubscription={hasRepresentationSubscription}
+              freeApplicationsRemaining={freeApplicationsRemaining}
+              onApplicationRecorded={(used, remaining) => {
+                setFreeApplicationsUsed(used);
+                setFreeApplicationsRemaining(remaining);
+              }}
+              savedJobIds={savedJobIds}
+              submittedJobIds={submittedJobIds}
+              onToggleSavedJob={toggleSavedJob}
+              onToggleSubmittedJob={toggleSubmittedJob}
+            />
+          </TabsContent>
+          <TabsContent value="submitted" className="mt-4">
+            <JobLane
+              jobs={submittedJobs}
+              type="submitted"
+              emptyMessage={t("Du har inga markerade ansökningar ännu.", "You do not have any marked submitted applications yet.")}
+              sectionDescription={t("Här samlas jobben du har markerat som skickade ansökningar.", "Here we collect the jobs you have marked as submitted applications.")}
+              scoreMode={selectedScoreMode}
+              candidateCvText={candidateCvText}
+              visibleLimit={visibleJobLimit}
+              hasSubscription={hasActiveSubscription}
+              hasAutoApplySubscription={true}
+              freeApplicationsRemaining={freeApplicationsRemaining}
+              onApplicationRecorded={() => {}}
+              savedJobIds={savedJobIds}
+              submittedJobIds={submittedJobIds}
+              onToggleSavedJob={toggleSavedJob}
+              onToggleSubmittedJob={toggleSubmittedJob}
             />
           </TabsContent>
           <TabsContent value="saved" className="mt-4">
             <JobLane
               jobs={savedJobs}
               type="saved"
+              emptyMessage={t("Du har inga sparade jobb ännu.", "You do not have any saved jobs yet.")}
               scoreMode={selectedScoreMode}
               candidateCvText={candidateCvText}
               visibleLimit={visibleJobLimit}
               hasSubscription={hasActiveSubscription}
+              hasAutoApplySubscription={true}
+              freeApplicationsRemaining={freeApplicationsRemaining}
+              onApplicationRecorded={() => {}}
               savedJobIds={savedJobIds}
+              submittedJobIds={submittedJobIds}
               onToggleSavedJob={toggleSavedJob}
+              onToggleSubmittedJob={toggleSubmittedJob}
             />
           </TabsContent>
         </Tabs>
@@ -632,23 +821,40 @@ export function MatchesDashboard() {
 function JobLane({
   jobs,
   type,
+  emptyMessage,
+  sectionDescription,
   scoreMode,
   candidateCvText,
   visibleLimit,
   hasSubscription,
+  hasAutoApplySubscription,
+  freeApplicationsRemaining,
+  onApplicationRecorded,
   savedJobIds,
+  submittedJobIds,
   onToggleSavedJob,
+  onToggleSubmittedJob,
 }: {
   jobs: Job[];
   type: string;
+  emptyMessage?: string;
+  sectionDescription?: string;
   scoreMode: ScoreMode;
   candidateCvText?: string;
   visibleLimit: number | null;
   hasSubscription: boolean;
+  hasAutoApplySubscription: boolean;
+  freeApplicationsRemaining: number;
+  onApplicationRecorded: (used: number, remaining: number) => void;
   savedJobIds: Set<string>;
+  submittedJobIds: Set<string>;
   onToggleSavedJob: (jobId: string) => void;
+  onToggleSubmittedJob: (jobId: string) => void;
 }) {
   const { t } = useLanguage();
+  const visibleJobs = visibleLimit === null ? jobs : jobs.slice(0, visibleLimit);
+  const hiddenCount = Math.max(0, jobs.length - visibleJobs.length);
+
   if (!jobs || jobs.length === 0) {
     return (
       <Card className="border-slate-200 bg-white/90">
@@ -659,17 +865,23 @@ function JobLane({
             {type === "adjacent" && t("Inga matchningar i relaterade områden.", "No matches in related areas.")}
             {type === "all" && t("Inga jobb hittades ännu.", "No jobs found yet.")}
             {type === "saved" && t("Du har inga sparade jobb ännu.", "You do not have any saved jobs yet.")}
+            {type === "submitted" && t("Du har inga markerade ansökningar ännu.", "You do not have any marked submitted applications yet.")}
+            {type !== "current" && type !== "target" && type !== "adjacent" && type !== "all" && type !== "saved" && (emptyMessage || t("Inga jobb hittades ännu.", "No jobs found yet."))}
           </p>
         </CardContent>
       </Card>
     );
   }
 
-  const visibleJobs = visibleLimit === null ? jobs : jobs.slice(0, visibleLimit);
-  const hiddenCount = Math.max(0, jobs.length - visibleJobs.length);
-
   return (
     <div className="space-y-3">
+      {sectionDescription && (
+        <Card className="border-slate-200 bg-white/90 py-0">
+          <CardContent className="py-4 text-sm text-slate-600">
+            {sectionDescription}
+          </CardContent>
+        </Card>
+      )}
       {!hasSubscription && hiddenCount > 0 && (
         <Card className="border-amber-200 bg-amber-50 py-0">
           <CardContent className="py-4">
@@ -692,8 +904,13 @@ function JobLane({
           index={index}
           candidateCvText={candidateCvText}
           locked={!hasSubscription && visibleLimit !== null && index >= visibleLimit}
+          hasAutoApplySubscription={hasAutoApplySubscription}
+          freeApplicationsRemaining={freeApplicationsRemaining}
+          onApplicationRecorded={onApplicationRecorded}
           saved={savedJobIds.has(job.id)}
+          submitted={submittedJobIds.has(job.id)}
           onToggleSavedJob={onToggleSavedJob}
+          onToggleSubmittedJob={onToggleSubmittedJob}
         />
       ))}
     </div>
@@ -706,16 +923,26 @@ function SlimMatchCard({
   index,
   candidateCvText,
   locked = false,
+  hasAutoApplySubscription,
+  freeApplicationsRemaining,
+  onApplicationRecorded,
   saved = false,
+  submitted = false,
   onToggleSavedJob,
+  onToggleSubmittedJob,
 }: {
   job: Job;
   scoreMode: ScoreMode;
   index: number;
   candidateCvText?: string;
   locked?: boolean;
+  hasAutoApplySubscription: boolean;
+  freeApplicationsRemaining: number;
+  onApplicationRecorded: (used: number, remaining: number) => void;
   saved?: boolean;
+  submitted?: boolean;
   onToggleSavedJob: (jobId: string) => void;
+  onToggleSubmittedJob: (jobId: string) => void;
 }) {
   const { t } = useLanguage();
   const [showInsights, setShowInsights] = useState(false);
@@ -725,16 +952,255 @@ function SlimMatchCard({
     const candidateSkills = extractCandidateSkills(candidateCvText);
     return analyzeSkillGap(candidateSkills, job.skills_data);
   }, [showInsights, candidateCvText, job.skills_data]);
+  const [generatedEmailText, setGeneratedEmailText] = useState("");
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailSendLoading, setEmailSendLoading] = useState(false);
+  const [emailStatus, setEmailStatus] = useState<string | null>(null);
+  const [showEmailComposer, setShowEmailComposer] = useState(false);
+  const [interviewPrepLoading, setInterviewPrepLoading] = useState(false);
+  const [showInterviewPreparation, setShowInterviewPreparation] = useState(false);
+  const [interviewPreparation, setInterviewPreparation] = useState("");
+  const [interviewQuestions, setInterviewQuestions] = useState("");
+  const [showExtensionHelp, setShowExtensionHelp] = useState(false);
+  const [cvDownloadLoading, setCvDownloadLoading] = useState(false);
 
   const primaryScore = getDisplayScore(job, scoreMode);
   const roundedPrimaryScore = primaryScore === null ? null : Math.round(primaryScore);
-  const primaryLabel = scoreMode === "jobbnu" ? "AI Manager Sorting" : "Keyword Match";
-  const primaryCaption = scoreMode === "jobbnu"
-    ? "Vector similarity + keyword hits - keyword misses"
-    : "Keyword hits only";
-  const managerScore = job.manager_score ?? null;
-  const grade = getManagerGrade(managerScore);
-  const managerPct = managerScore !== null ? Math.max(0, Math.min(100, Math.round((managerScore / 10) * 100))) : null;
+  const primaryLabel = "AI Manager ranking";
+  const primaryCaption = "Relevans mot din profil och annonsens krav";
+  const isDirectApply = isDirectApplyJob(job);
+  const canSendDirectly = isDirectApply && Boolean(job.contact_email);
+  const externalApplyUrl = job.application_url || job.webpage_url || job.job_url || null;
+  const portal = detectPortal(externalApplyUrl);
+  const autoApplyLocked = !hasAutoApplySubscription && freeApplicationsRemaining <= 0;
+
+  async function handleGenerateEmail() {
+    try {
+      setEmailLoading(true);
+      setEmailStatus(null);
+      const res = await fetch("/api/apply/email/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Kunde inte generera email");
+      }
+      setGeneratedEmailText(typeof json?.email === "string" ? json.email : "");
+      setShowEmailComposer(true);
+    } catch (error) {
+      setEmailStatus(error instanceof Error ? error.message : "Kunde inte generera email");
+    } finally {
+      setEmailLoading(false);
+    }
+  }
+
+  async function handleSendEmail() {
+    if (!generatedEmailText.trim() || !job.contact_email) return;
+
+    try {
+      setEmailSendLoading(true);
+      setEmailStatus(null);
+      const res = await fetch("/api/apply/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.id,
+          recipientEmail: job.contact_email,
+          emailText: generatedEmailText,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Kunde inte skicka email");
+      }
+      if (typeof json?.freeApplicationsUsed === "number" && typeof json?.freeApplicationsRemaining === "number") {
+        onApplicationRecorded(json.freeApplicationsUsed, json.freeApplicationsRemaining);
+      }
+      setEmailStatus("Ansökan skickad. Ditt CV bifogades automatiskt.");
+      setShowEmailComposer(false);
+      setShowInterviewPreparation(false);
+    } catch (error) {
+      setEmailStatus(error instanceof Error ? error.message : "Kunde inte skicka email");
+    } finally {
+      setEmailSendLoading(false);
+    }
+  }
+
+  async function handleInterviewPreparation() {
+    try {
+      setInterviewPrepLoading(true);
+      const res = await fetch("/api/apply/interview-preparation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Kunde inte skapa intervjuförberedelse");
+      }
+      setInterviewPreparation(typeof json?.preparation === "string" ? json.preparation : "");
+      setInterviewQuestions(typeof json?.likelyQuestions === "string" ? json.likelyQuestions : "");
+      setShowInterviewPreparation(true);
+    } catch (error) {
+      setEmailStatus(error instanceof Error ? error.message : "Kunde inte skapa intervjuförberedelse");
+    } finally {
+      setInterviewPrepLoading(false);
+    }
+  }
+
+  async function handleDownloadCv() {
+    try {
+      setCvDownloadLoading(true)
+      setEmailStatus(null)
+      const res = await fetch("/api/apply/cv-download", { method: "GET" })
+      const json = await res.json()
+      if (!res.ok || !json?.data?.url) {
+        throw new Error(json?.error || "Kunde inte ladda ner CV")
+      }
+
+      const link = document.createElement("a")
+      link.href = json.data.url
+      link.download = json.data.filename || "cv.pdf"
+      link.target = "_blank"
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    } catch (error) {
+      setEmailStatus(error instanceof Error ? error.message : "Kunde inte ladda ner CV")
+    } finally {
+      setCvDownloadLoading(false)
+    }
+  }
+
+  function handleDownloadGeneratedText() {
+    if (!generatedEmailText.trim()) return
+    const blob = new Blob([generatedEmailText], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `${(job.title || "personligt-brev").toString().replace(/[^\p{L}\p{N}]+/gu, "-").toLowerCase()}.txt`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function handleDownloadGeneratedPdf() {
+    if (!generatedEmailText.trim()) return
+
+    const popup = window.open("", "_blank", "noopener,noreferrer,width=840,height=960")
+    if (!popup) {
+      setEmailStatus("Tillåt popup-fönster för att kunna spara som PDF.")
+      return
+    }
+
+    const safeTitle = (job.title || "Personligt brev").replace(/[<>&"]/g, "")
+    const safeCompany = (job.company || "").replace(/[<>&"]/g, "")
+    const safeBody = generatedEmailText
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br />")
+
+    popup.document.write(`<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <title>${safeTitle}</title>
+    <style>
+      body {
+        font-family: Georgia, "Times New Roman", serif;
+        margin: 0;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .page {
+        max-width: 820px;
+        margin: 0 auto;
+        background: white;
+        min-height: 100vh;
+        padding: 48px 56px;
+        box-sizing: border-box;
+      }
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #64748b;
+        margin-bottom: 12px;
+      }
+      h1 {
+        font-size: 30px;
+        line-height: 1.15;
+        margin: 0 0 8px;
+      }
+      .meta {
+        color: #475569;
+        font-size: 14px;
+        margin-bottom: 28px;
+      }
+      .body {
+        font-size: 16px;
+        line-height: 1.75;
+        white-space: normal;
+      }
+      .hint {
+        margin-top: 28px;
+        font-size: 12px;
+        color: #64748b;
+      }
+      @media print {
+        body { background: white; }
+        .page { padding: 0; max-width: none; }
+        .hint { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="eyebrow">JobbNu · Personligt brev</div>
+      <h1>${safeTitle}</h1>
+      <div class="meta">${safeCompany}</div>
+      <div class="body">${safeBody}</div>
+      <div class="hint">Använd webbläsarens "Skriv ut" och välj "Spara som PDF".</div>
+    </main>
+  </body>
+</html>`)
+    popup.document.close()
+    popup.focus()
+    popup.print()
+  }
+
+  async function handleMarkSubmitted() {
+    try {
+      if (submitted) {
+        onToggleSubmittedJob(job.id);
+        return;
+      }
+
+      const res = await fetch("/api/apply/submission", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.id,
+          channel: canSendDirectly ? "direct_email" : "external_apply",
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Kunde inte spara ansökan");
+      }
+      if (typeof json?.freeApplicationsUsed === "number" && typeof json?.freeApplicationsRemaining === "number") {
+        onApplicationRecorded(json.freeApplicationsUsed, json.freeApplicationsRemaining);
+      }
+      onToggleSubmittedJob(job.id);
+      setEmailStatus(null);
+    } catch (error) {
+      setEmailStatus(error instanceof Error ? error.message : "Kunde inte spara ansökan");
+    }
+  }
 
   return (
     <Card
@@ -762,16 +1228,14 @@ function SlimMatchCard({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex flex-wrap items-center gap-2">
-                    {grade && (
-                      <Badge className="bg-slate-900 text-white hover:bg-slate-900">
-                        Grade {grade}
-                      </Badge>
-                    )}
                     {roundedPrimaryScore !== null && (
                       <Badge variant="secondary" className="border border-sky-200 bg-sky-50 text-sky-800">
-                        {scoreMode === "jobbnu" ? "AI Manager" : "Keyword Match"} {roundedPrimaryScore}%
+                        AI Manager {roundedPrimaryScore}%
                       </Badge>
                     )}
+                    <Badge className={isDirectApply ? "border border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-50" : "border border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-100"}>
+                      {isDirectApply ? t("Direkt email", "Direct email") : t("Extern ansökan", "External apply")}
+                    </Badge>
                   </div>
 
                 <Link
@@ -820,6 +1284,297 @@ function SlimMatchCard({
                   {job.matchReasons.join(" • ")}
                 </p>
               )}
+
+              {canSendDirectly && (
+                <div className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {t("Direktansökan via email", "Direct apply by email")}
+                      </div>
+                      {job.contact_email && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {t("Kontaktmail i annonsen:", "Contact email in ad:")} {job.contact_email}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={locked || autoApplyLocked || emailLoading}
+                        onClick={() => void handleGenerateEmail()}
+                      >
+                        <Mail className="h-4 w-4" />
+                        {emailLoading ? t("Genererar...", "Generating...") : t("Generera email", "Generate email")}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={locked || autoApplyLocked || interviewPrepLoading}
+                        onClick={() => void handleInterviewPreparation()}
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        {interviewPrepLoading ? t("Skapar...", "Creating...") : t("Interview preparation", "Interview preparation")}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!hasAutoApplySubscription && (
+                    <p className="text-xs text-emerald-700">
+                      {t(
+                        `Fria ansökningar kvar: ${freeApplicationsRemaining}/2. Auto Apply låser upp obegränsat.`,
+                        `Free applications left: ${freeApplicationsRemaining}/2. Auto Apply unlocks unlimited usage.`
+                      )}
+                    </p>
+                  )}
+
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={submitted}
+                      onChange={() => void handleMarkSubmitted()}
+                      disabled={locked}
+                    />
+                    {t("Jag har skickat ansökan", "I have submitted the application")}
+                  </label>
+
+                  {showEmailComposer && (
+                    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-slate-800">
+                          {t("Förhandsgranska och redigera email", "Preview and edit email")}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={locked || autoApplyLocked || emailSendLoading || !generatedEmailText.trim()}
+                          onClick={() => void handleSendEmail().then(() => {
+                            if (!submitted) onToggleSubmittedJob(job.id);
+                          })}
+                        >
+                          <Send className="h-4 w-4" />
+                          {emailSendLoading ? t("Skickar...", "Sending...") : t("Skicka email", "Send email")}
+                        </Button>
+                      </div>
+                      <textarea
+                        className="min-h-[220px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        value={generatedEmailText}
+                        onChange={(event) => setGeneratedEmailText(event.target.value)}
+                      />
+                      <p className="text-xs text-slate-500">
+                        {t("Ditt CV bifogas automatiskt när mailet skickas från din anslutna Gmail/Outlook.", "Your CV is attached automatically when the email is sent from your connected Gmail/Outlook account.")}
+                      </p>
+                    </div>
+                  )}
+
+                  {showInterviewPreparation && (
+                    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-sm font-medium text-slate-800">
+                        {t("Interview preparation", "Interview preparation")}
+                      </div>
+                      <textarea
+                        readOnly
+                        className="min-h-[140px] w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                        value={interviewPreparation}
+                      />
+                      <textarea
+                        readOnly
+                        className="min-h-[140px] w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                        value={interviewQuestions}
+                      />
+                    </div>
+                  )}
+
+                  {emailStatus && (
+                    <p className="text-xs text-slate-600">{emailStatus}</p>
+                  )}
+                </div>
+              )}
+
+              {!canSendDirectly && externalApplyUrl && (
+                <div className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {t("Extern ansökan", "External application")}
+                      </div>
+                      <p className="mt-1 max-w-2xl text-xs text-slate-500">
+                        {t(
+                          "Tills extensionen är live kan du redan nu generera personligt brev/emailtext, ladda ner ditt CV och förbereda ansökan snabbare. När extensionen släpps blir samma flöde nästan helt automatiskt.",
+                          "Until the extension is live, you can already generate cover-letter style text, download your CV, and prepare the application faster. Once the extension launches, the same workflow becomes almost fully automatic."
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={locked || autoApplyLocked || emailLoading}
+                        onClick={() => void handleGenerateEmail()}
+                      >
+                        <Mail className="h-4 w-4" />
+                        {emailLoading ? t("Genererar...", "Generating...") : t("Generera brev", "Generate letter")}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={locked || autoApplyLocked || cvDownloadLoading}
+                        onClick={() => void handleDownloadCv()}
+                      >
+                        <Download className="h-4 w-4" />
+                        {cvDownloadLoading ? t("Hämtar CV...", "Fetching CV...") : t("Ladda ner CV", "Download CV")}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={locked || autoApplyLocked || interviewPrepLoading}
+                        onClick={() => void handleInterviewPreparation()}
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        {interviewPrepLoading ? t("Skapar...", "Creating...") : t("Interview preparation", "Interview preparation")}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={locked || autoApplyLocked}
+                        onClick={() => setShowExtensionHelp((value) => !value)}
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        {t("Fyll med extension", "Fill with extension")}
+                      </Button>
+                      <Button asChild variant="outline" size="sm" disabled={locked || autoApplyLocked}>
+                        <Link
+                          href={externalApplyUrl}
+                          onClick={locked || autoApplyLocked ? (event) => event.preventDefault() : undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {t("Ansök externt", "Apply externally")}
+                        </Link>
+                      </Button>
+                    </div>
+                  </div>
+                  {!hasAutoApplySubscription && (
+                    <p className="text-xs text-emerald-700">
+                      {t(
+                        `Fria ansökningar kvar: ${freeApplicationsRemaining}/2. När de är slut behöver du Auto Apply för att fortsätta.`,
+                        `Free applications left: ${freeApplicationsRemaining}/2. Once they are used, you need Auto Apply to continue.`
+                      )}
+                    </p>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={submitted}
+                      onChange={() => void handleMarkSubmitted()}
+                      disabled={locked}
+                    />
+                    {t("Jag har skickat ansökan", "I have submitted the application")}
+                  </label>
+                  {showEmailComposer && (
+                    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-slate-800">
+                          {t("Personligt brev / emailtext", "Cover letter / application text")}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={locked || autoApplyLocked || !generatedEmailText.trim()}
+                          onClick={handleDownloadGeneratedText}
+                        >
+                          <Download className="h-4 w-4" />
+                          {t("Ladda ner text", "Download text")}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={locked || autoApplyLocked || !generatedEmailText.trim()}
+                          onClick={handleDownloadGeneratedPdf}
+                        >
+                          <Download className="h-4 w-4" />
+                          {t("Spara som PDF", "Save as PDF")}
+                        </Button>
+                      </div>
+                      <textarea
+                        className="min-h-[220px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        value={generatedEmailText}
+                        onChange={(event) => setGeneratedEmailText(event.target.value)}
+                      />
+                      <p className="text-xs text-slate-500">
+                        {t(
+                          "Använd texten i fritextfält, ladda ner den som underlag eller låt extensionen fylla den automatiskt när den är live.",
+                          "Use this text in free-text fields, download it as supporting material, or let the extension fill it automatically once it is live."
+                        )}
+                      </p>
+                    </div>
+                  )}
+                  {showExtensionHelp && (
+                    <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                      <div className="font-medium text-slate-900">
+                        {t("Så använder du extensionen", "How to use the extension")}
+                      </div>
+                      <div className="mt-1 text-xs font-medium text-sky-700">
+                        {portal === "teamtailor" && t("Portal upptäckt: Teamtailor", "Portal detected: Teamtailor")}
+                        {portal === "workday" && t("Portal upptäckt: Workday", "Portal detected: Workday")}
+                        {portal === "greenhouse" && t("Portal upptäckt: Greenhouse", "Portal detected: Greenhouse")}
+                        {portal === "generic" && t("Portal upptäckt: extern ansökningssida", "Portal detected: external application page")}
+                      </div>
+                      <div className="mt-2 space-y-2 text-xs leading-5 text-slate-600">
+                        <p>
+                          {t(
+                            "1. Öppna först den externa ansökningssidan i en ny flik.",
+                            "1. First open the external application page in a new tab."
+                          )}
+                        </p>
+                        <p>
+                          {portal === "teamtailor" && t(
+                            "2. På Teamtailor: klicka i formuläret och använd JobbNu-extensionen för att fylla kontaktuppgifter, fritext och CV-uppladdning.",
+                            "2. On Teamtailor: click into the form and use the JobbNu extension to fill contact fields, free text, and CV upload."
+                          )}
+                          {portal === "workday" && t(
+                            "2. På Workday: fyll först grundformuläret med extensionen. Kontrollera sedan extra dropdowns och arbetsrättsfrågor manuellt.",
+                            "2. On Workday: use the extension for the base form first. Then review extra dropdowns and work-authorization questions manually."
+                          )}
+                          {portal === "greenhouse" && t(
+                            "2. På Greenhouse: använd extensionen för kontaktfälten och cover letter-rutan. CV-uppladdning fungerar ofta men kontrollera att filen verkligen bifogats.",
+                            "2. On Greenhouse: use the extension for contact fields and the cover letter box. CV upload often works, but verify that the file is actually attached."
+                          )}
+                          {portal === "generic" && t(
+                            "2. När extensionen är live: klicka på JobbNu-extensionen i Chrome och välj 'Fyll ansökningsformulär'.",
+                            "2. Once the extension is live: click the JobbNu extension in Chrome and choose 'Fill application form'."
+                          )}
+                        </p>
+                        <p>
+                          {t(
+                            "3. Extensionen kommer att försöka fylla namn, email, telefon, stad, personligt brev och ladda upp ditt CV där portalen tillåter det. Samma genererade text visas redan här i dashboarden så att du kan använda den manuellt nu direkt.",
+                            "3. The extension will try to fill name, email, phone, city, cover letter, and upload your CV where the portal allows it. The same generated text is already shown here in the dashboard so you can use it manually right away."
+                          )}
+                        </p>
+                        <p>
+                          {t(
+                            "4. Kontrollera alltid svaren innan du skickar in ansökan.",
+                            "4. Always review the answers before submitting the application."
+                          )}
+                        </p>
+                        <p className="text-slate-500">
+                          {t(
+                            "Tips: Fungerar bäst i Chrome just nu. Öppna jobb-knappen finns kvar som fallback om portalen beter sig annorlunda.",
+                            "Tip: Works best in Chrome right now. The open-job button remains as fallback if the portal behaves differently."
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-slate-500">
+                    {t(
+                      "Chrome-extensionen publiceras snart. När den är live blir flödet enkelt: 1 klick för att installera och 1 klick för att fylla formuläret. Tills dess kan du använda knapparna här för att generera text, ladda ner CV och skicka in snabbare manuellt.",
+                      "The Chrome extension is coming soon. Once it is live, the flow will be simple: 1 click to install and 1 click to fill the form. Until then, you can use the buttons here to generate text, download your CV, and submit faster manually."
+                    )}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -832,15 +1587,6 @@ function SlimMatchCard({
                 suffix="%"
                 tone="sky"
                 caption={primaryCaption}
-              />
-              <ScoreScale
-                label="Grade"
-                value={managerScore}
-                max={10}
-                suffix="/10"
-                tone="emerald"
-                badgeLabel={grade ? `Grade ${grade}` : undefined}
-                caption={job.manager_explanation || t("Manager score visas när re-rankning finns.", "Manager score is shown when re-ranking is available.")}
               />
               <div className="flex items-center justify-between gap-2 pt-1">
                 <Button
@@ -876,11 +1622,6 @@ function SlimMatchCard({
                   {saved ? t("Sparad", "Saved") : t("Spara jobb", "Save job")}
                 </Button>
               </div>
-              {managerPct !== null && (
-                <div className="text-xs text-slate-500">
-                  {t("Grade-scale position:", "Grade scale position:")} {managerPct}% {t("av 10-poängsskalan", "of the 10-point scale")}
-                </div>
-              )}
             </div>
           </div>
           </div>
@@ -893,7 +1634,6 @@ function SlimMatchCard({
               vectorSimilarity={job.vector_similarity}
               keywordScore={job.keyword_hit_rate ?? job.keyword_score}
               keywordMissRate={job.keyword_miss_rate}
-              categoryBonus={job.category_bonus}
               finalScore={job.final_score}
               managerScore={job.manager_score}
               managerExplanation={job.manager_explanation}
@@ -974,16 +1714,6 @@ function MetricPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function getManagerGrade(managerScore?: number | null) {
-  if (managerScore === null || managerScore === undefined) return null;
-  if (managerScore >= 9.5) return "A+";
-  if (managerScore >= 8.5) return "A";
-  if (managerScore >= 7.5) return "B";
-  if (managerScore >= 6.5) return "C";
-  if (managerScore >= 5) return "D";
-  return "E";
-}
-
 function normalizeLegacyJobs(rows: unknown[] | undefined): Job[] {
   return (rows || []).map((raw) => {
     const row = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -998,7 +1728,7 @@ function normalizeLegacyJobs(rows: unknown[] | undefined): Job[] {
       title: typeof row.headline === "string" ? row.headline : typeof row.title === "string" ? row.title : "Okänd tjänst",
       city: typeof row.location === "string" ? row.location : typeof row.city === "string" ? row.city : "",
       final_score: finalScore,
-      vector_similarity: typeof row.s_profile === "number" ? row.s_profile : undefined,
+      vector_similarity: typeof row.vector_similarity === "number" ? row.vector_similarity : undefined,
       keyword_score: typeof row.keyword_score === "number" ? row.keyword_score : undefined,
       category_bonus: typeof row.category_bonus === "number" ? row.category_bonus : undefined,
       keyword_hit_rate: typeof row.keyword_hit_rate === "number" ? row.keyword_hit_rate : undefined,
@@ -1016,6 +1746,11 @@ function normalizeLegacyJobs(rows: unknown[] | undefined): Job[] {
       occupation_group_label: typeof row.occupation_group_label === "string" ? row.occupation_group_label : undefined,
       job_url: typeof row.job_url === "string" ? row.job_url : null,
       webpage_url: typeof row.webpage_url === "string" ? row.webpage_url : null,
+      contact_email: typeof row.contact_email === "string" ? row.contact_email : null,
+      has_contact_email: typeof row.has_contact_email === "boolean" ? row.has_contact_email : null,
+      application_url: typeof row.application_url === "string" ? row.application_url : null,
+      application_channel: typeof row.application_channel === "string" ? row.application_channel : null,
+      skills_data: row.skills_data && typeof row.skills_data === "object" ? row.skills_data as Job["skills_data"] : undefined,
     };
   });
 }
@@ -1030,10 +1765,20 @@ function getDisplayScore(job: Job, mode: ScoreMode): number | null {
   if (mode === "jobbnu") {
     return norm(job.display_score) ?? norm(job.jobbnu_score) ?? norm(job.final_score);
   }
-  if (mode === "keyword_match") {
-    return norm(job.keyword_match_score) ?? norm(job.keyword_hit_rate) ?? norm(job.keyword_score) ?? norm(job.final_score);
-  }
   return null;
+}
+
+function isDirectApplyJob(job: Job) {
+  return job.has_contact_email === true || job.application_channel === "direct_email" || Boolean(job.contact_email);
+}
+
+function detectPortal(url: string | null) {
+  const normalized = (url || "").toLowerCase();
+  if (!normalized) return "generic";
+  if (normalized.includes("teamtailor")) return "teamtailor";
+  if (normalized.includes("workday")) return "workday";
+  if (normalized.includes("greenhouse")) return "greenhouse";
+  return "generic";
 }
 
 function getIntentLabel(intent: string): string {
