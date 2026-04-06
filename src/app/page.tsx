@@ -1250,9 +1250,15 @@ export default function UnifiedLandingPage() {
                 <Link href="/support" className="block text-slate-300 hover:text-white">
                   {t("Support", "Support")}
                 </Link>
+                <Link href="/ai-transparens" className="block text-slate-300 hover:text-white">
+                  {t("AI-transparens", "AI Transparency")}
+                </Link>
               </div>
               <p className="mt-4 text-sm text-slate-400">
-                {t("Målet: hjälpa 10 000 personer hitta jobb.", "Goal: help 10,000 people find jobs.")}
+                {t(
+                  "AI-tjänst i bruk: Anthropic Claude. Läs mer under AI-transparens.",
+                  "AI service in use: Anthropic Claude. Read more under AI Transparency."
+                )}
               </p>
             </div>
           </div>

@@ -51,6 +51,9 @@ export default function SupportPage() {
                 <Link href="/villkor">Användarvillkor</Link>
               </li>
               <li>
+                <Link href="/ai-transparens">AI-transparens</Link>
+              </li>
+              <li>
                 <Link href="/integritetspolicy/extension">Extensionens integritetspolicy</Link>
               </li>
               <li>

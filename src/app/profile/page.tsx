@@ -27,6 +27,7 @@ interface Profile {
   city: string;
   street: string;
   cv_file_url: string | null;
+  cv_bucket_path?: string | null;
   job_offer_consent?: boolean;
 
   // New persona fields
@@ -79,6 +80,17 @@ type VectorStatus = {
   completedAt: string | null;
   lastError: string | null;
   attempts: number;
+  progress?: {
+    step1ProfileReady: boolean;
+    step2SemanticPoolReady: boolean;
+    step3SavedMatchesReady: boolean;
+    poolSize: number;
+    savedCount: number;
+    matchStatus: string | null;
+    matchLastError: string | null;
+    lastFullRefreshAt: string | null;
+    lastIncrementalRefreshAt: string | null;
+  } | null;
 };
 
 export default function ProfilePage() {
@@ -112,6 +124,7 @@ export default function ProfilePage() {
   const [emailDisconnectLoading, setEmailDisconnectLoading] = useState<"google" | "microsoft" | null>(null);
   const [vectorStatus, setVectorStatus] = useState<VectorStatus | null>(null);
   const [vectorRetryLoading, setVectorRetryLoading] = useState(false);
+  const [removeCvLoading, setRemoveCvLoading] = useState(false);
 
   // Rate limiting state
   const [isRateLimited, setIsRateLimited] = useState(false);
@@ -279,7 +292,18 @@ export default function ProfilePage() {
   const microsoftConnection = emailAccounts.find((account) => account.provider === "microsoft");
 
   useEffect(() => {
-    if (!vectorStatus || (vectorStatus.status !== "pending" && vectorStatus.status !== "processing")) {
+    const shouldPollVector =
+      Boolean(vectorStatus) &&
+      (vectorStatus.status === "pending" || vectorStatus.status === "processing");
+    const shouldPollMatch =
+      Boolean(vectorStatus?.progress) &&
+      !vectorStatus.progress.step3SavedMatchesReady &&
+      (vectorStatus.progress.step1ProfileReady ||
+        vectorStatus.progress.matchStatus === "processing" ||
+        vectorStatus.progress.matchStatus === "semantic_pool_ready" ||
+        vectorStatus.progress.matchStatus === "saving_matches");
+
+    if (!shouldPollVector && !shouldPollMatch) {
       return;
     }
 
@@ -301,6 +325,19 @@ export default function ProfilePage() {
     }
     return vectorStatus.lastError;
   }, [t, vectorStatus?.lastError]);
+
+  const normalizedMatchError = useMemo(() => {
+    const raw = vectorStatus?.progress?.matchLastError;
+    if (!raw) return null;
+    const lower = raw.toLowerCase();
+    if (lower.includes("timed out") || lower.includes("statement timeout")) {
+      return t(
+        "Första jobblistan tog för lång tid att bygga. Försök igen om en liten stund.",
+        "The first job list took too long to build. Please try again in a moment."
+      );
+    }
+    return raw;
+  }, [t, vectorStatus?.progress?.matchLastError]);
 
   const handleUpdateProfile = async (e: FormEvent) => {
     e.preventDefault();
@@ -461,6 +498,81 @@ export default function ProfilePage() {
     }
   };
 
+  const handleRemoveCurrentCv = async () => {
+    const confirmed = window.confirm(
+      t(
+        "Vill du ta bort ditt nuvarande CV? Detta rensar både den uppladdade filen och sparad CV-text.",
+        "Do you want to remove your current CV? This clears both the uploaded file and the saved CV text."
+      )
+    );
+
+    if (!confirmed) return;
+
+    setRemoveCvLoading(true);
+    setMessage("");
+    setCvViewError(null);
+
+    try {
+      const res = await fetch("/api/profile", { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(
+          json?.error ||
+            t("Kunde inte ta bort nuvarande CV.", "Could not remove the current CV.")
+        );
+      }
+
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              cv_file_url: null,
+              cv_bucket_path: null,
+              candidate_text_vector: "",
+            }
+          : prev
+      );
+      setCvTextInput("");
+      setCvFile(null);
+      setVectorStatus({
+        status: "idle",
+        requestedAt: null,
+        completedAt: null,
+        lastError: null,
+        attempts: 0,
+        progress: {
+          step1ProfileReady: false,
+          step2SemanticPoolReady: false,
+          step3SavedMatchesReady: false,
+          poolSize: 0,
+          savedCount: 0,
+          matchStatus: "pending",
+          matchLastError: null,
+          lastFullRefreshAt: null,
+          lastIncrementalRefreshAt: null,
+        },
+      });
+      setMessage(
+        t(
+          "Nuvarande CV togs bort. Ladda upp eller klistra in ett nytt CV när du vill bygga om din jobblista.",
+          "The current CV was removed. Upload or paste a new CV when you want to rebuild your job list."
+        )
+      );
+
+      const fileInput = document.getElementById("cv-upload") as HTMLInputElement | null;
+      if (fileInput) fileInput.value = "";
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : t("Kunde inte ta bort CV:t.", "Could not remove the CV.")
+      );
+    } finally {
+      setRemoveCvLoading(false);
+    }
+  };
+
   if (loading) return <div className="p-8">{t("Laddar din profil...", "Loading your profile...")}</div>;
   if (!profile) return <div className="p-8">{t("Kunde inte ladda din profil. Vänligen logga in igen.", "Could not load your profile. Please log in again.")}</div>;
 
@@ -535,10 +647,15 @@ export default function ProfilePage() {
                     onChange={(e) => setCvFile(e.target.files?.[0] || null)}
                   />
                   {profile.cv_file_url && (
-                    <Button type="button" variant="outline" onClick={handleViewCv} disabled={cvViewLoading}>
-                      <Eye className="h-4 w-4 mr-2" />
-                      {cvViewLoading ? t("Laddar...", "Loading...") : t("Visa nuvarande", "View current")}
-                    </Button>
+                    <>
+                      <Button type="button" variant="outline" onClick={handleViewCv} disabled={cvViewLoading || removeCvLoading}>
+                        <Eye className="h-4 w-4 mr-2" />
+                        {cvViewLoading ? t("Laddar...", "Loading...") : t("Visa nuvarande", "View current")}
+                      </Button>
+                      <Button type="button" variant="outline" onClick={handleRemoveCurrentCv} disabled={removeCvLoading || cvViewLoading}>
+                        {removeCvLoading ? t("Tar bort...", "Removing...") : t("Ta bort nuvarande CV", "Remove current CV")}
+                      </Button>
+                    </>
                   )}
                 </div>
                 {cvViewError && <p className="text-xs text-red-600">{cvViewError}</p>}
@@ -822,6 +939,85 @@ export default function ProfilePage() {
                 )}
               </div>
 
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+                  <span className="font-medium text-slate-900">
+                    {t("Första jobblistan", "First job list")}
+                  </span>
+                  <span className="text-slate-500">
+                    {[
+                      vectorStatus?.progress?.step1ProfileReady,
+                      vectorStatus?.progress?.step2SemanticPoolReady,
+                      vectorStatus?.progress?.step3SavedMatchesReady,
+                    ].filter(Boolean).length}
+                    /3
+                  </span>
+                </div>
+
+                <div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                    style={{
+                      width: `${
+                        ([vectorStatus?.progress?.step1ProfileReady, vectorStatus?.progress?.step2SemanticPoolReady, vectorStatus?.progress?.step3SavedMatchesReady].filter(Boolean).length / 3) * 100
+                      }%`,
+                    }}
+                  />
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-700">
+                      1. {t("Profil klar för matchning", "Profile ready for matching")}
+                    </span>
+                    <span className={vectorStatus?.progress?.step1ProfileReady ? "text-emerald-600" : "text-slate-400"}>
+                      {vectorStatus?.progress?.step1ProfileReady ? t("Klar", "Done") : t("Pågår", "In progress")}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-700">
+                      2. {t("Relevanta jobb hämtas", "Relevant jobs are retrieved")}
+                    </span>
+                    <span className={vectorStatus?.progress?.step2SemanticPoolReady ? "text-emerald-600" : "text-slate-400"}>
+                      {vectorStatus?.progress?.step2SemanticPoolReady
+                        ? t("Klar", "Done")
+                        : t("Väntar", "Waiting")}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-700">
+                      3. {t("Jobblistan sparas", "Job list is saved")}
+                    </span>
+                    <span className={vectorStatus?.progress?.step3SavedMatchesReady ? "text-emerald-600" : "text-slate-400"}>
+                      {vectorStatus?.progress?.step3SavedMatchesReady
+                        ? t("Klar", "Done")
+                        : t("Väntar", "Waiting")}
+                    </span>
+                  </div>
+                </div>
+
+                {(typeof vectorStatus?.progress?.poolSize === "number" && vectorStatus.progress.poolSize > 0) ||
+                (typeof vectorStatus?.progress?.savedCount === "number" && vectorStatus.progress.savedCount > 0) ? (
+                  <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    {vectorStatus?.progress?.poolSize > 0 && (
+                      <div>{t("Semantisk pool:", "Semantic pool:")} {vectorStatus.progress.poolSize}</div>
+                    )}
+                    {vectorStatus?.progress?.savedCount > 0 && (
+                      <div>{t("Sparade matchningar:", "Saved matches:")} {vectorStatus.progress.savedCount}</div>
+                    )}
+                  </div>
+                ) : null}
+
+                {vectorStatus?.progress?.step3SavedMatchesReady && (
+                  <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    {t(
+                      "Din första jobblista är klar. Dashboarden uppdateras nu automatiskt varje dag.",
+                      "Your first job list is ready. The dashboard now updates automatically every day."
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                 <div>
                   <span className="font-medium">{t("Status:", "Status:")}</span>{" "}
@@ -839,6 +1035,9 @@ export default function ProfilePage() {
                 )}
                 {normalizedVectorError && (
                   <div className="mt-2 text-xs text-red-600">{normalizedVectorError}</div>
+                )}
+                {normalizedMatchError && (
+                  <div className="mt-2 text-xs text-red-600">{normalizedMatchError}</div>
                 )}
               </div>
             </div>

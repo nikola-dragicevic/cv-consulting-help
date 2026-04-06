@@ -5,19 +5,21 @@ import schedule
 import time
 import httpx
 import math
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 from threading import Thread
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Import logic from other scripts
 from scripts.update_jobs import run_job_update
 from scripts.enrich_jobs import enrich_job_vectors
 from scripts.geocode_jobs import geocode_new_jobs
 from scripts.sync_active_jobs import clean_stale_jobs  # removes stale jobs
+from scripts.precompute_candidate_matches import run_precomputed_match_refresh
 from scripts.generate_candidate_vector import (
     build_candidate_vector,  # chunking inside
     compute_category_tags_from_text,
@@ -41,6 +43,9 @@ DIMS = int(os.getenv("DIMS", "768"))
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+SCRIPT_DIR = Path(__file__).resolve().parent
+LAST_RUN_FILE = SCRIPT_DIR / "last_run.json"
+STALE_PIPELINE_THRESHOLD_HOURS = int(os.getenv("STALE_PIPELINE_THRESHOLD_HOURS", "18"))
 
 # --- Helper: Normalization (only used by /embed endpoint) ---
 def normalize_vector(vector: list[float]) -> list[float]:
@@ -92,9 +97,78 @@ def run_daily_pipeline():
         # 4) Geocode missing lat/lon
         asyncio.run(geocode_new_jobs())
 
+        # 5) Precompute per-user dashboard matches
+        try:
+            run_precomputed_match_refresh(mode="auto")
+        except Exception as match_error:
+            print(f"⚠️ [CRON] Precomputed match refresh skipped/failed: {match_error}")
+
         print("✅ [CRON] Pipeline finished successfully")
     except Exception as e:
         print(f"❌ [CRON] Pipeline failed: {e}")
+
+
+def load_last_pipeline_run() -> datetime | None:
+    if not LAST_RUN_FILE.exists():
+        return None
+    try:
+        data = json.loads(LAST_RUN_FILE.read_text(encoding="utf-8"))
+        raw = data.get("last_run_date")
+        if not raw:
+            return None
+        # update_jobs.py writes naive UTC string like 2026-04-04T04:09:26
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception as e:
+        print(f"⚠️ Could not read last pipeline timestamp: {e}")
+        return None
+
+
+def maybe_run_startup_catchup():
+    last_run = load_last_pipeline_run()
+    now_utc = datetime.now(timezone.utc)
+    if not last_run:
+        print("⚠️ No previous pipeline timestamp found. Running startup catch-up pipeline.")
+        run_daily_pipeline()
+        return
+
+    age = now_utc - last_run
+    if age >= timedelta(hours=STALE_PIPELINE_THRESHOLD_HOURS):
+        print(
+            f"⚠️ Last pipeline run is stale ({age}). "
+            "Running startup catch-up pipeline before waiting for next 04:00."
+        )
+        run_daily_pipeline()
+    else:
+        print(f"✅ Last pipeline run is recent ({age}). No startup catch-up needed.")
+
+
+def trigger_single_user_precompute(user_id: str):
+    try:
+        print(f"🧠 [MATCH PRECOMPUTE] Triggering first-build refresh for user={user_id}")
+        run_precomputed_match_refresh(mode="full", user_id=user_id, limit_users=1)
+    except Exception as e:
+        print(f"⚠️ [MATCH PRECOMPUTE] First-build refresh failed for user={user_id}: {e}")
+
+
+def trigger_precompute_for_user(user_id: str, mode: str = "auto"):
+    try:
+        resolved_mode = mode if mode in {"auto", "full", "incremental"} else "auto"
+        print(f"🧠 [MATCH PRECOMPUTE] Triggering refresh for user={user_id} mode={resolved_mode}")
+        run_precomputed_match_refresh(mode=resolved_mode, user_id=user_id, limit_users=1)
+    except Exception as e:
+        print(f"⚠️ [MATCH PRECOMPUTE] Refresh failed for user={user_id}: {e}")
+
+
+def has_vector_value(value) -> bool:
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, str):
+        stripped = value.strip()
+        return bool(stripped and stripped != "[]")
+    return False
 
 def run_scheduler():
     print("⏰ Scheduler started. Pipeline set for 04:00 daily.")
@@ -109,6 +183,8 @@ async def lifespan(app: FastAPI):
     print(f"⚡ Unified Service Starting... Model: {EMBEDDING_MODEL}")
     scheduler_thread = Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
+    catchup_thread = Thread(target=maybe_run_startup_catchup, daemon=True)
+    catchup_thread.start()
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -126,6 +202,11 @@ class JobSkillExtractionRequest(BaseModel):
 class ProfileUpdateWebhook(BaseModel):
     user_id: str
     cv_text: str
+
+
+class MatchPrecomputeWebhook(BaseModel):
+    user_id: str
+    mode: str = "auto"
 
 
 def _clean_string_list(values, limit: int = 12) -> list[str]:
@@ -1131,6 +1212,29 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
         update_data["vector_generation_last_error"] = None
         supabase.table("candidate_profiles").update(update_data).eq("user_id", req.user_id).execute()
 
+        try:
+            supabase.table("candidate_match_state").upsert(
+                {
+                    "user_id": req.user_id,
+                    "match_ready": True,
+                    "status": "processing",
+                    "last_error": None,
+                    "active_radius_km": profile.get("commute_radius_km"),
+                    "candidate_lat": profile.get("location_lat"),
+                    "candidate_lon": profile.get("location_lon"),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="user_id",
+            ).execute()
+        except Exception as match_state_error:
+            print(f"⚠️ [WEBHOOK] Failed to set candidate_match_state processing: {match_state_error}")
+
+        Thread(
+            target=trigger_single_user_precompute,
+            args=(req.user_id,),
+            daemon=True,
+        ).start()
+
         print(f"✅ [WEBHOOK] Success for {req.user_id}")
         return {"status": "success", "user_id": req.user_id, "entry_mode": entry_mode}
 
@@ -1158,4 +1262,83 @@ async def webhook_update_profile(req: ProfileUpdateWebhook):
         except Exception:
             pass
 
+        raise HTTPException(500, str(e))
+
+
+@app.post("/webhook/precompute-matches")
+async def webhook_precompute_matches(req: MatchPrecomputeWebhook):
+    try:
+        profile_res = (
+            supabase.table("candidate_profiles")
+            .select("user_id, profile_vector, commute_radius_km, location_lat, location_lon")
+            .eq("user_id", req.user_id)
+            .single()
+            .execute()
+        )
+
+        profile = profile_res.data
+        if not profile:
+            raise HTTPException(404, "Profile not found")
+
+        profile_vector = profile.get("profile_vector")
+        if not has_vector_value(profile_vector):
+            try:
+                supabase.table("candidate_match_state").upsert(
+                    {
+                        "user_id": req.user_id,
+                        "match_ready": False,
+                        "status": "pending",
+                        "last_error": None,
+                        "last_pool_size": 0,
+                        "saved_job_count": 0,
+                        "active_radius_km": profile.get("commute_radius_km"),
+                        "candidate_lat": profile.get("location_lat"),
+                        "candidate_lon": profile.get("location_lon"),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    on_conflict="user_id",
+                ).execute()
+            except Exception as state_error:
+                print(f"⚠️ [MATCH PRECOMPUTE] Failed to set pending state for {req.user_id}: {state_error}")
+
+            return {
+                "status": "pending",
+                "user_id": req.user_id,
+                "mode": req.mode if req.mode in {"auto", "full", "incremental"} else "auto",
+                "message": "Profile vector not ready",
+            }
+
+        try:
+            supabase.table("candidate_match_state").upsert(
+                {
+                    "user_id": req.user_id,
+                    "match_ready": True,
+                    "status": "processing",
+                    "last_error": None,
+                    "last_pool_size": 0,
+                    "saved_job_count": 0,
+                    "active_radius_km": profile.get("commute_radius_km"),
+                    "candidate_lat": profile.get("location_lat"),
+                    "candidate_lon": profile.get("location_lon"),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="user_id",
+            ).execute()
+        except Exception as state_error:
+            print(f"⚠️ [MATCH PRECOMPUTE] Failed to set processing state for {req.user_id}: {state_error}")
+
+        Thread(
+            target=trigger_precompute_for_user,
+            args=(req.user_id, req.mode),
+            daemon=True,
+        ).start()
+
+        return {
+            "status": "queued",
+            "user_id": req.user_id,
+            "mode": req.mode if req.mode in {"auto", "full", "incremental"} else "auto",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(500, str(e))

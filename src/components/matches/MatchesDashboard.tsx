@@ -324,7 +324,16 @@ export function MatchesDashboard() {
         setNextRefreshTime(typeof data?.nextAllowedTime === "string" ? data.nextAllowedTime : null);
         setHoursUntilRefresh(typeof data?.hoursUntilRefresh === "number" ? data.hoursUntilRefresh : 0);
         setMinutesUntilRefresh(typeof data?.minutesUntilRefresh === "number" ? data.minutesUntilRefresh : 0);
-        if (!silent) {
+        if (data?.precomputePending) {
+          setEmptyStateMessage(
+            typeof data?.pendingMessage === "string"
+              ? data.pendingMessage
+              : "Vi bygger din första jobblista just nu. Dina matchningar uppdateras sedan automatiskt varje dag."
+          );
+          window.setTimeout(() => {
+            void loadSavedDashboardResults(true);
+          }, 5000);
+        } else if (!silent) {
           setEmptyStateMessage("Klicka på 'Matcha jobb' för att bygga och spara dagens resultat.");
         }
         return;
@@ -410,21 +419,28 @@ export function MatchesDashboard() {
       const res = await fetch("/api/match/for-user", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          wholeSweden
-            ? {
-                lat: 62,
-                lon: 15,
-                radius_km: 9999,
-              }
-            : {
-                lat: profileLocation!.location_lat,
-                lon: profileLocation!.location_lon,
-                radius_km: radiusForQuery,
-              }
-        ),
+        body: JSON.stringify({ trigger: "precompute", radius_km: radiusForQuery, whole_sweden: wholeSweden }),
       });
       const { data, raw } = await safeParseResponse(res);
+
+      if (res.status === 202 && data?.precomputePending) {
+        setCached(false);
+        setCachedAt(typeof data?.cachedAt === "string" ? data.cachedAt : new Date().toISOString());
+        setCanRunBasePool(Boolean(data?.canRunBasePool ?? true));
+        setRunsRemaining(typeof data?.runsRemaining === "number" ? data.runsRemaining : 3);
+        setNextRefreshTime(typeof data?.nextAllowedTime === "string" ? data.nextAllowedTime : null);
+        setHoursUntilRefresh(typeof data?.hoursUntilRefresh === "number" ? data.hoursUntilRefresh : 0);
+        setMinutesUntilRefresh(typeof data?.minutesUntilRefresh === "number" ? data.minutesUntilRefresh : 0);
+        setEmptyStateMessage(
+          typeof data?.pendingMessage === "string"
+            ? data.pendingMessage
+            : "Vi bygger din jobblista nu. Dina matchningar uppdateras sedan automatiskt varje dag."
+        );
+        window.setTimeout(() => {
+          void loadSavedDashboardResults(true);
+        }, 5000);
+        return;
+      }
 
       if (!res.ok) {
         console.error("Dashboard /api/match/for-user failed:", raw);
@@ -459,9 +475,14 @@ export function MatchesDashboard() {
   if (!results) return null;
 
   const { buckets } = results;
-  const allJobs = dedupeJobsById([...buckets.current, ...buckets.target, ...buckets.adjacent]).sort(
+  const unfilteredJobs = dedupeJobsById([...buckets.current, ...buckets.target, ...buckets.adjacent]).sort(
     (a, b) => (getDisplayScore(b, selectedScoreMode) ?? 0) - (getDisplayScore(a, selectedScoreMode) ?? 0)
   );
+  const allJobs = unfilteredJobs.filter((job) => {
+    if (wholeSweden) return true;
+    if (typeof job.distance_m !== "number" || !Number.isFinite(job.distance_m)) return false;
+    return job.distance_m <= radiusKm * 1000;
+  });
   const directApplyJobs = allJobs.filter((job) => isDirectApplyJob(job) && !submittedJobIds.has(job.id));
   const externalApplyJobs = allJobs.filter((job) => !isDirectApplyJob(job) && !submittedJobIds.has(job.id));
   const submittedJobs = allJobs.filter((job) => submittedJobIds.has(job.id));
@@ -685,6 +706,13 @@ export function MatchesDashboard() {
               )}
             </div>
           )}
+
+          <div className="border-t border-sky-200 bg-sky-50 px-5 py-3 text-sm text-sky-900">
+            {t(
+              "Dina matchningar uppdateras dagligen automatiskt. Vi söker igenom nya jobb varje dag och uppdaterar din lista med de mest relevanta träffarna.",
+              "Your matches update automatically every day. We scan new jobs daily and refresh your list with the most relevant results."
+            )}
+          </div>
 
           <div className="border-t border-slate-200 bg-white px-5 py-4">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">

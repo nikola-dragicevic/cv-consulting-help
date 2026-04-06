@@ -16,12 +16,45 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("candidate_profiles")
-    .select("vector_generation_status,vector_generation_requested_at,vector_generation_completed_at,vector_generation_last_error,vector_generation_attempts")
+    .select("vector_generation_status,vector_generation_requested_at,vector_generation_completed_at,vector_generation_last_error,vector_generation_attempts,profile_vector")
     .eq("user_id", user.id)
     .maybeSingle()
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  const { data: matchState, error: matchStateError } = await supabase
+    .from("candidate_match_state")
+    .select("status,last_error,last_full_refresh_at,last_incremental_refresh_at,last_pool_size,saved_job_count")
+    .eq("user_id", user.id)
+    .maybeSingle()
+
+  if (matchStateError && !matchStateError.message.includes("does not exist") && !matchStateError.message.includes("schema cache")) {
+    return NextResponse.json({ error: matchStateError.message }, { status: 500 })
+  }
+
+  const hasProfileVector =
+    Array.isArray(data?.profile_vector)
+      ? data.profile_vector.length > 0
+      : typeof data?.profile_vector === "string"
+        ? Boolean(data.profile_vector.trim() && data.profile_vector.trim() !== "[]")
+        : false
+
+  const rawMatchStatus = matchState?.status || null
+  const rawPoolSize = typeof matchState?.last_pool_size === "number" ? matchState.last_pool_size : 0
+  const rawSavedCount = typeof matchState?.saved_job_count === "number" ? matchState.saved_job_count : 0
+
+  const progress = {
+    step1ProfileReady: hasProfileVector,
+    step2SemanticPoolReady: ["semantic_pool_ready", "saving_matches", "success"].includes(rawMatchStatus || ""),
+    step3SavedMatchesReady: rawMatchStatus === "success" && rawSavedCount > 0,
+    poolSize: rawPoolSize,
+    savedCount: rawSavedCount,
+    matchStatus: rawMatchStatus,
+    matchLastError: matchState?.last_error || null,
+    lastFullRefreshAt: matchState?.last_full_refresh_at || null,
+    lastIncrementalRefreshAt: matchState?.last_incremental_refresh_at || null,
   }
 
   return NextResponse.json({
@@ -31,6 +64,7 @@ export async function GET() {
       completedAt: data?.vector_generation_completed_at || null,
       lastError: data?.vector_generation_last_error || null,
       attempts: data?.vector_generation_attempts || 0,
+      progress,
     },
   })
 }

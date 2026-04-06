@@ -26,6 +26,14 @@ FETCH_TIMEOUT_SECONDS = int(os.getenv("JOB_FETCH_TIMEOUT_SECONDS", "45"))
 MAX_FETCH_RETRIES = int(os.getenv("JOB_FETCH_MAX_RETRIES", "3"))
 RATE_LIMIT_SLEEP_SECONDS = int(os.getenv("JOB_FETCH_RATE_LIMIT_SLEEP_SECONDS", "5"))
 EXPIRED_DEACTIVATION_BATCH_SIZE = int(os.getenv("JOB_EXPIRED_DEACTIVATION_BATCH_SIZE", "200"))
+REMOVED_AD_SCAN_BATCH_SIZE = int(os.getenv("JOB_REMOVED_AD_SCAN_BATCH_SIZE", "500"))
+REMOVED_AD_UPDATE_BATCH_SIZE = int(os.getenv("JOB_REMOVED_AD_UPDATE_BATCH_SIZE", "200"))
+
+REMOVED_AD_MARKERS = [
+    "arbetsgivaren har tagit bort annonsen",
+    "jobbet går inte att söka sedan",
+    "annonsen är borttagen",
+]
 
 # Store timestamp next to this script so it works no matter cwd
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -129,6 +137,62 @@ def deactivate_expired_jobs() -> None:
         print(f"✅ Marked {total_updated} expired jobs as inactive.")
     except Exception as e:
         print(f"❌ Error marking expired jobs inactive: {e}")
+
+
+def deactivate_removed_ads() -> None:
+    """
+    Some ads are explicitly marked as removed in the stored description text before the deadline passes.
+    Scan active jobs in batches and inactivate those rows immediately.
+    """
+    print("🧹 Marking ads with removed-ad text as inactive...")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    last_id = None
+    scanned = 0
+    marked = 0
+
+    try:
+        while True:
+            query = (
+                supabase.table("job_ads")
+                .select("id,description_text")
+                .eq("is_active", True)
+                .order("id")
+                .limit(REMOVED_AD_SCAN_BATCH_SIZE)
+            )
+            if last_id:
+                query = query.gt("id", last_id)
+
+            response = query.execute()
+            rows = response.data or []
+            if not rows:
+                break
+
+            scanned += len(rows)
+            last_id = rows[-1]["id"]
+
+            stale_ids = []
+            for row in rows:
+                description = (row.get("description_text") or "").lower()
+                if any(marker in description for marker in REMOVED_AD_MARKERS):
+                    stale_ids.append(row["id"])
+
+            for i in range(0, len(stale_ids), REMOVED_AD_UPDATE_BATCH_SIZE):
+                batch = stale_ids[i:i + REMOVED_AD_UPDATE_BATCH_SIZE]
+                (
+                    supabase.table("job_ads")
+                    .update({
+                        "is_active": False,
+                        "source_inactivated_at": now_iso,
+                    })
+                    .in_("id", batch)
+                    .eq("is_active", True)
+                    .execute()
+                )
+                marked += len(batch)
+
+        print(f"✅ Scanned {scanned} active jobs and marked {marked} removed ads inactive.")
+    except Exception as e:
+        print(f"❌ Error marking removed ads inactive: {e}")
 
 
 def fetch_and_upsert_new_jobs() -> None:
@@ -345,6 +409,7 @@ def refresh_missing_contact_fields() -> None:
 
 
 def run_job_update() -> None:
+    deactivate_removed_ads()
     deactivate_expired_jobs()
     fetch_and_upsert_new_jobs()
     refresh_missing_contact_fields()

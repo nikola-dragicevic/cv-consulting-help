@@ -242,3 +242,100 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
   }
 }
+
+export async function DELETE() {
+  const supabase = await getServerSupabase();
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
+
+  if (userErr || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const { data: existingProfile, error: profileError } = await supabase
+      .from("candidate_profiles")
+      .select("cv_bucket_path")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      throw new Error(`Could not load profile: ${profileError.message}`);
+    }
+
+    const cvBucketPath =
+      typeof existingProfile?.cv_bucket_path === "string" ? existingProfile.cv_bucket_path.trim() : "";
+
+    if (cvBucketPath) {
+      const { error: removeStorageError } = await supabase.storage.from("cvs").remove([cvBucketPath]);
+      if (removeStorageError) {
+        console.error("Failed to remove CV from storage:", removeStorageError);
+      }
+    }
+
+    const clearedProfileFields = {
+      cv_file_url: null,
+      cv_bucket_path: null,
+      candidate_text_vector: null,
+      profile_vector: null,
+      vector_generation_status: "idle",
+      vector_generation_requested_at: null,
+      vector_generation_completed_at: null,
+      vector_generation_last_error: null,
+      vector_generation_attempts: 0,
+    };
+
+    const { error: updateError } = await supabase
+      .from("candidate_profiles")
+      .update(clearedProfileFields)
+      .eq("user_id", user.id);
+
+    if (updateError) {
+      throw new Error(`Could not clear CV data: ${updateError.message}`);
+    }
+
+    const { error: deleteMatchesError } = await supabase
+      .from("candidate_job_matches")
+      .delete()
+      .eq("user_id", user.id);
+
+    if (
+      deleteMatchesError &&
+      !deleteMatchesError.message.includes("does not exist") &&
+      !deleteMatchesError.message.includes("schema cache")
+    ) {
+      console.error("Failed to remove candidate_job_matches rows:", deleteMatchesError);
+    }
+
+    const { error: resetMatchStateError } = await supabase
+      .from("candidate_match_state")
+      .upsert(
+        {
+          user_id: user.id,
+          match_ready: false,
+          status: "pending",
+          last_error: "CV removed. Waiting for new profile data.",
+          last_pool_size: 0,
+          saved_job_count: 0,
+          last_full_refresh_at: null,
+          last_incremental_refresh_at: null,
+        },
+        { onConflict: "user_id" }
+      );
+
+    if (
+      resetMatchStateError &&
+      !resetMatchStateError.message.includes("does not exist") &&
+      !resetMatchStateError.message.includes("schema cache")
+    ) {
+      console.error("Failed to reset candidate_match_state:", resetMatchStateError);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err: unknown) {
+    console.error("Profile CV delete error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Unknown error" },
+      { status: 500 }
+    );
+  }
+}

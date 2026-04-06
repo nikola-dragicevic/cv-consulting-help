@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { createServerClient } from "@supabase/ssr"
+import { cookies } from "next/headers"
+import { promises as fs } from "node:fs"
+import path from "node:path"
 
-// Helper to create client
 const createSupabaseRouteHandlerClient = async () => {
   const cookieStore = await cookies()
   return createServerClient(
@@ -16,7 +17,6 @@ const createSupabaseRouteHandlerClient = async () => {
   )
 }
 
-// In-memory cache for job categories
 type CategoryResponse = {
   total: number
   categories: {
@@ -30,20 +30,38 @@ type CategoryResponse = {
 }
 
 let cachedData: CategoryResponse | null = null
-let cacheTimestamp: number = 0
-const CACHE_TTL_MS = 3600000 // 1 hour (3600 seconds * 1000 milliseconds)
+let cacheTimestamp = 0
+const CACHE_TTL_MS = 3600000
+const CACHE_FILE_PATH = path.join(process.cwd(), "logs", "job-categories-cache.json")
+
+async function readFileCache(): Promise<CategoryResponse | null> {
+  try {
+    const raw = await fs.readFile(CACHE_FILE_PATH, "utf-8")
+    return JSON.parse(raw) as CategoryResponse
+  } catch {
+    return null
+  }
+}
+
+async function writeFileCache(data: CategoryResponse) {
+  try {
+    await fs.mkdir(path.dirname(CACHE_FILE_PATH), { recursive: true })
+    await fs.writeFile(CACHE_FILE_PATH, JSON.stringify(data), "utf-8")
+  } catch (err) {
+    console.warn("Failed to persist job categories cache:", err)
+  }
+}
 
 export async function GET(req: Request) {
   const now = Date.now()
   const forceRefresh = new URL(req.url).searchParams.get("refresh") === "1"
 
-  // Return cached data if still valid (within 1 hour)
-  if (!forceRefresh && cachedData && (now - cacheTimestamp) < CACHE_TTL_MS) {
+  if (!forceRefresh && cachedData && now - cacheTimestamp < CACHE_TTL_MS) {
     console.log("Returning cached job categories data")
     return NextResponse.json({
       ...cachedData,
       cached: true,
-      cacheAge: Math.floor((now - cacheTimestamp) / 1000) // Age in seconds
+      cacheAge: Math.floor((now - cacheTimestamp) / 1000),
     })
   }
 
@@ -51,41 +69,35 @@ export async function GET(req: Request) {
   const supabase = await createSupabaseRouteHandlerClient()
 
   try {
-    // Fetch all jobs and aggregate in memory.
-    // This guarantees that total/category/subcategory counts come from the exact same dataset.
     const PAGE_SIZE = 1000
-    let from = 0
-    const rows: { occupation_field_label: string | null; occupation_group_label: string | null }[] = []
+    let lastId: string | null = null
+    const rows: { id: string; occupation_field_label: string | null; occupation_group_label: string | null }[] = []
 
-    const { count: totalRows, error: countError } = await supabase
-      .from("job_ads")
-      .select("id", { count: "exact", head: true })
-
-    if (countError) {
-      throw new Error(`Failed to count jobs: ${countError.message}`)
-    }
-
-    const expectedTotal = totalRows ?? 0
-
-    while (from < expectedTotal) {
-      const to = from + PAGE_SIZE - 1
-      const { data, error } = await supabase
+    while (true) {
+      let query = supabase
         .from("job_ads")
-        .select("occupation_field_label, occupation_group_label")
-        .range(from, to)
+        .select("id, occupation_field_label, occupation_group_label")
+        .eq("is_active", true)
+        .order("id")
+        .limit(PAGE_SIZE)
 
+      if (lastId) {
+        query = query.gt("id", lastId)
+      }
+
+      const { data, error } = await query
       if (error) {
         throw new Error(`Failed to fetch job categories: ${error.message}`)
       }
 
       const batch = data || []
-      rows.push(...batch)
-
       if (batch.length === 0) break
-      from += batch.length
-    }
 
-    const totalCount = expectedTotal
+      rows.push(...batch)
+      lastId = batch[batch.length - 1]?.id ?? null
+
+      if (batch.length < PAGE_SIZE) break
+    }
 
     const fieldCounts = new Map<string, number>()
     const fieldGroupCounts = new Map<string, Map<string, number>>()
@@ -119,17 +131,17 @@ export async function GET(req: Request) {
       })
       .sort((a, b) => b.count - a.count)
 
-    const result = {
-      total: totalCount || 0,
+    const result: CategoryResponse = {
+      total: rows.length,
       categories,
       subcategoryCounts: Object.fromEntries(globalSubcategoryCounts),
       cached: false,
-      cacheAge: 0
+      cacheAge: 0,
     }
 
-    // Update cache
     cachedData = result
     cacheTimestamp = now
+    await writeFileCache(result)
     console.log("Job categories data cached successfully")
 
     return NextResponse.json(result)
@@ -137,14 +149,24 @@ export async function GET(req: Request) {
     const message = e instanceof Error ? e.message : "Unknown error"
     console.error("Job categories error:", message)
 
-    // If we have cached data and DB fails, return stale cache as fallback
     if (cachedData) {
       console.log("Database error, returning stale cached data as fallback")
       return NextResponse.json({
         ...cachedData,
         cached: true,
         stale: true,
-        cacheAge: Math.floor((now - cacheTimestamp) / 1000)
+        cacheAge: Math.floor((now - cacheTimestamp) / 1000),
+      })
+    }
+
+    const fileCache = await readFileCache()
+    if (fileCache) {
+      console.log("Database error, returning file-backed cached data as fallback")
+      return NextResponse.json({
+        ...fileCache,
+        cached: true,
+        stale: true,
+        cacheAge: -1,
       })
     }
 

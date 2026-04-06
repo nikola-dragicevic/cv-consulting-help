@@ -2,8 +2,8 @@ import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { extractKeywordsFromCV } from "@/lib/categorization";
 import { isAdminUser } from "@/lib/admin";
+import { triggerMatchPrecompute } from "@/lib/matchPrecompute";
 
 type ScoreMode = "jobbnu" | "keyword_match";
 
@@ -62,7 +62,7 @@ type DashboardStateRow = {
 };
 
 type DashboardCachePayload = {
-  jobs: ReturnType<typeof normalizeJobRow>[];
+  jobs: Array<Record<string, unknown>>;
   score_mode: ScoreMode;
   matchedAt: string;
   base_ready: boolean;
@@ -73,6 +73,13 @@ type DashboardCacheRow = {
   updated_at: string;
 };
 
+type CandidateMatchStateRow = {
+  status: string | null;
+  last_error: string | null;
+  last_full_refresh_at: string | null;
+  last_incremental_refresh_at: string | null;
+};
+
 type DashboardRunLimitStatus = {
   allowed: boolean;
   runsRemaining: number;
@@ -81,28 +88,45 @@ type DashboardRunLimitStatus = {
   minutesUntilRefresh: number;
 };
 
-const OCCUPATION_FIELD_ALIASES: Record<string, string[]> = {
-  Transport: ["Transport, distribution, lager"],
-  "Tekniskt arbete": ["Yrken med teknisk inriktning", "Installation, drift, underhåll"],
-  "Socialt arbete": ["Yrken med social inriktning"],
-  "Pedagogiskt arbete": ["Pedagogik"],
+type PrecomputedMatchRow = {
+  job_id: string;
+  vector_similarity: number | null;
+  keyword_hits: string[] | null;
+  keyword_hit_count: number | null;
+  keyword_total_count: number | null;
+  keyword_hit_rate: number | null;
+  keyword_miss_rate: number | null;
+  taxonomy_bonus: number | null;
+  final_score: number | null;
+  distance_m: number | null;
+  matched_at: string | null;
+};
+
+type JobMetaRow = {
+  id: string;
+  headline: string | null;
+  company: string | null;
+  city: string | null;
+  location: string | null;
+  description_text: string | null;
+  job_url: string | null;
+  webpage_url: string | null;
+  occupation_field_label: string | null;
+  occupation_group_label: string | null;
+  occupation_label: string | null;
+  skills_data: RawJobRow["skills_data"];
+  contact_email: string | null;
+  has_contact_email: boolean | null;
+  application_url: string | null;
+  application_channel: string | null;
 };
 
 const DASHBOARD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const DASHBOARD_POOL_LIMIT = 2000;
 const DASHBOARD_RUN_LIMIT = 3;
 const DASHBOARD_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function isMissingRelationError(message: string) {
   return message.includes("does not exist") || message.includes("relation") || message.includes("schema cache");
-}
-
-function isMissingColumnError(message: string) {
-  return (
-    (message.includes("column") && message.includes("does not exist")) ||
-    (message.includes("Could not find") && message.includes("column")) ||
-    message.includes("schema cache")
-  );
 }
 
 function getErrorMessage(error: unknown): string {
@@ -125,123 +149,102 @@ function toScoreMode(value: unknown): ScoreMode {
   return "jobbnu";
 }
 
-function normalizeOccupationFields(value: unknown): string[] | null {
-  if (!Array.isArray(value)) return null;
-  const normalized = new Set<string>();
-
-  for (const raw of value) {
-    if (typeof raw !== "string") continue;
-    const label = raw.trim();
-    if (!label) continue;
-    normalized.add(label);
-    for (const mapped of OCCUPATION_FIELD_ALIASES[label] ?? []) {
-      normalized.add(mapped);
-    }
-  }
-
-  return normalized.size > 0 ? Array.from(normalized) : null;
-}
-
-function mergeOccupationFields(...values: unknown[]): string[] | null {
-  const merged = new Set<string>();
-  for (const value of values) {
-    for (const label of normalizeOccupationFields(value) ?? []) {
-      merged.add(label);
-    }
-  }
-  return merged.size > 0 ? Array.from(merged) : null;
-}
-
-function buildKeywords(profile: ProfileRow): string[] | null {
-  const source = profile.candidate_text_vector ?? "";
-  const keywords = extractKeywordsFromCV(source).slice(0, 12);
-  return keywords.length > 0 ? keywords : null;
-}
-
-function findKeywordHits(row: RawJobRow, keywords: string[] | null): string[] {
-  if (!keywords || keywords.length === 0) return [];
-  const haystack = `${row.title ?? ""}\n${row.description ?? ""}`.toLocaleLowerCase("sv-SE");
-  const hits = new Set<string>();
-
-  for (const keyword of keywords) {
-    const normalized = keyword.trim();
-    if (!normalized) continue;
-    if (haystack.includes(normalized.toLocaleLowerCase("sv-SE"))) {
-      hits.add(normalized);
-    }
-  }
-
-  return Array.from(hits);
-}
-
 function hashJobIds(ids: string[]) {
   return createHash("sha1").update(ids.join("|")).digest("hex");
 }
 
-function normalizeJobRow(row: RawJobRow, keywordHits: string[] = []) {
-  return {
-    id: String(row.id ?? ""),
-    headline: row.title ?? "",
-    location: row.city ?? null,
-    job_url: row.job_url ?? null,
-    webpage_url: row.webpage_url ?? null,
-    occupation_field_label: row.occupation_field_label ?? null,
-    occupation_group_label: row.occupation_group_label ?? null,
-    distance_m: row.distance_m ?? null,
-    vector_similarity: row.vector_similarity ?? null,
-    keyword_hit_count: row.keyword_hit_count ?? null,
-    keyword_total_count: row.keyword_total_count ?? null,
-    keyword_hit_rate: row.keyword_hit_rate ?? null,
-    keyword_miss_rate: row.keyword_miss_rate ?? null,
-    jobbnu_score: row.jobbnu_score ?? null,
-    keyword_match_score: row.keyword_match_score ?? row.ats_score ?? null,
-    display_score: row.display_score ?? null,
-    final_score: row.display_score ?? null,
-    keyword_hits: keywordHits,
-    skills_data: row.skills_data ?? null,
-    contact_email: row.contact_email ?? null,
-    has_contact_email: row.has_contact_email ?? null,
-    application_url: row.application_url ?? null,
-    application_channel: row.application_channel ?? null,
-  };
-}
-
-async function enrichJobsWithApplicationMeta(
+async function getPrecomputedDashboardPayload(
   supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
-  rows: ReturnType<typeof normalizeJobRow>[]
+  userId: string
 ) {
-  const jobIds = rows.map((row) => row.id).filter(Boolean);
-  if (jobIds.length === 0) return rows;
-
   const { data, error } = await supabase
-    .from("job_ads")
-    .select("id, contact_email, has_contact_email, application_url, application_channel")
-    .in("id", jobIds);
+    .from("candidate_job_matches")
+    .select(
+      "job_id, vector_similarity, keyword_hits, keyword_hit_count, keyword_total_count, keyword_hit_rate, keyword_miss_rate, taxonomy_bonus, final_score, distance_m, matched_at"
+    )
+    .eq("user_id", userId)
+    .order("final_score", { ascending: false })
+    .limit(500);
 
   if (error) {
     const message = getErrorMessage(error);
-    if (isMissingColumnError(message)) {
-      return rows;
+    if (isMissingRelationError(message)) {
+      return null;
     }
-    throw new Error(`job_ads metadata lookup failed: ${message}`);
+    throw new Error(`candidate_job_matches lookup failed: ${message}`);
   }
 
-  const metaById = new Map(
-    ((data as RawJobRow[] | null) ?? []).map((row) => [
-      String(row.id ?? ""),
-      {
-        contact_email: row.contact_email ?? null,
-        has_contact_email: row.has_contact_email ?? null,
-        application_url: row.application_url ?? null,
-        application_channel: row.application_channel ?? null,
-      },
-    ])
+  const rows = (data as PrecomputedMatchRow[] | null) ?? [];
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const jobIds = rows.map((row) => row.job_id).filter(Boolean);
+  const { data: jobMeta, error: jobMetaError } = await supabase
+    .from("job_ads")
+    .select(
+      "id, headline, company, city, location, description_text, job_url, webpage_url, occupation_field_label, occupation_group_label, occupation_label, skills_data, contact_email, has_contact_email, application_url, application_channel"
+    )
+    .in("id", jobIds)
+    .eq("is_active", true)
+    .or("application_deadline.is.null,application_deadline.gte.now()");
+
+  if (jobMetaError) {
+    throw new Error(`job_ads precomputed metadata lookup failed: ${jobMetaError.message}`);
+  }
+
+  const metaById = new Map<string, JobMetaRow>(
+    ((jobMeta as JobMetaRow[] | null) ?? []).map((row) => [String(row.id), row])
   );
 
-  return rows.map((row) => ({
-    ...row,
-    ...metaById.get(row.id),
-  }));
+  const jobs = rows
+    .map((row) => {
+      const meta = metaById.get(String(row.job_id));
+      if (!meta) return null;
+
+      const displayScore = Math.round(Math.max(0, Math.min(1, row.final_score ?? 0)) * 100);
+      return {
+        id: String(meta.id),
+        headline: meta.headline ?? "",
+        location: meta.city ?? meta.location ?? null,
+        job_url: meta.job_url ?? null,
+        webpage_url: meta.webpage_url ?? null,
+        occupation_field_label: meta.occupation_field_label ?? null,
+        occupation_group_label: meta.occupation_group_label ?? null,
+        distance_m: row.distance_m ?? null,
+        vector_similarity: row.vector_similarity ?? null,
+        keyword_hit_count: row.keyword_hit_count ?? null,
+        keyword_total_count: row.keyword_total_count ?? null,
+        keyword_hit_rate: row.keyword_hit_rate ?? null,
+        keyword_miss_rate: row.keyword_miss_rate ?? null,
+        jobbnu_score: displayScore,
+        keyword_match_score: row.keyword_hit_rate !== null && row.keyword_hit_rate !== undefined
+          ? Math.round(Math.max(0, Math.min(1, row.keyword_hit_rate)) * 100)
+          : null,
+        display_score: displayScore,
+        final_score: displayScore,
+        keyword_hits: Array.isArray(row.keyword_hits) ? row.keyword_hits.filter((value): value is string => typeof value === "string") : [],
+        skills_data: meta.skills_data ?? null,
+        contact_email: meta.contact_email ?? null,
+        has_contact_email: meta.has_contact_email ?? null,
+        application_url: meta.application_url ?? null,
+        application_channel: meta.application_channel ?? null,
+        category_bonus: row.taxonomy_bonus !== null && row.taxonomy_bonus !== undefined
+          ? Math.round(Math.max(0, Math.min(1, row.taxonomy_bonus)) * 100)
+          : null,
+      };
+    })
+    .filter(Boolean);
+
+  if (jobs.length === 0) {
+    return null;
+  }
+
+  return {
+    jobs,
+    matchedAt: rows[0]?.matched_at ?? new Date().toISOString(),
+    base_ready: true,
+  };
 }
 
 const createSupabaseRouteHandlerClient = async () => {
@@ -289,46 +292,6 @@ async function getDashboardCache(
   }
 
   return null;
-}
-
-async function saveDashboardCache(
-  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
-  userId: string,
-  scoreMode: ScoreMode,
-  cacheKey: string,
-  payload: DashboardCachePayload
-) {
-  const basePayload = {
-    user_id: userId,
-    score_mode: scoreMode,
-    cache_key: cacheKey,
-    match_results: payload,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { error } = await supabase
-    .from("dashboard_match_cache")
-    .upsert(basePayload, { onConflict: "user_id,score_mode,cache_key" });
-
-  if (error && scoreMode === "keyword_match") {
-    const fallback = await supabase
-      .from("dashboard_match_cache")
-      .upsert(
-        {
-          ...basePayload,
-          score_mode: "ats",
-        },
-        { onConflict: "user_id,score_mode,cache_key" }
-      );
-    if (fallback.error) {
-      throw new Error(`dashboard_match_cache upsert failed: ${fallback.error.message}`);
-    }
-    return;
-  }
-
-  if (error) {
-    throw new Error(`dashboard_match_cache upsert failed: ${error.message}`);
-  }
 }
 
 async function checkDashboardRunLimit(
@@ -422,6 +385,27 @@ async function getDashboardState(
   return data as DashboardStateRow | null;
 }
 
+async function getCandidateMatchState(
+  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
+  userId: string
+) {
+  const { data, error } = await supabase
+    .from("candidate_match_state")
+    .select("status,last_error,last_full_refresh_at,last_incremental_refresh_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    const message = getErrorMessage(error);
+    if (isMissingRelationError(message)) {
+      return null;
+    }
+    throw new Error(`candidate_match_state lookup failed: ${message}`);
+  }
+
+  return data as CandidateMatchStateRow | null;
+}
+
 async function getCachedPayloadForMode(
   supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
   userId: string,
@@ -436,53 +420,6 @@ async function getCachedPayloadForMode(
   const cacheKey = JSON.stringify({ baseHash: hashJobIds(baseJobIds), scoreMode });
   const payload = await getDashboardCache(supabase, userId, scoreMode, cacheKey);
   return { payload, state };
-}
-
-async function sortModePayload(
-  supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
-  params: {
-    profileVector: number[];
-    cvKeywords: string[] | null;
-    jobIds: string[];
-    groupNames: string[] | null;
-    categoryNames: string[] | null;
-    scoreMode: ScoreMode;
-  }
-) {
-  const attemptedScoreMode = params.scoreMode === "keyword_match" ? "keyword_match" : "jobbnu";
-  let { data, error } = await supabase.rpc("sort_dashboard_pool_by_mode", {
-    candidate_vector: params.profileVector,
-    cv_keywords: params.cvKeywords,
-    job_ids: params.jobIds,
-    group_names: params.groupNames,
-    category_names: params.categoryNames,
-    limit_count: DASHBOARD_POOL_LIMIT,
-    score_mode: attemptedScoreMode,
-  });
-
-  if (error && params.scoreMode === "keyword_match") {
-    const retry = await supabase.rpc("sort_dashboard_pool_by_mode", {
-      candidate_vector: params.profileVector,
-      cv_keywords: params.cvKeywords,
-      job_ids: params.jobIds,
-      group_names: params.groupNames,
-      category_names: params.categoryNames,
-      limit_count: DASHBOARD_POOL_LIMIT,
-      score_mode: "ats",
-    });
-    data = retry.data;
-    error = retry.error;
-  }
-
-  if (error) {
-    throw new Error(`sort_dashboard_pool_by_mode failed: ${error.message}`);
-  }
-
-  const rows = ((data as RawJobRow[] | null) ?? []).map((row) =>
-    normalizeJobRow(row, findKeywordHits(row, params.cvKeywords))
-  );
-
-  return enrichJobsWithApplicationMeta(supabase, rows);
 }
 
 async function loadProfile(
@@ -504,7 +441,7 @@ async function loadProfile(
   return data as ProfileRow;
 }
 
-export async function GET(req: Request) {
+export async function GET() {
   const supabase = await createSupabaseRouteHandlerClient();
   const {
     data: { user },
@@ -519,13 +456,41 @@ export async function GET(req: Request) {
     const scoreMode = toScoreMode(url.searchParams.get("score_mode"));
     const profile = await loadProfile(supabase, user.id);
     const limitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
+    const precomputedPayload = await getPrecomputedDashboardPayload(supabase, user.id);
+    const candidateMatchState = await getCandidateMatchState(supabase, user.id);
+
+    if (precomputedPayload) {
+      return NextResponse.json({
+        ...precomputedPayload,
+        cached: true,
+        cachedAt: precomputedPayload.matchedAt,
+        candidate_cv_text: profile?.candidate_text_vector ?? "",
+        canRunBasePool: limitStatus.allowed,
+        runsRemaining: limitStatus.runsRemaining,
+        nextAllowedTime: limitStatus.nextAllowedTime,
+        hoursUntilRefresh: limitStatus.hoursUntilRefresh,
+        minutesUntilRefresh: limitStatus.minutesUntilRefresh,
+        precomputed: true,
+      });
+    }
+
     const { payload, state } = await getCachedPayloadForMode(supabase, user.id, scoreMode);
 
     if (!payload) {
+      const precomputePending =
+        Boolean(profile?.profile_vector) &&
+        (!candidateMatchState ||
+          candidateMatchState.status === "pending" ||
+          candidateMatchState.status === "processing");
+
       return NextResponse.json(
         {
           error: "No cached dashboard matches found",
           noCacheFound: true,
+          precomputePending,
+          pendingMessage: precomputePending
+            ? "Vi bygger din första jobblista just nu. Dina matchningar uppdateras sedan automatiskt varje dag."
+            : null,
           canRunBasePool: limitStatus.allowed,
           runsRemaining: limitStatus.runsRemaining,
           nextAllowedTime: limitStatus.nextAllowedTime,
@@ -555,12 +520,11 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+export async function POST() {
   const supabase = await createSupabaseRouteHandlerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const body = await req.json().catch(() => ({}));
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -572,26 +536,6 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Profil hittades inte. Vänligen ladda upp ett CV på din profilsida." },
         { status: 404 }
-      );
-    }
-
-    const lat = typeof body?.lat === "number" ? body.lat : profile.location_lat;
-    const lon = typeof body?.lon === "number" ? body.lon : profile.location_lon;
-    const radiusKm = Number(body?.radius_km ?? profile.commute_radius_km ?? 40);
-    const radiusM = Math.max(1, Math.round(radiusKm * 1000));
-    const normalizedOccupationFields = mergeOccupationFields(
-      profile.primary_occupation_field,
-      profile.occupation_field_candidates
-    );
-    const groupNames =
-      profile.category_tags && profile.category_tags.length > 0
-        ? profile.category_tags
-        : null;
-
-    if (typeof lat !== "number" || typeof lon !== "number") {
-      return NextResponse.json(
-        { error: "Plats saknas i din profil. Vänligen uppdatera din stad." },
-        { status: 400 }
       );
     }
 
@@ -618,106 +562,54 @@ export async function POST(req: Request) {
       );
     }
 
-    const cvKeywords = buildKeywords(profile);
-    const { data, error } = await supabase.rpc("fetch_dashboard_taxonomy_pool", {
-      candidate_lat: lat,
-      candidate_lon: lon,
-      radius_m: radiusM,
-      group_names: groupNames,
-      category_names: normalizedOccupationFields,
-      limit_count: DASHBOARD_POOL_LIMIT,
-    });
-
-    if (error) {
-      return NextResponse.json({ error: `fetch_dashboard_taxonomy_pool failed: ${error.message}` }, { status: 500 });
-    }
-
-    const baseRows = ((data as RawJobRow[] | null) ?? []).map((row) =>
-      normalizeJobRow(row, findKeywordHits(row, cvKeywords))
-    );
-    const baseIds = baseRows.map((row) => row.id).filter(Boolean);
-    const baseHash = hashJobIds(baseIds);
     const nowIso = new Date().toISOString();
-
-    const jobbnuRows = await sortModePayload(supabase, {
-      profileVector: profile.profile_vector,
-      cvKeywords,
-      jobIds: baseIds,
-      groupNames,
-      categoryNames: normalizedOccupationFields,
-      scoreMode: "jobbnu",
-    });
-
-    const primaryStateWrite = await supabase
-      .from("dashboard_match_state")
+    await supabase
+      .from("candidate_match_state")
       .upsert(
         {
           user_id: user.id,
-          base_job_ids: baseIds,
-          ai_manager_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
-          keyword_match_job_ids: [],
-          query_meta: {
-            lat,
-            lon,
-            radius_km: radiusKm,
-            group_names: groupNames ?? [],
-            category_names: normalizedOccupationFields ?? [],
-          },
-          base_updated_at: nowIso,
-          ai_manager_updated_at: nowIso,
-          keyword_match_updated_at: null,
+          match_ready: true,
+          status: "processing",
+          last_error: null,
+          active_radius_km: profile.commute_radius_km ?? null,
+          candidate_lat: profile.location_lat ?? null,
+          candidate_lon: profile.location_lon ?? null,
           updated_at: nowIso,
         },
         { onConflict: "user_id" }
       );
 
-    if (primaryStateWrite.error && isMissingColumnError(primaryStateWrite.error.message)) {
-      const legacyStateWrite = await supabase
-        .from("dashboard_match_state")
-        .upsert(
-          {
-            user_id: user.id,
-            base_job_ids: baseIds,
-            ai_manager_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
-            ats_job_ids: [],
-            taxonomy_job_ids: jobbnuRows.map((row) => row.id).filter(Boolean),
-            query_meta: {
-              lat,
-              lon,
-              radius_km: radiusKm,
-              group_names: groupNames ?? [],
-              category_names: normalizedOccupationFields ?? [],
-            },
-            base_updated_at: nowIso,
-            ai_manager_updated_at: nowIso,
-            ats_updated_at: null,
-            taxonomy_updated_at: nowIso,
-            updated_at: nowIso,
-          },
-          { onConflict: "user_id" }
-        );
-
-      if (legacyStateWrite.error) {
-        throw new Error(`dashboard_match_state upsert failed: ${legacyStateWrite.error.message}`);
+    try {
+      await Promise.all([
+        triggerMatchPrecompute(user.id, "auto"),
+        recordDashboardRun(supabase, user.id),
+      ]);
+    } catch (triggerError: unknown) {
+      const message = triggerError instanceof Error ? triggerError.message : "Unknown error";
+      if (message.toLowerCase().includes("profile vector not ready")) {
+        return NextResponse.json({
+          queued: true,
+          precomputePending: true,
+          pendingMessage: "Vi bygger fortfarande din profil. Din första jobblista startar automatiskt så snart analysen är klar.",
+          candidate_cv_text: profile.candidate_text_vector ?? "",
+          cached: false,
+          cachedAt: nowIso,
+          canRunBasePool: limitStatus.allowed,
+          runsRemaining: limitStatus.runsRemaining,
+          nextAllowedTime: limitStatus.nextAllowedTime,
+          hoursUntilRefresh: limitStatus.hoursUntilRefresh,
+          minutesUntilRefresh: limitStatus.minutesUntilRefresh,
+        }, { status: 202 });
       }
-    } else if (primaryStateWrite.error) {
-      throw new Error(`dashboard_match_state upsert failed: ${primaryStateWrite.error.message}`);
+      throw triggerError;
     }
 
-    const jobbnuPayload: DashboardCachePayload = {
-      jobs: jobbnuRows,
-      score_mode: "jobbnu",
-      matchedAt: nowIso,
-      base_ready: true,
-    };
-    await Promise.all([
-      saveDashboardCache(supabase, user.id, "jobbnu", JSON.stringify({ baseHash, scoreMode: "jobbnu" }), jobbnuPayload),
-      recordDashboardRun(supabase, user.id),
-    ]);
     const updatedLimitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
 
     return NextResponse.json({
-      ...jobbnuPayload,
+      queued: true,
+      precomputePending: true,
+      pendingMessage: "Vi bygger din jobblista nu. Dina matchningar uppdateras sedan automatiskt varje dag.",
       candidate_cv_text: profile.candidate_text_vector ?? "",
       cached: false,
       cachedAt: nowIso,
@@ -726,7 +618,7 @@ export async function POST(req: Request) {
       nextAllowedTime: updatedLimitStatus.nextAllowedTime,
       hoursUntilRefresh: updatedLimitStatus.hoursUntilRefresh,
       minutesUntilRefresh: updatedLimitStatus.minutesUntilRefresh,
-    });
+    }, { status: 202 });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error("Match for-user POST error:", message);
