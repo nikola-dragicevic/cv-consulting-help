@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getServerSupabase } from "@/lib/supabaseServer"
-import { countCandidateApplications, FREE_AUTO_APPLY_APPLICATIONS, recordCandidateApplication } from "@/lib/applicationUsage"
+import { countCandidateApplications, recordCandidateApplication } from "@/lib/applicationUsage"
+import { canUseQuota, getRemainingQuota, getUserEntitlements } from "@/lib/subscriptionEntitlements"
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin"
 
 export const runtime = "nodejs"
@@ -23,15 +24,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "jobId is required" }, { status: 400 })
   }
 
-  const admin = getSupabaseAdmin()
-  const { data: profile } = await admin
-    .from("candidate_profiles")
-    .select("representation_active")
-    .eq("user_id", user.id)
-    .maybeSingle()
-
-  const hasAutoApplySubscription = profile?.representation_active === true
   const usedBefore = await countCandidateApplications(user.id)
+  const entitlements = await getUserEntitlements({
+    userId: user.id,
+    email: user.email,
+  })
+
+  const admin = getSupabaseAdmin()
 
   const { count: existingCount, error: existingError } = await admin
     .from("candidate_job_applications")
@@ -45,12 +44,15 @@ export async function POST(req: Request) {
 
   const alreadyRecorded = (existingCount ?? 0) > 0
 
-  if (!hasAutoApplySubscription && !alreadyRecorded && usedBefore >= FREE_AUTO_APPLY_APPLICATIONS) {
+  if (!canUseQuota(entitlements.applicationLimit, usedBefore, alreadyRecorded)) {
     return NextResponse.json(
       {
-        error: "Du har använt dina 2 fria ansökningar. Starta Auto Apply 300 kr/mån för att fortsätta.",
+        error: entitlements.hasActiveSubscription
+          ? "Du har använt dina 4 email i Premium Dashboard. Uppgradera till Auto Apply för obegränsat."
+          : "Du har använt dina 2 fria email. Starta Auto Apply 300 kr/mån för att fortsätta.",
         freeApplicationsUsed: usedBefore,
         freeApplicationsRemaining: 0,
+        applicationLimit: entitlements.applicationLimit,
       },
       { status: 402 }
     )
@@ -69,7 +71,8 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       freeApplicationsUsed: usedAfter,
-      freeApplicationsRemaining: hasAutoApplySubscription ? FREE_AUTO_APPLY_APPLICATIONS : Math.max(0, FREE_AUTO_APPLY_APPLICATIONS - usedAfter),
+      freeApplicationsRemaining: getRemainingQuota(entitlements.applicationLimit, usedAfter),
+      applicationLimit: entitlements.applicationLimit,
     })
   } catch (error) {
     return NextResponse.json(

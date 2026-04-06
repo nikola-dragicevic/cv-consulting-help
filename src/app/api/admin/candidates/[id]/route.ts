@@ -26,6 +26,19 @@ export async function PATCH(
     patch.manual_premium = body.manual_premium
   }
 
+  if (typeof body.representation_active === "boolean") {
+    patch.representation_active = body.representation_active
+    patch.representation_status = body.representation_active
+      ? typeof body.representation_status === "string" && body.representation_status.trim()
+        ? body.representation_status.trim()
+        : "manual_grant"
+      : null
+    patch.representation_current_period_end =
+      body.representation_active && typeof body.representation_current_period_end === "string"
+        ? body.representation_current_period_end
+        : null
+  }
+
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 })
   }

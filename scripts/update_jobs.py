@@ -2,6 +2,7 @@
 import os
 import json
 import requests
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,6 +22,10 @@ JOBTECH_API_KEY = os.getenv("JOBTECH_API_KEY")
 
 # Using the search API to fetch changes/new jobs
 API_BASE_URL = "https://jobsearch.api.jobtechdev.se/search"
+FETCH_TIMEOUT_SECONDS = int(os.getenv("JOB_FETCH_TIMEOUT_SECONDS", "45"))
+MAX_FETCH_RETRIES = int(os.getenv("JOB_FETCH_MAX_RETRIES", "3"))
+RATE_LIMIT_SLEEP_SECONDS = int(os.getenv("JOB_FETCH_RATE_LIMIT_SLEEP_SECONDS", "5"))
+EXPIRED_DEACTIVATION_BATCH_SIZE = int(os.getenv("JOB_EXPIRED_DEACTIVATION_BATCH_SIZE", "200"))
 
 # Store timestamp next to this script so it works no matter cwd
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -84,23 +89,46 @@ def save_last_run_date() -> None:
     TIMESTAMP_FILE.write_text(json.dumps({"last_run_date": now_str}), encoding="utf-8")
 
 
-def delete_expired_jobs() -> None:
+def deactivate_expired_jobs() -> None:
     """
-    Deletes jobs from Supabase where application_deadline has passed.
+    Marks jobs inactive where application_deadline has passed.
+    Safer than hard deletion because ads may still be useful for audit/history.
     """
-    print("🧹 Cleaning up expired jobs...")
+    print("🧹 Marking expired jobs as inactive...")
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
         response = (
             supabase.table("job_ads")
-            .delete()
+            .select("id")
             .lt("application_deadline", now_iso)
+            .eq("is_active", True)
+            .limit(5000)
             .execute()
         )
-        deleted_count = len(response.data) if getattr(response, "data", None) else 0
-        print(f"✅ Deleted {deleted_count} expired jobs.")
+        rows = response.data or []
+        if not rows:
+            print("✅ No expired active jobs needed inactivation.")
+            return
+
+        expired_ids = [row["id"] for row in rows if row.get("id")]
+        total_updated = 0
+        for i in range(0, len(expired_ids), EXPIRED_DEACTIVATION_BATCH_SIZE):
+            batch = expired_ids[i:i + EXPIRED_DEACTIVATION_BATCH_SIZE]
+            (
+                supabase.table("job_ads")
+                .update({
+                    "is_active": False,
+                    "source_inactivated_at": now_iso,
+                })
+                .in_("id", batch)
+                .eq("is_active", True)
+                .execute()
+            )
+            total_updated += len(batch)
+
+        print(f"✅ Marked {total_updated} expired jobs as inactive.")
     except Exception as e:
-        print(f"❌ Error deleting expired jobs: {e}")
+        print(f"❌ Error marking expired jobs inactive: {e}")
 
 
 def fetch_and_upsert_new_jobs() -> None:
@@ -122,11 +150,31 @@ def fetch_and_upsert_new_jobs() -> None:
         }
 
         try:
-            response = requests.get(API_BASE_URL, params=params, headers=headers, timeout=30)
+            response = None
+            for attempt in range(MAX_FETCH_RETRIES):
+                try:
+                    response = requests.get(
+                        API_BASE_URL,
+                        params=params,
+                        headers=headers,
+                        timeout=FETCH_TIMEOUT_SECONDS,
+                    )
+                    break
+                except requests.exceptions.ReadTimeout:
+                    wait_s = 2 * (attempt + 1)
+                    print(
+                        f"⏳ Read timeout while fetching offset={offset} "
+                        f"(attempt {attempt + 1}/{MAX_FETCH_RETRIES}). Sleeping {wait_s}s..."
+                    )
+                    time.sleep(wait_s)
+
+            if response is None:
+                print(f"❌ Giving up on fetch for offset={offset} after {MAX_FETCH_RETRIES} timeouts.")
+                break
+
             if response.status_code == 429:
-                print("⏳ Rate limit (429). Waiting 5s...")
-                import time
-                time.sleep(5)
+                print(f"⏳ Rate limit (429). Waiting {RATE_LIMIT_SLEEP_SECONDS}s...")
+                time.sleep(RATE_LIMIT_SLEEP_SECONDS)
                 continue
 
             response.raise_for_status()
@@ -191,6 +239,9 @@ def fetch_and_upsert_new_jobs() -> None:
 
                     # Control layer
                     "category_tags": category_tags,
+                    "is_active": True,
+                    "last_seen_at": datetime.now(timezone.utc).isoformat(),
+                    "source_inactivated_at": None,
                 }
 
                 contact_data = extract_job_contact_data(
@@ -221,8 +272,11 @@ def fetch_and_upsert_new_jobs() -> None:
                 print("⚠️ Hit offset limit (2000). Only first 2000 new jobs fetched.")
                 break
 
+        except requests.exceptions.RequestException as e:
+            print(f"❌ API request error at offset={offset}: {e}")
+            break
         except Exception as e:
-            print(f"❌ API Error: {e}")
+            print(f"❌ Unexpected API error at offset={offset}: {e}")
             break
 
     print(f"✅ Upserted {total_upserted} new jobs.")
@@ -291,7 +345,7 @@ def refresh_missing_contact_fields() -> None:
 
 
 def run_job_update() -> None:
-    delete_expired_jobs()
+    deactivate_expired_jobs()
     fetch_and_upsert_new_jobs()
     refresh_missing_contact_fields()
 

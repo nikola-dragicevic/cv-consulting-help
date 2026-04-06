@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getStripeClient } from "@/lib/stripeServer";
+import { resolveAffiliateForCurrentUser } from "@/lib/affiliate";
 
 const MONTHLY_PRICE_SEK = 99;
 
@@ -16,6 +17,11 @@ export async function POST() {
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://jobbnu.se";
     const priceId = process.env.STRIPE_PRICE_ID_DASHBOARD_PREMIUM?.trim();
+    const affiliateCreator = await resolveAffiliateForCurrentUser({
+      userId: user.id,
+      email: user.email,
+      checkoutStartedAtField: "dashboard_checkout_started_at",
+    });
 
     // Use pre-configured recurring price ID if available; otherwise build price_data
     const lineItem = priceId
@@ -43,6 +49,8 @@ export async function POST() {
       metadata: {
         user_id: user.id,
         order_type: "dashboard_subscription",
+        affiliate_creator_id: affiliateCreator?.id ?? "",
+        affiliate_code: affiliateCreator?.code ?? "",
       },
     });
 

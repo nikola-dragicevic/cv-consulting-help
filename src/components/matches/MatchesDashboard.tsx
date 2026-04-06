@@ -109,6 +109,10 @@ export function MatchesDashboard() {
   const [hasRepresentationSubscription, setHasRepresentationSubscription] = useState(false);
   const [freeApplicationsUsed, setFreeApplicationsUsed] = useState(0);
   const [freeApplicationsRemaining, setFreeApplicationsRemaining] = useState(2);
+  const [applicationLimit, setApplicationLimit] = useState<number | null>(2);
+  const [interviewPreparationsUsed, setInterviewPreparationsUsed] = useState(0);
+  const [interviewPreparationsRemaining, setInterviewPreparationsRemaining] = useState(2);
+  const [interviewPreparationLimit, setInterviewPreparationLimit] = useState<number | null>(2);
   const [isAdmin, setIsAdmin] = useState(false);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [subscriptionCheckoutLoading, setSubscriptionCheckoutLoading] = useState(false);
@@ -117,6 +121,7 @@ export function MatchesDashboard() {
   const [savedJobIds, setSavedJobIds] = useState<Set<string>>(new Set());
   const [submittedJobIds, setSubmittedJobIds] = useState<Set<string>>(new Set());
   const selectedScoreMode: ScoreMode = "jobbnu";
+  const premiumToAutoApplyUpgrade = hasActiveSubscription && !hasRepresentationSubscription;
 
   useEffect(() => {
     const supabase = getBrowserSupabase();
@@ -182,16 +187,34 @@ export function MatchesDashboard() {
       setHasRepresentationSubscription(Boolean(data?.hasRepresentationSubscription));
       setFreeApplicationsUsed(typeof data?.freeApplicationsUsed === "number" ? data.freeApplicationsUsed : 0);
       setFreeApplicationsRemaining(typeof data?.freeApplicationsRemaining === "number" ? data.freeApplicationsRemaining : 2);
+      setApplicationLimit(typeof data?.applicationLimit === "number" || data?.applicationLimit === null ? data.applicationLimit : 2);
+      setInterviewPreparationsUsed(typeof data?.interviewPreparationsUsed === "number" ? data.interviewPreparationsUsed : 0);
+      setInterviewPreparationsRemaining(typeof data?.interviewPreparationsRemaining === "number" ? data.interviewPreparationsRemaining : 2);
+      setInterviewPreparationLimit(typeof data?.interviewPreparationLimit === "number" || data?.interviewPreparationLimit === null ? data.interviewPreparationLimit : 2);
       setIsAdmin(Boolean(data?.isAdmin || data?.status === "admin_override"));
     } catch {
       setHasActiveSubscription(false);
       setHasRepresentationSubscription(false);
       setFreeApplicationsUsed(0);
       setFreeApplicationsRemaining(2);
+      setApplicationLimit(2);
+      setInterviewPreparationsUsed(0);
+      setInterviewPreparationsRemaining(2);
+      setInterviewPreparationLimit(2);
       setIsAdmin(false);
     } finally {
       setSubscriptionLoading(false);
     }
+  }
+
+  function handleApplicationRecorded(used: number, remaining: number) {
+    setFreeApplicationsUsed(used);
+    setFreeApplicationsRemaining(remaining);
+  }
+
+  function handleInterviewPreparationRecorded(used: number, remaining: number) {
+    setInterviewPreparationsUsed(used);
+    setInterviewPreparationsRemaining(remaining);
   }
 
   async function openBillingPortal() {
@@ -602,16 +625,6 @@ export function MatchesDashboard() {
                     {t("Gå till profil", "Go to profile")}
                   </Link>
                 </Button>
-                {!hasActiveSubscription && (
-                  <Button
-                    onClick={startSubscriptionCheckout}
-                    disabled={subscriptionCheckoutLoading}
-                    className="min-w-[176px] bg-amber-500 text-black hover:bg-amber-400"
-                  >
-                    <Crown />
-                    {subscriptionCheckoutLoading ? t("Startar...", "Starting...") : t("Prenumerera 99 kr/mån", "Subscribe 99 SEK/month")}
-                  </Button>
-                )}
                 {!hasRepresentationSubscription && (
                   <Button
                     onClick={startAutoApplyCheckout}
@@ -619,7 +632,23 @@ export function MatchesDashboard() {
                     className="min-w-[196px] bg-emerald-600 text-white hover:bg-emerald-700"
                   >
                     <Sparkles />
-                    {autoApplyCheckoutLoading ? t("Startar...", "Starting...") : t("Starta Auto Apply 300 kr/mån", "Start Auto Apply 300 SEK/month")}
+                    {autoApplyCheckoutLoading
+                      ? t("Startar...", "Starting...")
+                      : premiumToAutoApplyUpgrade
+                        ? t("Uppgradera till Auto Apply +200 kr/mån", "Upgrade to Auto Apply +200 SEK/month")
+                        : t("Starta Auto Apply 300 kr/mån", "Start Auto Apply 300 SEK/month")}
+                  </Button>
+                )}
+                {!hasActiveSubscription && (
+                  <Button
+                    onClick={startSubscriptionCheckout}
+                    disabled={subscriptionCheckoutLoading}
+                    className="min-w-[196px] bg-amber-500 text-black hover:bg-amber-400"
+                  >
+                    <Crown />
+                    {subscriptionCheckoutLoading
+                      ? t("Startar...", "Starting...")
+                      : t("Aktivera Premium Dashboard 99 kr/mån", "Activate Premium Dashboard 99 SEK/month")}
                   </Button>
                 )}
                 {(hasActiveSubscription || hasRepresentationSubscription) && (
@@ -651,8 +680,8 @@ export function MatchesDashboard() {
           {!hasRepresentationSubscription && (
             <div className="border-t border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-900">
               {t(
-                `Auto Apply: Du har använt ${freeApplicationsUsed} av 2 fria ansökningar och har ${freeApplicationsRemaining} kvar. Auto Apply (300 kr/mån) låser upp obegränsade ansökningar, personliga email och intervjuförberedelse.`,
-                `Auto Apply: You have used ${freeApplicationsUsed} of 2 free applications and have ${freeApplicationsRemaining} left. Auto Apply (300 SEK/month) unlocks unlimited applications, personal emails, and interview preparation.`
+                `Email: ${freeApplicationsUsed}/${applicationLimit ?? "obegränsat"} använda. Intervjuförberedelse: ${interviewPreparationsUsed}/${interviewPreparationLimit ?? "obegränsat"} använda. Auto Apply låser upp obegränsat, och vi rekommenderar upp till 30 email per dag för god leveransbarhet.`,
+                `Email: ${freeApplicationsUsed}/${applicationLimit ?? "unlimited"} used. Interview prep: ${interviewPreparationsUsed}/${interviewPreparationLimit ?? "unlimited"} used. Auto Apply unlocks unlimited usage, and we recommend up to 30 emails per day for healthy deliverability.`
               )}
             </div>
           )}
@@ -742,10 +771,11 @@ export function MatchesDashboard() {
               hasSubscription={hasActiveSubscription}
               hasAutoApplySubscription={hasRepresentationSubscription}
               freeApplicationsRemaining={freeApplicationsRemaining}
-              onApplicationRecorded={(used, remaining) => {
-                setFreeApplicationsUsed(used);
-                setFreeApplicationsRemaining(remaining);
-              }}
+              applicationLimit={applicationLimit}
+              interviewPreparationsRemaining={interviewPreparationsRemaining}
+              interviewPreparationLimit={interviewPreparationLimit}
+              onApplicationRecorded={handleApplicationRecorded}
+              onInterviewPreparationRecorded={handleInterviewPreparationRecorded}
               savedJobIds={savedJobIds}
               submittedJobIds={submittedJobIds}
               onToggleSavedJob={toggleSavedJob}
@@ -764,10 +794,11 @@ export function MatchesDashboard() {
               hasSubscription={hasActiveSubscription}
               hasAutoApplySubscription={hasRepresentationSubscription}
               freeApplicationsRemaining={freeApplicationsRemaining}
-              onApplicationRecorded={(used, remaining) => {
-                setFreeApplicationsUsed(used);
-                setFreeApplicationsRemaining(remaining);
-              }}
+              applicationLimit={applicationLimit}
+              interviewPreparationsRemaining={interviewPreparationsRemaining}
+              interviewPreparationLimit={interviewPreparationLimit}
+              onApplicationRecorded={handleApplicationRecorded}
+              onInterviewPreparationRecorded={handleInterviewPreparationRecorded}
               savedJobIds={savedJobIds}
               submittedJobIds={submittedJobIds}
               onToggleSavedJob={toggleSavedJob}
@@ -786,7 +817,11 @@ export function MatchesDashboard() {
               hasSubscription={hasActiveSubscription}
               hasAutoApplySubscription={true}
               freeApplicationsRemaining={freeApplicationsRemaining}
+              applicationLimit={applicationLimit}
+              interviewPreparationsRemaining={interviewPreparationsRemaining}
+              interviewPreparationLimit={interviewPreparationLimit}
               onApplicationRecorded={() => {}}
+              onInterviewPreparationRecorded={() => {}}
               savedJobIds={savedJobIds}
               submittedJobIds={submittedJobIds}
               onToggleSavedJob={toggleSavedJob}
@@ -804,7 +839,11 @@ export function MatchesDashboard() {
               hasSubscription={hasActiveSubscription}
               hasAutoApplySubscription={true}
               freeApplicationsRemaining={freeApplicationsRemaining}
+              applicationLimit={applicationLimit}
+              interviewPreparationsRemaining={interviewPreparationsRemaining}
+              interviewPreparationLimit={interviewPreparationLimit}
               onApplicationRecorded={() => {}}
+              onInterviewPreparationRecorded={() => {}}
               savedJobIds={savedJobIds}
               submittedJobIds={submittedJobIds}
               onToggleSavedJob={toggleSavedJob}
@@ -829,7 +868,11 @@ function JobLane({
   hasSubscription,
   hasAutoApplySubscription,
   freeApplicationsRemaining,
+  applicationLimit,
+  interviewPreparationsRemaining,
+  interviewPreparationLimit,
   onApplicationRecorded,
+  onInterviewPreparationRecorded,
   savedJobIds,
   submittedJobIds,
   onToggleSavedJob,
@@ -845,7 +888,11 @@ function JobLane({
   hasSubscription: boolean;
   hasAutoApplySubscription: boolean;
   freeApplicationsRemaining: number;
+  applicationLimit: number | null;
+  interviewPreparationsRemaining: number;
+  interviewPreparationLimit: number | null;
   onApplicationRecorded: (used: number, remaining: number) => void;
+  onInterviewPreparationRecorded: (used: number, remaining: number) => void;
   savedJobIds: Set<string>;
   submittedJobIds: Set<string>;
   onToggleSavedJob: (jobId: string) => void;
@@ -906,7 +953,11 @@ function JobLane({
           locked={!hasSubscription && visibleLimit !== null && index >= visibleLimit}
           hasAutoApplySubscription={hasAutoApplySubscription}
           freeApplicationsRemaining={freeApplicationsRemaining}
+          applicationLimit={applicationLimit}
+          interviewPreparationsRemaining={interviewPreparationsRemaining}
+          interviewPreparationLimit={interviewPreparationLimit}
           onApplicationRecorded={onApplicationRecorded}
+          onInterviewPreparationRecorded={onInterviewPreparationRecorded}
           saved={savedJobIds.has(job.id)}
           submitted={submittedJobIds.has(job.id)}
           onToggleSavedJob={onToggleSavedJob}
@@ -925,7 +976,11 @@ function SlimMatchCard({
   locked = false,
   hasAutoApplySubscription,
   freeApplicationsRemaining,
+  applicationLimit,
+  interviewPreparationsRemaining,
+  interviewPreparationLimit,
   onApplicationRecorded,
+  onInterviewPreparationRecorded,
   saved = false,
   submitted = false,
   onToggleSavedJob,
@@ -938,7 +993,11 @@ function SlimMatchCard({
   locked?: boolean;
   hasAutoApplySubscription: boolean;
   freeApplicationsRemaining: number;
+  applicationLimit: number | null;
+  interviewPreparationsRemaining: number;
+  interviewPreparationLimit: number | null;
   onApplicationRecorded: (used: number, remaining: number) => void;
+  onInterviewPreparationRecorded: (used: number, remaining: number) => void;
   saved?: boolean;
   submitted?: boolean;
   onToggleSavedJob: (jobId: string) => void;
@@ -972,7 +1031,8 @@ function SlimMatchCard({
   const canSendDirectly = isDirectApply && Boolean(job.contact_email);
   const externalApplyUrl = job.application_url || job.webpage_url || job.job_url || null;
   const portal = detectPortal(externalApplyUrl);
-  const autoApplyLocked = !hasAutoApplySubscription && freeApplicationsRemaining <= 0;
+  const emailActionsLocked = !hasAutoApplySubscription && freeApplicationsRemaining <= 0;
+  const interviewPrepLocked = !hasAutoApplySubscription && interviewPreparationsRemaining <= 0;
 
   async function handleGenerateEmail() {
     try {
@@ -1039,6 +1099,9 @@ function SlimMatchCard({
       const json = await res.json();
       if (!res.ok) {
         throw new Error(json?.error || "Kunde inte skapa intervjuförberedelse");
+      }
+      if (typeof json?.interviewPreparationsUsed === "number" && typeof json?.interviewPreparationsRemaining === "number") {
+        onInterviewPreparationRecorded(json.interviewPreparationsUsed, json.interviewPreparationsRemaining);
       }
       setInterviewPreparation(typeof json?.preparation === "string" ? json.preparation : "");
       setInterviewQuestions(typeof json?.likelyQuestions === "string" ? json.likelyQuestions : "");
@@ -1302,7 +1365,7 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || autoApplyLocked || emailLoading}
+                        disabled={locked || emailActionsLocked || emailLoading}
                         onClick={() => void handleGenerateEmail()}
                       >
                         <Mail className="h-4 w-4" />
@@ -1311,7 +1374,7 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || autoApplyLocked || interviewPrepLoading}
+                        disabled={locked || interviewPrepLocked || interviewPrepLoading}
                         onClick={() => void handleInterviewPreparation()}
                       >
                         <Sparkles className="h-4 w-4" />
@@ -1323,8 +1386,8 @@ function SlimMatchCard({
                   {!hasAutoApplySubscription && (
                     <p className="text-xs text-emerald-700">
                       {t(
-                        `Fria ansökningar kvar: ${freeApplicationsRemaining}/2. Auto Apply låser upp obegränsat.`,
-                        `Free applications left: ${freeApplicationsRemaining}/2. Auto Apply unlocks unlimited usage.`
+                        `Email kvar: ${freeApplicationsRemaining}/${applicationLimit ?? "obegränsat"}. Intervjuförberedelser kvar: ${interviewPreparationsRemaining}/${interviewPreparationLimit ?? "obegränsat"}. Auto Apply låser upp obegränsat.`,
+                        `Emails left: ${freeApplicationsRemaining}/${applicationLimit ?? "unlimited"}. Interview preps left: ${interviewPreparationsRemaining}/${interviewPreparationLimit ?? "unlimited"}. Auto Apply unlocks unlimited usage.`
                       )}
                     </p>
                   )}
@@ -1348,7 +1411,7 @@ function SlimMatchCard({
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={locked || autoApplyLocked || emailSendLoading || !generatedEmailText.trim()}
+                          disabled={locked || emailActionsLocked || emailSendLoading || !generatedEmailText.trim()}
                           onClick={() => void handleSendEmail().then(() => {
                             if (!submitted) onToggleSubmittedJob(job.id);
                           })}
@@ -1410,7 +1473,7 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || autoApplyLocked || emailLoading}
+                        disabled={locked || emailActionsLocked || emailLoading}
                         onClick={() => void handleGenerateEmail()}
                       >
                         <Mail className="h-4 w-4" />
@@ -1419,7 +1482,7 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || autoApplyLocked || cvDownloadLoading}
+                        disabled={locked || emailActionsLocked || cvDownloadLoading}
                         onClick={() => void handleDownloadCv()}
                       >
                         <Download className="h-4 w-4" />
@@ -1428,7 +1491,7 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || autoApplyLocked || interviewPrepLoading}
+                        disabled={locked || interviewPrepLocked || interviewPrepLoading}
                         onClick={() => void handleInterviewPreparation()}
                       >
                         <Sparkles className="h-4 w-4" />
@@ -1437,16 +1500,16 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || autoApplyLocked}
+                        disabled={locked || emailActionsLocked}
                         onClick={() => setShowExtensionHelp((value) => !value)}
                       >
                         <Sparkles className="h-4 w-4" />
                         {t("Fyll med extension", "Fill with extension")}
                       </Button>
-                      <Button asChild variant="outline" size="sm" disabled={locked || autoApplyLocked}>
+                      <Button asChild variant="outline" size="sm" disabled={locked || emailActionsLocked}>
                         <Link
                           href={externalApplyUrl}
-                          onClick={locked || autoApplyLocked ? (event) => event.preventDefault() : undefined}
+                          onClick={locked || emailActionsLocked ? (event) => event.preventDefault() : undefined}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -1458,8 +1521,8 @@ function SlimMatchCard({
                   {!hasAutoApplySubscription && (
                     <p className="text-xs text-emerald-700">
                       {t(
-                        `Fria ansökningar kvar: ${freeApplicationsRemaining}/2. När de är slut behöver du Auto Apply för att fortsätta.`,
-                        `Free applications left: ${freeApplicationsRemaining}/2. Once they are used, you need Auto Apply to continue.`
+                        `Email kvar: ${freeApplicationsRemaining}/${applicationLimit ?? "obegränsat"}. Intervjuförberedelser kvar: ${interviewPreparationsRemaining}/${interviewPreparationLimit ?? "obegränsat"}. När de är slut behöver du Auto Apply för att fortsätta.`,
+                        `Emails left: ${freeApplicationsRemaining}/${applicationLimit ?? "unlimited"}. Interview preps left: ${interviewPreparationsRemaining}/${interviewPreparationLimit ?? "unlimited"}. Once they are used, you need Auto Apply to continue.`
                       )}
                     </p>
                   )}
@@ -1481,7 +1544,7 @@ function SlimMatchCard({
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={locked || autoApplyLocked || !generatedEmailText.trim()}
+                          disabled={locked || emailActionsLocked || !generatedEmailText.trim()}
                           onClick={handleDownloadGeneratedText}
                         >
                           <Download className="h-4 w-4" />
@@ -1490,7 +1553,7 @@ function SlimMatchCard({
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={locked || autoApplyLocked || !generatedEmailText.trim()}
+                          disabled={locked || emailActionsLocked || !generatedEmailText.trim()}
                           onClick={handleDownloadGeneratedPdf}
                         >
                           <Download className="h-4 w-4" />

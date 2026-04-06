@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getStripeClient } from "@/lib/stripeServer";
+import { AUTO_APPLY_UPGRADE_DELTA_SEK, getUserEntitlements } from "@/lib/subscriptionEntitlements";
+import { resolveAffiliateForCurrentUser } from "@/lib/affiliate";
 
 const MONTHLY_PRICE_SEK = 300;
 
@@ -15,18 +17,33 @@ export async function POST() {
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://jobbnu.se";
-    const priceId = process.env.STRIPE_PRICE_ID_REPRESENTATION?.trim();
+    const entitlements = await getUserEntitlements({
+      userId: user.id,
+      email: user.email,
+    });
+    const affiliateCreator = await resolveAffiliateForCurrentUser({
+      userId: user.id,
+      email: user.email,
+      checkoutStartedAtField: "auto_apply_checkout_started_at",
+    });
+    const isUpgradeFromPremium = entitlements.hasActiveSubscription && !entitlements.hasRepresentationSubscription;
+    const amountSek = isUpgradeFromPremium ? AUTO_APPLY_UPGRADE_DELTA_SEK : MONTHLY_PRICE_SEK;
+    const priceId = isUpgradeFromPremium
+      ? process.env.STRIPE_PRICE_ID_AUTO_APPLY_UPGRADE?.trim()
+      : process.env.STRIPE_PRICE_ID_REPRESENTATION?.trim();
 
     const lineItem = priceId
       ? { price: priceId, quantity: 1 }
       : {
           price_data: {
             currency: "sek",
-            unit_amount: MONTHLY_PRICE_SEK * 100,
+            unit_amount: amountSek * 100,
             recurring: { interval: "month" as const },
             product_data: {
               name: "Auto Apply",
-              description: "JobbNu hjälper kandidaten att skicka fler ansökningar, generera personliga email och förbereda intervjuer.",
+              description: isUpgradeFromPremium
+                ? "Uppgradering från Dashboard Premium till Auto Apply med obegränsade email och intervjuförberedelser."
+                : "JobbNu hjälper kandidaten att skicka fler ansökningar, generera personliga email och förbereda intervjuer.",
             },
           },
           quantity: 1,
@@ -42,11 +59,15 @@ export async function POST() {
       metadata: {
         user_id: user.id,
         order_type: "representation_subscription",
+        affiliate_creator_id: affiliateCreator?.id ?? "",
+        affiliate_code: affiliateCreator?.code ?? "",
       },
       subscription_data: {
         metadata: {
           user_id: user.id,
           order_type: "representation_subscription",
+          affiliate_creator_id: affiliateCreator?.id ?? "",
+          affiliate_code: affiliateCreator?.code ?? "",
         },
       },
     });

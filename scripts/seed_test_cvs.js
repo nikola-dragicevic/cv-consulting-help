@@ -35,7 +35,6 @@ const cvs = [
       'Underhållsmekaniker och maskinreparatörer',
       'Drifttekniker vid värme- och vattenverk'
     ],
-    occupation_targets: ['Mjukvaru- och systemutvecklare m.fl.', 'Systemanalytiker och IT-arkitekter m.fl.'],
     persona_past_1_text: 'Airplane technician at Norwegian Air (2019-2020), safety inspections, fault detection, compliance with regulations at Arlanda.',
     persona_past_2_text: 'Automation technician at CEVA Logistics (2020-2023), repair, maintenance, troubleshooting, calibration of parcel and pocket sorting systems.',
     persona_past_3_text: 'Control Room Operator at Witron (2023-present), incident handling, production flow control, warehouse inbound control, reporting and statistics.',
@@ -43,7 +42,6 @@ const cvs = [
     persona_target_text: 'Java system developer / backend developer working with Java, SQL, distributed systems, APIs, and enterprise applications.',
     skills_text: 'Java, Oracle JDK, Eclipse IDE, object-oriented programming, concurrency, Java sockets, JDBC, SQL, data modeling, Swing, JavaFX, client-server architecture, Waterfall, Kanban, Scrum, SOA, Java EE, Jakarta EE, EJB, JPA/JTA, Dynamic Web Application modules, JAX-WS, JAX-RS, WebSockets, troubleshooting, automation systems, operations control, reporting, statistical analysis.',
     education_certifications_text: 'Yrkeshögskola: Systemutvecklare Java, Yrkes Akademin, Sundsvall (distans), 2022-2024. Gymnasium: Flygplanstekniker, Arlandagymnasiet, 2016-2019.',
-    must_have_constraints: { test_profile: true, source: 'manual_seed_cv_2026_02_27' },
     candidate_text_vector: 'Nikola Dragicevic. Stockholm/Bålsta. Java systemutvecklare med erfarenhet av Java enterprise, SQL, distribuerade system, samt automation/logistik. Yrkeserfarenhet: Witron kontrollrum, CEVA automationstekniker, Norwegian Air flygtekniker. Utbildning: YH Systemutvecklare Java.'
   },
   {
@@ -69,7 +67,6 @@ const cvs = [
       'Industrielektriker',
       'Elektronikreparatörer och kommunikationselektriker m.fl.'
     ],
-    occupation_targets: ['Installations- och serviceelektriker'],
     persona_past_1_text: 'Electrician apprentice/early role at Vanadis EL (1985-1990), practical wiring, schematic reading, troubleshooting support, safety procedures.',
     persona_past_2_text: 'Electrician across multiple employers (1990-2024), installations, maintenance, fault diagnostics, upgrades in residential and commercial properties.',
     persona_past_3_text: 'Senior electrician at eLinked (2024-present), installation, service and troubleshooting with full responsibility for quality, safety and documentation.',
@@ -77,7 +74,6 @@ const cvs = [
     persona_target_text: 'Continue in senior electrician / service electrician roles with high safety responsibility and complex troubleshooting assignments.',
     skills_text: 'Electrical installations, troubleshooting, maintenance, service, upgrades, electrical drawings and schematics, technical documentation, Elsäkerhetsverket compliance, risk assessment, collaboration with contractors and customers, quality assurance, independent field work, safety protocols, communication.',
     education_certifications_text: 'Gymnasium: El och Tele, Märsta (1985). Allmän behörighet (1992). Certifications/permits: Liftkort, Första Hjälpen/HLR, ID06, Körkort B.',
-    must_have_constraints: { test_profile: true, source: 'manual_seed_cv_2026_02_27' },
     candidate_text_vector: 'Rickard Granudd. Sundbyberg. Senior elektriker med 35+ års erfarenhet av elinstallation, service, felsökning och underhåll i bostäder och kommersiella fastigheter. Behörigheter: Allmän behörighet, ID06, HLR, liftkort.'
   }
 ];
@@ -99,11 +95,7 @@ async function upsertByEmail(profile) {
     profile_vector: null,
     persona_current_vector: null,
     persona_target_vector: null,
-    persona_past_1_vector: null,
-    persona_past_2_vector: null,
-    persona_past_3_vector: null,
-    wish_vector: null,
-    last_match_time: null
+    wish_vector: null
   };
 
   if (existing?.id) {

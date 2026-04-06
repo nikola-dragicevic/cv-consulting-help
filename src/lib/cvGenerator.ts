@@ -13,6 +13,30 @@ export interface GenerationResult {
   error?: string
 }
 
+type GeneratedCvData = {
+  name?: string
+  title?: string
+  email?: string
+  phone?: string
+  location?: string
+  profile?: string
+  experience?: Array<{
+    title?: string
+    company?: string
+    period?: string
+    bullets?: string[]
+  }>
+  education?: Array<{
+    degree?: string
+    school?: string
+    period?: string
+  }>
+  skills?: Record<string, string[]>
+  languages?: string[]
+  certifications?: string[]
+  driverLicense?: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Arbetsförmedlingen URL helpers
 // ---------------------------------------------------------------------------
@@ -67,6 +91,60 @@ async function callClaude(system: string, user: string, temperature = 0.3): Prom
   return (data.content?.[0]?.text ?? "").trim()
 }
 
+function stripJsonFences(raw: string): string {
+  return raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
+}
+
+function parseGeneratedCv(raw: string): GeneratedCvData | null {
+  try {
+    return JSON.parse(stripJsonFences(raw)) as GeneratedCvData
+  } catch {
+    return null
+  }
+}
+
+function normalizeSwedishTitle(value: string | undefined): string | undefined {
+  if (!value) return value
+  return value
+    .replace(/\bhundsköter\b/gi, "hundskötare")
+    .replace(/\bplocktruck\s*förare\b/gi, "plocktruckförare")
+    .replace(/\bmålare lärling\b/gi, "målarlärling")
+}
+
+function sourceHasExplicitTotalYears(sourceText: string): boolean {
+  return /\b\d+\+?\s*års?\s+(erfarenhet|experience)\b/i.test(sourceText)
+}
+
+function sanitizeUnsupportedYears(profile: string, sourceText: string): string {
+  if (!profile) return profile
+  if (sourceHasExplicitTotalYears(sourceText)) return profile
+
+  return profile
+    .replace(/\bmed\s+\d+\+?\s*års?\s+erfarenhet\b/gi, "med erfarenhet")
+    .replace(/\b\d+\+?\s*års?\s+erfarenhet\b/gi, "erfarenhet")
+}
+
+function sanitizeGeneratedCv(raw: string, sourceText: string): string {
+  const parsed = parseGeneratedCv(raw)
+  if (!parsed) return raw
+
+  parsed.title = normalizeSwedishTitle(parsed.title)
+  parsed.profile = sanitizeUnsupportedYears(parsed.profile || "", sourceText)
+
+  parsed.experience = (parsed.experience || []).map((exp) => ({
+    ...exp,
+    title: normalizeSwedishTitle(exp.title),
+  }))
+
+  return JSON.stringify(parsed, null, 2)
+}
+
+export async function generateCvFromFreeText(text: string): Promise<string> {
+  const userPrompt = `Skapa ett professionellt CV på svenska baserat på följande fritext. Extrahera och strukturera all tillgänglig information som finns – namn, kontaktuppgifter, erfarenheter, utbildning, kompetenser, språk, certifikat och körkort om det anges. Korrigera uppenbara stavfel, böjningar och grammatiska fel till korrekt professionell svenska utan att hitta på nya fakta. Normalisera yrkestitlar till korrekt svensk form när det är uppenbart, till exempel "hundsköter" -> "hundskötare". Om total erfarenhet i antal år inte uttryckligen anges och säkert stöds av underlaget ska du inte skriva ett exakt antal år i profiltexten. Förväxla aldrig ålder med antal års erfarenhet. Använd hellre formuleringar som "erfarenhet från", "bakgrund inom" eller "flera års erfarenhet" om det exakta antalet är osäkert. Returnera ENBART JSON enligt formatet i systemprompten.\n\n${text.slice(0, 8000)}`
+  const raw = await callClaude(buildCvSystemPrompt(), userPrompt, 0.2)
+  return sanitizeGeneratedCv(raw, text)
+}
+
 // ---------------------------------------------------------------------------
 // CV prompt — outputs structured JSON for the CvPreview template renderer
 // ---------------------------------------------------------------------------
@@ -79,6 +157,10 @@ ABSOLUTA REGLER – BRYTS ALDRIG:
 2. Du FÅR förbättra formuleringar och professionellt språk.
 3. Du FÅR skriva om arbetsuppgifter med starkare action-verb – men enbart baserat på vad användaren angett.
 4. Alla fakta ska kunna verifieras mot det användaren gett in.
+5. Korrigera uppenbara stavfel, böjningar och grammatiska fel till korrekt professionell svenska.
+6. Normalisera uppenbart felstavade eller grammatiskt felaktiga yrkestitlar till korrekt svensk yrkestitel när betydelsen är tydlig, till exempel "hundsköter" -> "hundskötare".
+7. Ange ALDRIG ett exakt totalt antal års erfarenhet i profiltexten om det inte uttryckligen angetts av användaren eller säkert kan verifieras från underlaget.
+8. Förväxla ALDRIG ålder, födelseår eller andra siffror med antal års erfarenhet.
 
 OUTPUT: Returnera ENBART ett JSON-objekt med exakt denna struktur (ingen text utanför JSON):
 
@@ -119,6 +201,7 @@ REGLER FÖR JSON:
 - Svara ENBART med JSON-objektet, inga kommentarer, inga förklaringar, ingen text utanför
 - Varje experience ska ha 2–4 bullets med starka action-verb
 - ATS-optimerat: matcha nyckelord från jobbannonsen om en sådan angetts
+- Om erfarenhetslängden är osäker: skriv inte "X års erfarenhet" i profile-fältet
 - Håll allt till max 2 A4-sidor (korta, kärnfulla bullets)`
 }
 
@@ -408,7 +491,9 @@ export async function generateCvAndLetter(
 
     // --- cv_intake: generate CV only ---
     // Use lower temperature for JSON output to minimise parse failures
-    const cv = await callClaude(buildCvSystemPrompt(), buildCvUserPrompt(order, job), 0.2)
+    const cvPrompt = buildCvUserPrompt(order, job)
+    const cvRaw = await callClaude(buildCvSystemPrompt(), cvPrompt, 0.2)
+    const cv = sanitizeGeneratedCv(cvRaw, cvPrompt)
 
     return { cv, letter: null }
   } catch (err) {

@@ -994,8 +994,15 @@ export default function UnifiedLandingPage() {
                     </li>
                   ))}
                 </ul>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700" size="lg" asChild>
-                  <Link href="/dashboard">{t("Börja matcha →", "Start matching →")}</Link>
+                <Button
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  size="lg"
+                  onClick={() => void startDashboardCheckout()}
+                  disabled={subscriptionCheckoutLoading}
+                >
+                  {subscriptionCheckoutLoading
+                    ? t("Startar betalning...", "Starting checkout...")
+                    : t("Aktivera Dashboard Premium →", "Activate Dashboard Premium →")}
                 </Button>
                 <p className="text-center text-xs text-slate-400 mt-2">
                   {t("4 matcher gratis. Uppgradera när du vill.", "4 free matches. Upgrade whenever.")}
@@ -1232,6 +1239,17 @@ export default function UnifiedLandingPage() {
                 {(lang === "sv"
                   ? ["Professionell CV‑skrivning","Dashboard Premium","Auto Apply","Intervjuförberedelse","Jobbsökningsstrategier","AI‑drivna jobbförslag"]
                   : ["Professional CV writing","Dashboard Premium","Auto Apply","Interview preparation","Job search strategies","AI-driven job suggestions"]).map((item) => <p key={item}>{item}</p>)}
+              </div>
+              <div className="mt-5 space-y-2 text-sm">
+                <Link href="/integritetspolicy" className="block text-slate-300 hover:text-white">
+                  {t("Integritetspolicy", "Privacy Policy")}
+                </Link>
+                <Link href="/villkor" className="block text-slate-300 hover:text-white">
+                  {t("Användarvillkor", "Terms of Service")}
+                </Link>
+                <Link href="/support" className="block text-slate-300 hover:text-white">
+                  {t("Support", "Support")}
+                </Link>
               </div>
               <p className="mt-4 text-sm text-slate-400">
                 {t("Målet: hjälpa 10 000 personer hitta jobb.", "Goal: help 10,000 people find jobs.")}

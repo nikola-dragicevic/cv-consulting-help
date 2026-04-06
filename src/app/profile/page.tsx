@@ -352,8 +352,8 @@ export default function ProfilePage() {
 
       setMessage(
         t(
-          "✅ Profil sparad! Matchningsvektorer uppdateras nu i bakgrunden. Du ser statusen nedan.",
-          "✅ Profile saved! Matching vectors are updating in the background. You can follow the status below."
+          "✅ Profil sparad! Din profil uppdateras nu i bakgrunden. Du ser statusen nedan.",
+          "✅ Profile saved! Your profile is now updating in the background. You can follow the status below."
         )
       );
       setVectorStatus({
@@ -416,7 +416,7 @@ export default function ProfilePage() {
       setMessage(
         err instanceof Error
           ? err.message
-          : t("Kunde inte starta om vektorgenereringen.", "Could not restart vector generation.")
+          : t("Kunde inte starta om profiluppdateringen.", "Could not restart the profile update.")
       );
     } finally {
       setVectorRetryLoading(false);
@@ -768,6 +768,14 @@ export default function ProfilePage() {
                   <Link href="/integritetspolicy" target="_blank" className="text-blue-600 underline hover:text-blue-800">
                     {t("Integritetspolicy", "Privacy Policy")}
                   </Link>
+                  {" "}{t("och", "and")}{" "}
+                  <Link href="/villkor" target="_blank" className="text-blue-600 underline hover:text-blue-800">
+                    {t("Användarvillkor", "Terms of Service")}
+                  </Link>
+                  {" "}{t("samt", "and")}{" "}
+                  <Link href="/support" target="_blank" className="text-blue-600 underline hover:text-blue-800">
+                    {t("Support", "Support")}
+                  </Link>
                   .
                 </p>
               </div>
@@ -788,6 +796,52 @@ export default function ProfilePage() {
                 {message}
               </p>
             )}
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">
+                    {t("Status för profiluppdatering", "Profile update status")}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {t(
+                      "Här ser du om din profil har uppdaterats korrekt efter att du sparat ändringar.",
+                      "Here you can see whether your profile was updated correctly after you saved changes."
+                    )}
+                  </p>
+                </div>
+                {vectorStatus?.status === "failed" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleRetryVectorGeneration()}
+                    disabled={vectorRetryLoading}
+                  >
+                    {vectorRetryLoading ? t("Försöker igen...", "Retrying...") : t("Försök igen", "Retry")}
+                  </Button>
+                )}
+              </div>
+
+              <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <div>
+                  <span className="font-medium">{t("Status:", "Status:")}</span>{" "}
+                  {vectorStatus?.status === "pending" && t("väntar på start", "pending")}
+                  {vectorStatus?.status === "processing" && t("uppdaterar profil", "updating profile")}
+                  {vectorStatus?.status === "success" && t("klar", "success")}
+                  {vectorStatus?.status === "failed" && t("misslyckades", "failed")}
+                  {(!vectorStatus || vectorStatus.status === "idle") &&
+                    t("ingen uppdatering pågår", "no update in progress")}
+                </div>
+                {typeof vectorStatus?.attempts === "number" && vectorStatus.attempts > 0 && (
+                  <div className="mt-1 text-xs text-slate-500">
+                    {t("Antal försök:", "Attempts:")} {vectorStatus.attempts}
+                  </div>
+                )}
+                {normalizedVectorError && (
+                  <div className="mt-2 text-xs text-red-600">{normalizedVectorError}</div>
+                )}
+              </div>
+            </div>
           </form>
         </CardContent>
       </Card>
@@ -844,6 +898,11 @@ export default function ProfilePage() {
                   "När Gmail/Outlook är kopplat kan du skicka skräddarsydda ansökningar direkt från JobbNu.",
                   "Once Gmail/Outlook is connected, you can send tailored applications directly from JobbNu."
                 )}
+                <div className="mt-2">
+                  <Link href="/support" target="_blank" className="font-medium underline underline-offset-2">
+                    {t("Behöver du hjälp? Besök supportsidan.", "Need help? Visit the support page.")}
+                  </Link>
+                </div>
               </div>
 
               {emailAccountsMessage && <p className="text-sm text-slate-700">{emailAccountsMessage}</p>}
@@ -986,54 +1045,6 @@ export default function ProfilePage() {
               {showGeneratedLetter && generatedDocs?.latestLetter?.content && (
                 <LetterPreview raw={generatedDocs.latestLetter.content} className="overflow-hidden rounded-xl border border-slate-200" />
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="space-y-4 p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">
-                    {t("Matchningsstatus", "Matching status")}
-                  </h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {t(
-                      "Här ser du om dina matchningsvektorer har uppdaterats korrekt efter att profilen sparats.",
-                      "Here you can see whether your matching vectors were updated correctly after saving your profile."
-                    )}
-                  </p>
-                </div>
-                {vectorStatus?.status === "failed" && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void handleRetryVectorGeneration()}
-                    disabled={vectorRetryLoading}
-                  >
-                    {vectorRetryLoading ? t("Försöker igen...", "Retrying...") : t("Försök igen", "Retry")}
-                  </Button>
-                )}
-              </div>
-
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                <div>
-                  <span className="font-medium">{t("Status:", "Status:")}</span>{" "}
-                  {vectorStatus?.status === "pending" && t("väntar på start", "pending")}
-                  {vectorStatus?.status === "processing" && t("bearbetar", "processing")}
-                  {vectorStatus?.status === "success" && t("klar", "success")}
-                  {vectorStatus?.status === "failed" && t("misslyckades", "failed")}
-                  {(!vectorStatus || vectorStatus.status === "idle") &&
-                    t("ingen uppdatering pågår", "no update in progress")}
-                </div>
-                {typeof vectorStatus?.attempts === "number" && vectorStatus.attempts > 0 && (
-                  <div className="mt-1 text-xs text-slate-500">
-                    {t("Antal försök:", "Attempts:")} {vectorStatus.attempts}
-                  </div>
-                )}
-                {normalizedVectorError && (
-                  <div className="mt-2 text-xs text-red-600">{normalizedVectorError}</div>
-                )}
-              </div>
             </CardContent>
           </Card>
         </div>

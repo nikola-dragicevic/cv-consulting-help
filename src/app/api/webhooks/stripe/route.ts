@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 import { getStripeClient } from '@/lib/stripeServer';
 import { runGeneration } from '@/app/api/generate-cv/route';
+import { calculateAffiliatePayoutAmount } from '@/lib/affiliate';
 
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set<Stripe.Subscription.Status>(["active", "trialing", "past_due"]);
 
@@ -56,6 +57,77 @@ async function updateRepresentationStatus(params: {
   }
 }
 
+async function recordAffiliateConversion(params: {
+  userId: string;
+  affiliateCreatorId?: string | null;
+  affiliateCode?: string | null;
+  orderType: string;
+  amountSek: number;
+  stripeCheckoutSessionId: string;
+  customerEmail?: string | null;
+}) {
+  const supabaseAdmin = getSupabaseAdmin();
+
+  let referral = null as null | {
+    id: string;
+    creator_id: string;
+    first_paid_at: string | null;
+  };
+
+  if (params.affiliateCreatorId) {
+    const { data } = await supabaseAdmin
+      .from("affiliate_referrals")
+      .select("id,creator_id,first_paid_at")
+      .eq("user_id", params.userId)
+      .eq("creator_id", params.affiliateCreatorId)
+      .maybeSingle();
+    referral = data ?? null;
+  }
+
+  if (!referral) {
+    const { data } = await supabaseAdmin
+      .from("affiliate_referrals")
+      .select("id,creator_id,first_paid_at")
+      .eq("user_id", params.userId)
+      .maybeSingle();
+    referral = data ?? null;
+  }
+
+  if (!referral || referral.first_paid_at) {
+    return;
+  }
+
+  const { data: creator } = await supabaseAdmin
+    .from("affiliate_creators")
+    .select("commission_percent")
+    .eq("id", referral.creator_id)
+    .maybeSingle();
+
+  const payoutAmountSek = calculateAffiliatePayoutAmount({
+    amountSek: params.amountSek,
+    commissionPercent: Number(creator?.commission_percent ?? 30),
+  });
+
+  const { error } = await supabaseAdmin
+    .from("affiliate_referrals")
+    .update({
+      affiliate_code: params.affiliateCode || undefined,
+      first_paid_at: new Date().toISOString(),
+      first_paid_order_type: params.orderType,
+      first_paid_amount_sek: params.amountSek,
+      payout_amount_sek: payoutAmountSek,
+      payout_status: "pending",
+      stripe_checkout_session_id: params.stripeCheckoutSessionId,
+      stripe_customer_email: params.customerEmail ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", referral.id);
+
+  if (error) {
+    console.error("Fel vid affiliate-konvertering:", error);
+  }
+}
+
 export async function POST(req: Request) {
   const stripe = getStripeClient();
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -86,7 +158,7 @@ if (!signature) {
     const session = event.data.object as Stripe.Checkout.Session;
 
     // Hämta metadatan vi skickade i steg 4
-    const { user_id, booking_date, booking_time, document_order_id } = session.metadata || {};
+    const { user_id, booking_date, booking_time, document_order_id, affiliate_creator_id, affiliate_code, order_type } = session.metadata || {};
 
     if (user_id && booking_date && booking_time) {
         console.log(`💰 Betalning klar! Bokar tid för ${user_id} den ${booking_date} kl ${booking_time}`);
@@ -170,6 +242,21 @@ if (!signature) {
             : session.customer?.id ?? null,
         startedAt: new Date().toISOString(),
       });
+    }
+
+    if ((order_type === "dashboard_subscription" || order_type === "representation_subscription") && user_id) {
+      const amountSek = Math.round((session.amount_total ?? 0) / 100);
+      if (amountSek > 0) {
+        await recordAffiliateConversion({
+          userId: user_id,
+          affiliateCreatorId: affiliate_creator_id || null,
+          affiliateCode: affiliate_code || null,
+          orderType: order_type,
+          amountSek,
+          stripeCheckoutSessionId: session.id,
+          customerEmail: session.customer_details?.email ?? session.customer_email ?? null,
+        });
+      }
     }
   }
 

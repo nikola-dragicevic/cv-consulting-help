@@ -11,6 +11,7 @@ import { isAdminUser, isAdminOrModerator } from "@/lib/admin"
 import { parseGeneratedEmail } from "@/lib/outreach"
 import { formatEmployerFollowupStatus } from "@/lib/interviewFollowup"
 import { getBrowserSupabase } from "@/lib/supabaseBrowser"
+import { CvPreview } from "@/components/cv/CvPreview"
 
 const supabase = getBrowserSupabase()
 
@@ -39,6 +40,39 @@ type CandidateRow = {
   representation_active: boolean | null
   representation_status: string | null
   representation_current_period_end: string | null
+  created_at: string | null
+}
+
+type AffiliateCreatorRow = {
+  id: string
+  code: string
+  full_name: string
+  email: string | null
+  social_handle: string | null
+  status: string
+  commission_percent: number
+  notes?: string | null
+  created_at?: string | null
+}
+
+type AffiliateReferralRow = {
+  id: string
+  creator_id: string
+  user_id: string | null
+  referred_email: string | null
+  affiliate_code: string
+  first_seen_at: string
+  signup_at: string | null
+  dashboard_checkout_started_at: string | null
+  auto_apply_checkout_started_at: string | null
+  first_paid_at: string | null
+  first_paid_order_type: string | null
+  first_paid_amount_sek: number | null
+  payout_amount_sek: number | null
+  payout_status: string
+  payout_paid_at: string | null
+  payout_notes?: string | null
+  stripe_checkout_session_id: string | null
   created_at: string | null
 }
 
@@ -94,8 +128,14 @@ type JobResult = {
   contactNote?: string | null
 }
 
-type TabKey = "candidates" | "jobsearch" | "orders" | "calendar" | "cvgen" | "cvmatch" | "savedjobs"
+type TabKey = "candidates" | "jobsearch" | "orders" | "calendar" | "cvgen" | "cvmatch" | "savedjobs" | "affiliates"
 type SavedJobsCategory = "all" | "unsent" | "has_comment" | "email_sent"
+type JobStatusReport = {
+  active: number
+  sourceInactivated: number
+  expired: number
+  generatedAt: string
+}
 
 type SavedJob = {
   id: string
@@ -224,6 +264,17 @@ function buildGmailComposeUrl(params: { to: string; subject: string; body: strin
   return url.toString()
 }
 
+function normalizeAffiliateCode(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "")
+}
+
+function buildAffiliateCodeSeed(value: string) {
+  return normalizeAffiliateCode(value)
+    .replace(/[_-]{2,}/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .slice(0, 24)
+}
+
 export default function AdminDashboard() {
   const router = useRouter()
   const [tab, setTab] = useState<TabKey>("candidates")
@@ -315,6 +366,26 @@ export default function AdminDashboard() {
   const [jsLoading, setJsLoading] = useState(false)
   const [jsError, setJsError] = useState("")
   const [jsTotal, setJsTotal] = useState<number | null>(null)
+  const [jobStatusReport, setJobStatusReport] = useState<JobStatusReport | null>(null)
+  const [jobStatusLoading, setJobStatusLoading] = useState(false)
+  const [jobStatusError, setJobStatusError] = useState("")
+
+  // Affiliates
+  const [affiliateCreators, setAffiliateCreators] = useState<AffiliateCreatorRow[]>([])
+  const [affiliateReferrals, setAffiliateReferrals] = useState<AffiliateReferralRow[]>([])
+  const [affiliatesLoading, setAffiliatesLoading] = useState(false)
+  const [affiliateCreateLoading, setAffiliateCreateLoading] = useState(false)
+  const [affiliatePayoutLoadingId, setAffiliatePayoutLoadingId] = useState<string | null>(null)
+  const [affiliateError, setAffiliateError] = useState("")
+  const [affiliateSuccess, setAffiliateSuccess] = useState("")
+  const [affiliateForm, setAffiliateForm] = useState({
+    full_name: "",
+    email: "",
+    social_handle: "",
+    code: "",
+    commission_percent: "30",
+    notes: "",
+  })
 
   useEffect(() => {
     let mounted = true
@@ -345,6 +416,7 @@ export default function AdminDashboard() {
       fetchDocumentOrders()
       fetchSavedJobs()
       fetchInterviewBookings()
+      fetchAffiliates()
     }
 
     bootstrap()
@@ -418,6 +490,23 @@ export default function AdminDashboard() {
       console.error(err)
     } finally {
       setOrdersLoading(false)
+    }
+  }
+
+  const fetchAffiliates = async () => {
+    setAffiliatesLoading(true)
+    setAffiliateError("")
+    try {
+      const res = await fetch("/api/admin/affiliates")
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Failed to fetch affiliates")
+      setAffiliateCreators((json.creators || []) as AffiliateCreatorRow[])
+      setAffiliateReferrals((json.referrals || []) as AffiliateReferralRow[])
+    } catch (err) {
+      console.error(err)
+      setAffiliateError(err instanceof Error ? err.message : "Kunde inte hämta affiliates")
+    } finally {
+      setAffiliatesLoading(false)
     }
   }
 
@@ -547,6 +636,61 @@ export default function AdminDashboard() {
       return true
     })
   }, [savedJobs, savedJobsCategoryFilter])
+
+  const affiliateOverview = useMemo(() => {
+    const byCreator = new Map<string, {
+      creatorId: string
+      referrals: number
+      paidConversions: number
+      revenueSek: number
+      payoutSek: number
+    }>()
+
+    let pendingPayoutSek = 0
+    let paidRevenueSek = 0
+    let paidConversions = 0
+
+    for (const referral of affiliateReferrals) {
+      const key = referral.creator_id
+      const current = byCreator.get(key) || {
+        creatorId: key,
+        referrals: 0,
+        paidConversions: 0,
+        revenueSek: 0,
+        payoutSek: 0,
+      }
+
+      current.referrals += 1
+
+      if (referral.first_paid_at) {
+        current.paidConversions += 1
+        current.revenueSek += referral.first_paid_amount_sek || 0
+        current.payoutSek += referral.payout_amount_sek || 0
+        paidConversions += 1
+        paidRevenueSek += referral.first_paid_amount_sek || 0
+      }
+
+      if (referral.payout_status === "pending") {
+        pendingPayoutSek += referral.payout_amount_sek || 0
+      }
+
+      byCreator.set(key, current)
+    }
+
+    const topCreators = Array.from(byCreator.values())
+      .sort((a, b) => {
+        if (b.paidConversions !== a.paidConversions) return b.paidConversions - a.paidConversions
+        return b.revenueSek - a.revenueSek
+      })
+      .slice(0, 10)
+
+    return {
+      pendingPayoutSek,
+      paidRevenueSek,
+      paidConversions,
+      topCreators,
+    }
+  }, [affiliateReferrals])
 
   const handleCvMatch = async (mode: "semantic" | "keyword") => {
     if (mode === "keyword" && !cmKeywords.trim()) {
@@ -1197,6 +1341,38 @@ export default function AdminDashboard() {
     }
   }
 
+  const toggleAutoApply = async (candidate: CandidateRow) => {
+    const newValue = !candidate.representation_active
+    try {
+      const res = await fetch(`/api/admin/candidates/${candidate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          representation_active: newValue,
+          representation_status: newValue ? "manual_grant" : null,
+          representation_current_period_end: null,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Update failed")
+      setCandidates((prev) =>
+        prev.map((c) =>
+          c.id === candidate.id
+            ? {
+                ...c,
+                representation_active: newValue,
+                representation_status: newValue ? "manual_grant" : null,
+                representation_current_period_end: null,
+              }
+            : c
+        )
+      )
+    } catch (err) {
+      console.error(err)
+      alert("Kunde inte uppdatera Auto Apply-status")
+    }
+  }
+
   const toggleModerator = async (candidate: CandidateRow, currentlyModerator: boolean) => {
     if (!candidate.user_id) return alert("Användaren saknar user_id")
     const uid = candidate.user_id
@@ -1355,6 +1531,21 @@ export default function AdminDashboard() {
   if (authLoading) return null
   if (!isAuthorized) return null
 
+  const fetchJobStatusReport = async () => {
+    setJobStatusLoading(true)
+    setJobStatusError("")
+    try {
+      const res = await fetch("/api/admin/job-status-report")
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Could not load job status report")
+      setJobStatusReport(json)
+    } catch (err) {
+      setJobStatusError(err instanceof Error ? err.message : "Kunde inte hämta jobbstatus")
+    } finally {
+      setJobStatusLoading(false)
+    }
+  }
+
   const filteredCandidates = candidates.filter((c) => {
     if (!candidateSearch) return true
     const q = candidateSearch.toLowerCase()
@@ -1392,45 +1583,99 @@ export default function AdminDashboard() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = "cv.txt"
+    a.download = "cv.json"
     a.click()
     URL.revokeObjectURL(url)
   }
 
-  const downloadPdf = () => {
-    const html = `<!DOCTYPE html>
-<html lang="sv">
-<head>
-<meta charset="utf-8">
-<title>CV</title>
-<style>
-  body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; font-size: 13px; line-height: 1.5; color: #111; }
-  h1 { font-size: 22px; margin-bottom: 2px; }
-  h2 { font-size: 15px; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 18px; }
-  h3 { font-size: 13px; margin-bottom: 2px; }
-  hr { border: none; border-top: 1px solid #ddd; margin: 10px 0; }
-  ul { margin: 4px 0; padding-left: 18px; }
-  li { margin-bottom: 2px; }
-  strong { font-weight: 600; }
-  @media print { body { margin: 0; } }
-</style>
-</head>
-<body>
-<pre style="white-space:pre-wrap;font-family:inherit">${cvGenResult.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
-</body>
-</html>`
-    const win = window.open("", "_blank")
-    if (!win) return alert("Tillåt popups för att ladda ner PDF")
-    win.document.write(html)
-    win.document.close()
-    win.focus()
-    setTimeout(() => win.print(), 300)
+  const createAffiliate = async () => {
+    setAffiliateCreateLoading(true)
+    setAffiliateError("")
+    setAffiliateSuccess("")
+    try {
+      const fullName = affiliateForm.full_name.trim()
+      if (!fullName) {
+        throw new Error("Namn krävs")
+      }
+
+      const code = normalizeAffiliateCode(affiliateForm.code) || buildAffiliateCodeSeed(fullName || affiliateForm.email)
+
+      const res = await fetch("/api/admin/affiliates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: fullName,
+          email: affiliateForm.email.trim(),
+          social_handle: affiliateForm.social_handle.trim(),
+          code,
+          commission_percent: Number(affiliateForm.commission_percent || 30),
+          notes: affiliateForm.notes.trim(),
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kunde inte skapa affiliate")
+
+      setAffiliateSuccess("Affiliate skapad.")
+      setAffiliateForm({
+        full_name: "",
+        email: "",
+        social_handle: "",
+        code: "",
+        commission_percent: "30",
+        notes: "",
+      })
+      await fetchAffiliates()
+    } catch (err) {
+      setAffiliateError(err instanceof Error ? err.message : "Kunde inte skapa affiliate")
+    } finally {
+      setAffiliateCreateLoading(false)
+    }
+  }
+
+  const copyAffiliateLink = async (code: string) => {
+    const url = `${window.location.origin}/?ref=${code}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setAffiliateSuccess(`Länk kopierad: ${url}`)
+      setAffiliateError("")
+    } catch {
+      setAffiliateError("Kunde inte kopiera länk")
+    }
+  }
+
+  const markAffiliatePayoutPaid = async (referralId: string) => {
+    setAffiliatePayoutLoadingId(referralId)
+    setAffiliateError("")
+    setAffiliateSuccess("")
+    try {
+      const res = await fetch("/api/admin/affiliates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          referral_id: referralId,
+          payout_status: "paid",
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || "Kunde inte markera payout som utbetald")
+
+      setAffiliateReferrals((prev) =>
+        prev.map((row) => (row.id === referralId ? { ...row, ...(json.data || {}) } : row))
+      )
+      setAffiliateSuccess("Payout markerad som utbetald.")
+    } catch (err) {
+      setAffiliateError(err instanceof Error ? err.message : "Kunde inte markera payout som utbetald")
+    } finally {
+      setAffiliatePayoutLoadingId(null)
+    }
   }
 
   const TAB_LABELS: { key: TabKey; label: string }[] = [
     { key: "candidates", label: "Kandidater" },
+    { key: "affiliates", label: "Affiliates" },
     { key: "cvmatch", label: "CV Matchning" },
     { key: "savedjobs", label: "Sparade Jobb" },
+    { key: "jobsearch", label: "Jobbstatus" },
     { key: "orders", label: "Beställningar" },
     { key: "calendar", label: "Kalender" },
     { key: "cvgen", label: "CV-generator" },
@@ -1460,6 +1705,12 @@ export default function AdminDashboard() {
                   void fetchSavedJobs(candidateProfileId)
                   void fetchInterviewBookings(candidateProfileId)
                 }
+                if (key === "jobsearch") {
+                  void fetchJobStatusReport()
+                }
+                if (key === "affiliates") {
+                  void fetchAffiliates()
+                }
               }}
               className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
                 tab === key
@@ -1481,6 +1732,11 @@ export default function AdminDashboard() {
               {key === "savedjobs" && savedJobs.length > 0 && (
                 <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
                   {savedJobs.length}
+                </span>
+              )}
+              {key === "affiliates" && affiliateCreators.length > 0 && (
+                <span className="ml-1.5 text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">
+                  {affiliateCreators.length}
                 </span>
               )}
             </button>
@@ -1535,7 +1791,7 @@ export default function AdminDashboard() {
                       )}
                       {c.representation_active && (
                         <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
-                          Representation aktiv
+                          Auto Apply
                         </span>
                       )}
                       {c.category_tags && c.category_tags.length > 0 && (
@@ -1571,7 +1827,7 @@ export default function AdminDashboard() {
 
                       {c.representation_status && (
                         <p className="text-xs text-slate-600">
-                          <span className="font-medium">Kandidatrepresentation:</span> {c.representation_active ? "Betald" : c.representation_status}
+                          <span className="font-medium">Auto Apply:</span> {c.representation_active ? "Aktiv" : c.representation_status}
                           {c.representation_current_period_end
                             ? ` · aktiv till ${new Date(c.representation_current_period_end).toLocaleDateString("sv-SE")}`
                             : ""}
@@ -1587,6 +1843,15 @@ export default function AdminDashboard() {
                             onClick={() => togglePremium(c)}
                           >
                             {c.manual_premium ? "Ta bort Premium" : "Ge Premium"}
+                          </Button>
+                        )}
+                        {isSuperAdmin && (
+                          <Button
+                            size="sm"
+                            variant={c.representation_active ? "destructive" : "default"}
+                            onClick={() => toggleAutoApply(c)}
+                          >
+                            {c.representation_active ? "Ta bort Auto Apply" : "Ge Auto Apply"}
                           </Button>
                         )}
                         {isSuperAdmin && c.user_id && (
@@ -1632,6 +1897,213 @@ export default function AdminDashboard() {
                   Inga kandidater hittades.
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {tab === "affiliates" && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">Affiliate-program</h2>
+                <p className="text-sm text-slate-500">Skapa creators, kopiera länkar och följ första betalningar samt pending payouts.</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={fetchAffiliates} disabled={affiliatesLoading}>
+                {affiliatesLoading ? "Laddar..." : "Uppdatera"}
+              </Button>
+            </div>
+
+            {(affiliateError || affiliateSuccess) && (
+              <div className={`rounded-lg border px-4 py-3 text-sm ${affiliateError ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                {affiliateError || affiliateSuccess}
+              </div>
+            )}
+
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Creators</div>
+                <div className="mt-2 text-3xl font-semibold text-slate-900">{affiliateCreators.length}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Paid conversions</div>
+                <div className="mt-2 text-3xl font-semibold text-slate-900">{affiliateOverview.paidConversions}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Första intäkter</div>
+                <div className="mt-2 text-3xl font-semibold text-slate-900">{affiliateOverview.paidRevenueSek} kr</div>
+              </div>
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Pending payouts</div>
+                <div className="mt-2 text-3xl font-semibold text-emerald-700">{affiliateOverview.pendingPayoutSek} kr</div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
+              <div className="rounded-xl border bg-white p-5 shadow-sm space-y-4">
+                <div>
+                  <h3 className="font-semibold text-slate-900">Skapa affiliate</h3>
+                  <p className="text-sm text-slate-500">Namn räcker. Kod skapas automatiskt om du lämnar fältet tomt.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Namn</Label>
+                  <Input
+                    value={affiliateForm.full_name}
+                    onChange={(e) => {
+                      const fullName = e.target.value
+                      setAffiliateForm((prev) => ({
+                        ...prev,
+                        full_name: fullName,
+                        code: prev.code ? prev.code : buildAffiliateCodeSeed(fullName),
+                      }))
+                    }}
+                    placeholder="Maria Svensson"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>E-post</Label>
+                  <Input
+                    value={affiliateForm.email}
+                    onChange={(e) => setAffiliateForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="maria@example.com"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Social handle</Label>
+                  <Input
+                    value={affiliateForm.social_handle}
+                    onChange={(e) => setAffiliateForm((prev) => ({ ...prev, social_handle: e.target.value }))}
+                    placeholder="@jobbmedmaria"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Kod</Label>
+                  <Input
+                    value={affiliateForm.code}
+                    onChange={(e) => setAffiliateForm((prev) => ({ ...prev, code: normalizeAffiliateCode(e.target.value) }))}
+                    placeholder="jobbmedmaria"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Provision %</Label>
+                  <Input
+                    value={affiliateForm.commission_percent}
+                    onChange={(e) => setAffiliateForm((prev) => ({ ...prev, commission_percent: e.target.value }))}
+                    placeholder="30"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Anteckningar</Label>
+                  <textarea
+                    className="min-h-[96px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    value={affiliateForm.notes}
+                    onChange={(e) => setAffiliateForm((prev) => ({ ...prev, notes: e.target.value }))}
+                    placeholder="TikTok creator, fokus på jobb i Stockholm"
+                  />
+                </div>
+
+                <Button onClick={createAffiliate} disabled={affiliateCreateLoading}>
+                  {affiliateCreateLoading ? "Skapar..." : "Skapa affiliate"}
+                </Button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="rounded-xl border bg-white p-5 shadow-sm">
+                  <h3 className="font-semibold text-slate-900 mb-4">Creators</h3>
+                  <div className="space-y-3">
+                    {affiliateCreators.length === 0 && (
+                      <div className="rounded-lg border border-dashed p-6 text-center text-sm text-slate-500">
+                        Inga affiliates skapade ännu.
+                      </div>
+                    )}
+                    {affiliateCreators.map((creator) => {
+                      const link = `https://jobbnu.se/?ref=${creator.code}`
+                      return (
+                        <div key={creator.id} className="rounded-lg border p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <div className="font-semibold text-slate-900">{creator.full_name}</div>
+                              <div className="text-sm text-slate-500">
+                                {creator.social_handle || creator.email || "Ingen kontakt angiven"}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">Kod: {creator.code} • {creator.commission_percent}% provision</div>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={() => void copyAffiliateLink(creator.code)}>
+                              Kopiera länk
+                            </Button>
+                          </div>
+                          <div className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600 break-all">
+                            {link}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="grid gap-6 xl:grid-cols-2">
+                  <div className="rounded-xl border bg-white p-5 shadow-sm">
+                    <h3 className="font-semibold text-slate-900 mb-4">Top performers</h3>
+                    <div className="space-y-3">
+                      {affiliateOverview.topCreators.length === 0 && (
+                        <p className="text-sm text-slate-500">Inga betalda konverteringar ännu.</p>
+                      )}
+                      {affiliateOverview.topCreators.map((item) => {
+                        const creator = affiliateCreators.find((row) => row.id === item.creatorId)
+                        return (
+                          <div key={item.creatorId} className="rounded-lg border p-3">
+                            <div className="font-medium text-slate-900">{creator?.full_name || item.creatorId}</div>
+                            <div className="mt-1 text-sm text-slate-600">
+                              {item.paidConversions} betalda • {item.revenueSek} kr intäkt • {item.payoutSek} kr payout
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border bg-white p-5 shadow-sm">
+                    <h3 className="font-semibold text-slate-900 mb-4">Pending payouts</h3>
+                    <div className="space-y-3">
+                      {affiliateReferrals.filter((row) => row.payout_status === "pending" && row.first_paid_at).length === 0 && (
+                        <p className="text-sm text-slate-500">Inga pending payouts just nu.</p>
+                      )}
+                      {affiliateReferrals
+                        .filter((row) => row.payout_status === "pending" && row.first_paid_at)
+                        .slice(0, 20)
+                        .map((row) => {
+                          const creator = affiliateCreators.find((item) => item.id === row.creator_id)
+                          return (
+                            <div key={row.id} className="rounded-lg border p-3">
+                              <div className="font-medium text-slate-900">{creator?.full_name || row.affiliate_code}</div>
+                              <div className="mt-1 text-sm text-slate-600">
+                                {row.first_paid_order_type || "unknown"} • {row.first_paid_amount_sek || 0} kr • payout {row.payout_amount_sek || 0} kr
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {row.referred_email || row.user_id || "okänd användare"}
+                              </div>
+                              <div className="mt-3">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => void markAffiliatePayoutPaid(row.id)}
+                                  disabled={affiliatePayoutLoadingId === row.id}
+                                >
+                                  {affiliatePayoutLoadingId === row.id ? "Uppdaterar..." : "Markera som utbetald"}
+                                </Button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -2547,7 +3019,42 @@ export default function AdminDashboard() {
         {/* ═══ TAB: Job Search ═══ */}
         {tab === "jobsearch" && (
           <div>
-            <h2 className="text-lg font-semibold mb-4">Jobsökning i databas</h2>
+            <div className="mb-6 flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold">Jobbstatus</h2>
+                <p className="text-sm text-slate-500">
+                  Översikt över aktiva jobb, käll-inaktiverade annonser och jobb som gått ut.
+                </p>
+              </div>
+              <Button variant="outline" onClick={fetchJobStatusReport} disabled={jobStatusLoading}>
+                {jobStatusLoading ? "Laddar..." : "Uppdatera status"}
+              </Button>
+            </div>
+
+            {jobStatusError && <p className="mb-4 text-sm text-red-600">{jobStatusError}</p>}
+
+            <div className="mb-6 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-lg border bg-white p-5 shadow-sm">
+                <p className="text-sm font-medium text-slate-500">Aktiva jobb</p>
+                <p className="mt-2 text-3xl font-bold text-emerald-600">{jobStatusReport?.active ?? "—"}</p>
+              </div>
+              <div className="rounded-lg border bg-white p-5 shadow-sm">
+                <p className="text-sm font-medium text-slate-500">Käll-inaktiverade</p>
+                <p className="mt-2 text-3xl font-bold text-amber-600">{jobStatusReport?.sourceInactivated ?? "—"}</p>
+              </div>
+              <div className="rounded-lg border bg-white p-5 shadow-sm">
+                <p className="text-sm font-medium text-slate-500">Utgångna jobb</p>
+                <p className="mt-2 text-3xl font-bold text-slate-700">{jobStatusReport?.expired ?? "—"}</p>
+              </div>
+            </div>
+
+            {jobStatusReport?.generatedAt && (
+              <p className="mb-6 text-xs text-slate-500">
+                Senast uppdaterad: {new Date(jobStatusReport.generatedAt).toLocaleString("sv-SE")}
+              </p>
+            )}
+
+            <h3 className="text-base font-semibold mb-4">Jobsökning i databas</h3>
 
             <div className="bg-white rounded-lg border p-5 shadow-sm mb-6">
               <div className="grid sm:grid-cols-3 gap-4 mb-4">
@@ -2799,16 +3306,13 @@ export default function AdminDashboard() {
                   <span className="font-medium text-slate-800">Genererat CV</span>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" onClick={downloadTxt}>
-                      Ladda ner .txt
-                    </Button>
-                    <Button size="sm" onClick={downloadPdf}>
-                      Ladda ner PDF
+                      Ladda ner JSON
                     </Button>
                   </div>
                 </div>
-                <pre className="whitespace-pre-wrap px-5 py-4 text-sm text-slate-800 font-mono leading-relaxed">
-                  {cvGenResult}
-                </pre>
+                <div className="px-5 py-4">
+                  <CvPreview raw={cvGenResult} />
+                </div>
               </div>
             )}
           </div>

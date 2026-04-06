@@ -81,12 +81,12 @@ function buildCvPrintHtml(cv: CvData): string {
 
   const extras = [
     (cv.languages?.length ?? 0) > 0
-      ? `<div><strong>Sprak:</strong> ${escapeHtml(cv.languages!.join(", "))}</div>`
+      ? `<div><strong>Språk:</strong> ${escapeHtml(cv.languages!.join(", "))}</div>`
       : "",
     (cv.certifications?.length ?? 0) > 0
       ? `<div><strong>Certifikat:</strong> ${escapeHtml(cv.certifications!.join(", "))}</div>`
       : "",
-    cv.driverLicense ? `<div><strong>Korkort:</strong> ${escapeHtml(cv.driverLicense)}</div>` : "",
+    cv.driverLicense ? `<div><strong>Körkort:</strong> ${escapeHtml(cv.driverLicense)}</div>` : "",
   ]
     .filter(Boolean)
     .join("")
@@ -142,20 +142,6 @@ function buildCvPrintHtml(cv: CvData): string {
     @media print {
       html, body { width: 210mm; height: 297mm; }
       .page { max-width: none; }
-      /* Fallback when a browser ignores background graphics in print. */
-      .header {
-        background: #ffffff !important;
-        color: #0f172a !important;
-        border-top: 14px solid #0f172a;
-        border-bottom: 4px solid #2563eb;
-        padding-top: 22px;
-      }
-      .header .title {
-        color: #2563eb !important;
-      }
-      .header .meta {
-        color: #475569 !important;
-      }
     }
   </style>
 </head>
@@ -175,7 +161,7 @@ function buildCvPrintHtml(cv: CvData): string {
       ${experience ? `<div class="section-title">Arbetslivserfarenhet</div>${experience}` : ""}
       ${education ? `<div class="section-title">Utbildning</div>${education}` : ""}
       ${skills ? `<div class="section-title">Kompetenser</div>${skills}` : ""}
-      ${extras ? `<div class="section-title">Ovrigt</div><div class="extras">${extras}</div>` : ""}
+      ${extras ? `<div class="section-title">Övrigt</div><div class="extras">${extras}</div>` : ""}
     </div>
   </div>
 </body>

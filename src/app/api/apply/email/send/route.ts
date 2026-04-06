@@ -2,13 +2,14 @@ import { NextResponse } from "next/server"
 import { getServerSupabase } from "@/lib/supabaseServer"
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { parseGeneratedEmail } from "@/lib/outreach"
-import { countCandidateApplications, FREE_AUTO_APPLY_APPLICATIONS, recordCandidateApplication } from "@/lib/applicationUsage"
+import { countCandidateApplications, recordCandidateApplication } from "@/lib/applicationUsage"
 import {
   getValidAccessToken,
   sendViaConnectedMailbox,
   type CandidateEmailAccountRow,
   type MailAttachment,
 } from "@/lib/candidateMailbox"
+import { canUseQuota, getRemainingQuota, getUserEntitlements } from "@/lib/subscriptionEntitlements"
 
 export const runtime = "nodejs"
 export const maxDuration = 30
@@ -54,7 +55,7 @@ export async function POST(req: Request) {
       .maybeSingle(),
     admin
       .from("candidate_profiles")
-      .select("full_name,cv_bucket_path,representation_active")
+      .select("full_name,cv_bucket_path")
       .eq("user_id", user.id)
       .maybeSingle(),
     admin
@@ -72,8 +73,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Candidate profile not found" }, { status: 404 })
   }
 
-  const hasAutoApplySubscription = profile.representation_active === true
   const usedBefore = await countCandidateApplications(user.id)
+  const entitlements = await getUserEntitlements({
+    userId: user.id,
+    email: user.email,
+  })
 
   const { count: existingCount, error: existingError } = await admin
     .from("candidate_job_applications")
@@ -87,12 +91,15 @@ export async function POST(req: Request) {
 
   const alreadyRecorded = (existingCount ?? 0) > 0
 
-  if (!hasAutoApplySubscription && !alreadyRecorded && usedBefore >= FREE_AUTO_APPLY_APPLICATIONS) {
+  if (!canUseQuota(entitlements.applicationLimit, usedBefore, alreadyRecorded)) {
     return NextResponse.json(
       {
-        error: "Du har använt dina 2 fria ansökningar. Starta Auto Apply 300 kr/mån för att fortsätta.",
+        error: entitlements.hasActiveSubscription
+          ? "Du har använt dina 4 email i Premium Dashboard. Uppgradera till Auto Apply för obegränsat."
+          : "Du har använt dina 2 fria email. Starta Auto Apply 300 kr/mån för att fortsätta.",
         freeApplicationsUsed: usedBefore,
         freeApplicationsRemaining: 0,
+        applicationLimit: entitlements.applicationLimit,
       },
       { status: 402 }
     )
@@ -161,7 +168,8 @@ export async function POST(req: Request) {
         cvAttached: attachments.length > 0,
       },
       freeApplicationsUsed: usedAfter,
-      freeApplicationsRemaining: hasAutoApplySubscription ? FREE_AUTO_APPLY_APPLICATIONS : Math.max(0, FREE_AUTO_APPLY_APPLICATIONS - usedAfter),
+      freeApplicationsRemaining: getRemainingQuota(entitlements.applicationLimit, usedAfter),
+      applicationLimit: entitlements.applicationLimit,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not send email"
