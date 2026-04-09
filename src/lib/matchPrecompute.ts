@@ -1,7 +1,12 @@
 const WORKER_URL = process.env.PYTHON_WORKER_URL || "http://worker:8000";
 const PRECOMPUTE_TRIGGER_TIMEOUT_MS = 15_000;
 
-export async function triggerMatchPrecompute(userId: string, mode: "auto" | "full" | "incremental" = "auto") {
+export async function triggerMatchPrecompute(
+  userId: string,
+  mode: "auto" | "full" | "incremental" = "auto",
+  scope: "auto" | "local" | "national" = "auto",
+  radiusKm?: number | null
+) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PRECOMPUTE_TRIGGER_TIMEOUT_MS);
 
@@ -12,6 +17,8 @@ export async function triggerMatchPrecompute(userId: string, mode: "auto" | "ful
       body: JSON.stringify({
         user_id: userId,
         mode,
+        scope,
+        radius_km: typeof radiusKm === "number" && Number.isFinite(radiusKm) ? radiusKm : null,
       }),
       signal: controller.signal,
     });

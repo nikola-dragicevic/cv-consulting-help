@@ -78,7 +78,11 @@ type CandidateMatchStateRow = {
   last_error: string | null;
   last_full_refresh_at: string | null;
   last_incremental_refresh_at: string | null;
+  active_radius_km: number | null;
+  saved_job_count: number | null;
 };
+
+type MatchScope = "local" | "national";
 
 type DashboardRunLimitStatus = {
   allowed: boolean;
@@ -155,7 +159,8 @@ function hashJobIds(ids: string[]) {
 
 async function getPrecomputedDashboardPayload(
   supabase: Awaited<ReturnType<typeof createSupabaseRouteHandlerClient>>,
-  userId: string
+  userId: string,
+  matchScope: MatchScope
 ) {
   const { data, error } = await supabase
     .from("candidate_job_matches")
@@ -163,6 +168,7 @@ async function getPrecomputedDashboardPayload(
       "job_id, vector_similarity, keyword_hits, keyword_hit_count, keyword_total_count, keyword_hit_rate, keyword_miss_rate, taxonomy_bonus, final_score, distance_m, matched_at"
     )
     .eq("user_id", userId)
+    .eq("match_scope", matchScope)
     .order("final_score", { ascending: false })
     .limit(500);
 
@@ -391,7 +397,7 @@ async function getCandidateMatchState(
 ) {
   const { data, error } = await supabase
     .from("candidate_match_state")
-    .select("status,last_error,last_full_refresh_at,last_incremental_refresh_at")
+    .select("status,last_error,last_full_refresh_at,last_incremental_refresh_at,active_radius_km,saved_job_count")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -441,7 +447,7 @@ async function loadProfile(
   return data as ProfileRow;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const supabase = await createSupabaseRouteHandlerClient();
   const {
     data: { user },
@@ -454,9 +460,10 @@ export async function GET() {
   try {
     const url = new URL(req.url);
     const scoreMode = toScoreMode(url.searchParams.get("score_mode"));
+    const matchScope: MatchScope = url.searchParams.get("scope") === "national" ? "national" : "local";
     const profile = await loadProfile(supabase, user.id);
     const limitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
-    const precomputedPayload = await getPrecomputedDashboardPayload(supabase, user.id);
+    const precomputedPayload = await getPrecomputedDashboardPayload(supabase, user.id, matchScope);
     const candidateMatchState = await getCandidateMatchState(supabase, user.id);
 
     if (precomputedPayload) {
@@ -471,6 +478,7 @@ export async function GET() {
         hoursUntilRefresh: limitStatus.hoursUntilRefresh,
         minutesUntilRefresh: limitStatus.minutesUntilRefresh,
         precomputed: true,
+        activeRadiusKm: matchScope === "local" ? candidateMatchState?.active_radius_km ?? null : null,
       });
     }
 
@@ -520,7 +528,7 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const supabase = await createSupabaseRouteHandlerClient();
   const {
     data: { user },
@@ -531,6 +539,12 @@ export async function POST() {
   }
 
   try {
+    const body = await req.json().catch(() => ({}));
+    const matchScope: MatchScope = body?.whole_sweden ? "national" : "local";
+    const requestedRadiusKm =
+      matchScope === "local" && typeof body?.radius_km === "number" && Number.isFinite(body.radius_km)
+        ? Math.max(1, Math.min(300, Math.round(body.radius_km)))
+        : null;
     const profile = await loadProfile(supabase, user.id);
     if (!profile) {
       return NextResponse.json(
@@ -547,11 +561,46 @@ export async function POST() {
     }
 
     const limitStatus = await checkDashboardRunLimit(supabase, user.id, isAdminUser(user));
+    const candidateMatchState = await getCandidateMatchState(supabase, user.id);
+    const isRadiusIncreaseAttempt =
+      matchScope === "local" &&
+      typeof requestedRadiusKm === "number" &&
+      typeof candidateMatchState?.active_radius_km === "number" &&
+      requestedRadiusKm > candidateMatchState.active_radius_km;
+
+    if (
+      matchScope === "local" &&
+      typeof requestedRadiusKm === "number" &&
+      typeof candidateMatchState?.active_radius_km === "number" &&
+      candidateMatchState.active_radius_km >= requestedRadiusKm &&
+      (candidateMatchState.status === "success" || candidateMatchState.status === "semantic_pool_ready")
+    ) {
+      const reusablePayload = await getPrecomputedDashboardPayload(supabase, user.id, "local");
+      if (reusablePayload) {
+        return NextResponse.json({
+          ...reusablePayload,
+          candidate_cv_text: profile.candidate_text_vector ?? "",
+          cached: true,
+          cachedAt: reusablePayload.matchedAt,
+          canRunBasePool: limitStatus.allowed,
+          runsRemaining: limitStatus.runsRemaining,
+          nextAllowedTime: limitStatus.nextAllowedTime,
+          hoursUntilRefresh: limitStatus.hoursUntilRefresh,
+          minutesUntilRefresh: limitStatus.minutesUntilRefresh,
+          precomputed: true,
+          reusedSavedPool: true,
+          activeRadiusKm: candidateMatchState.active_radius_km,
+        });
+      }
+    }
+
     if (!limitStatus.allowed) {
       return NextResponse.json(
         {
           error: "Rate limit exceeded",
-          message: `Du kan köra Matcha jobb ${DASHBOARD_RUN_LIMIT} gånger per 24 timmar. Nästa körning tillgänglig om ${limitStatus.hoursUntilRefresh}h ${limitStatus.minutesUntilRefresh}min.`,
+          message: isRadiusIncreaseAttempt
+            ? "Din dagliga radieökning är uppnådd. Behåll nuvarande radie. Nya utökningar blir tillgängliga om 24 timmar."
+            : `Du kan köra Matcha jobb ${DASHBOARD_RUN_LIMIT} gånger per 24 timmar. Nästa körning tillgänglig om ${limitStatus.hoursUntilRefresh}h ${limitStatus.minutesUntilRefresh}min.`,
           canRunBasePool: false,
           runsRemaining: 0,
           nextAllowedTime: limitStatus.nextAllowedTime,
@@ -571,7 +620,7 @@ export async function POST() {
           match_ready: true,
           status: "processing",
           last_error: null,
-          active_radius_km: profile.commute_radius_km ?? null,
+          active_radius_km: requestedRadiusKm ?? profile.commute_radius_km ?? null,
           candidate_lat: profile.location_lat ?? null,
           candidate_lon: profile.location_lon ?? null,
           updated_at: nowIso,
@@ -581,7 +630,7 @@ export async function POST() {
 
     try {
       await Promise.all([
-        triggerMatchPrecompute(user.id, "auto"),
+        triggerMatchPrecompute(user.id, "full", matchScope, requestedRadiusKm),
         recordDashboardRun(supabase, user.id),
       ]);
     } catch (triggerError: unknown) {

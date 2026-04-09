@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MatchInsights } from "@/components/ui/MatchInsights";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
 interface Job {
   id: string;
   title: string;
@@ -102,8 +101,8 @@ export function MatchesDashboard() {
   const [minutesUntilRefresh, setMinutesUntilRefresh] = useState(0);
   const [legacyActionLoading, setLegacyActionLoading] = useState(false);
   const [profileLocation, setProfileLocation] = useState<DashboardProfileLocation | null>(null);
-  const [radiusKm, setRadiusKm] = useState(40);
-  const [radiusInput, setRadiusInput] = useState("40");
+  const [radiusKm, setRadiusKm] = useState(15);
+  const [radiusInput, setRadiusInput] = useState("15");
   const [wholeSweden, setWholeSweden] = useState(false);
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
   const [hasRepresentationSubscription, setHasRepresentationSubscription] = useState(false);
@@ -248,12 +247,6 @@ export function MatchesDashboard() {
         location_lat: typeof data.location_lat === "number" ? data.location_lat : null,
         location_lon: typeof data.location_lon === "number" ? data.location_lon : null,
       });
-
-      if (typeof data.commute_radius_km === "number" && Number.isFinite(data.commute_radius_km)) {
-        const normalized = Math.max(1, Math.min(300, Math.round(data.commute_radius_km)));
-        setRadiusKm(normalized);
-        setRadiusInput(String(normalized));
-      }
     } catch {
       // non-blocking
     }
@@ -303,14 +296,14 @@ export function MatchesDashboard() {
     setMinutesUntilRefresh(typeof data?.minutesUntilRefresh === "number" ? data.minutesUntilRefresh : 0);
   }
 
-  const loadSavedDashboardResults = useCallback(async (silent = false) => {
+  const loadSavedDashboardResults = useCallback(async (silent = false, scope: "local" | "national" = "local") => {
     try {
       if (!silent) {
         setError(null);
         setEmptyStateMessage(null);
       }
 
-      const res = await fetch("/api/match/for-user", { method: "GET" });
+      const res = await fetch(`/api/match/for-user?scope=${scope}`, { method: "GET" });
       const { data, raw } = await safeParseResponse(res);
 
       if (res.ok) {
@@ -328,10 +321,10 @@ export function MatchesDashboard() {
           setEmptyStateMessage(
             typeof data?.pendingMessage === "string"
               ? data.pendingMessage
-              : "Vi bygger din första jobblista just nu. Dina matchningar uppdateras sedan automatiskt varje dag."
+              : "Vi bygger din första jobblista just nu."
           );
           window.setTimeout(() => {
-            void loadSavedDashboardResults(true);
+            void loadSavedDashboardResults(true, scope);
           }, 5000);
         } else if (!silent) {
           setEmptyStateMessage("Klicka på 'Matcha jobb' för att bygga och spara dagens resultat.");
@@ -352,8 +345,8 @@ export function MatchesDashboard() {
 
   useEffect(() => {
     if (!user?.id) return;
-    void loadSavedDashboardResults(true);
-  }, [user?.id, loadSavedDashboardResults]);
+    void loadSavedDashboardResults(true, wholeSweden ? "national" : "local");
+  }, [user?.id, wholeSweden, loadSavedDashboardResults]);
 
   async function safeParseResponse(res: Response) {
     const text = await res.text();
@@ -434,10 +427,10 @@ export function MatchesDashboard() {
         setEmptyStateMessage(
           typeof data?.pendingMessage === "string"
             ? data.pendingMessage
-            : "Vi bygger din jobblista nu. Dina matchningar uppdateras sedan automatiskt varje dag."
+              : "Vi bygger din jobblista nu."
         );
         window.setTimeout(() => {
-          void loadSavedDashboardResults(true);
+          void loadSavedDashboardResults(true, wholeSweden ? "national" : "local");
         }, 5000);
         return;
       }
@@ -478,11 +471,13 @@ export function MatchesDashboard() {
   const unfilteredJobs = dedupeJobsById([...buckets.current, ...buckets.target, ...buckets.adjacent]).sort(
     (a, b) => (getDisplayScore(b, selectedScoreMode) ?? 0) - (getDisplayScore(a, selectedScoreMode) ?? 0)
   );
-  const allJobs = unfilteredJobs.filter((job) => {
+  const jobsWithinRadius = unfilteredJobs.filter((job) => {
     if (wholeSweden) return true;
     if (typeof job.distance_m !== "number" || !Number.isFinite(job.distance_m)) return false;
     return job.distance_m <= radiusKm * 1000;
   });
+  const localFallbackActive = !wholeSweden && jobsWithinRadius.length === 0 && unfilteredJobs.length > 0;
+  const allJobs = localFallbackActive ? unfilteredJobs : jobsWithinRadius;
   const directApplyJobs = allJobs.filter((job) => isDirectApplyJob(job) && !submittedJobIds.has(job.id));
   const externalApplyJobs = allJobs.filter((job) => !isDirectApplyJob(job) && !submittedJobIds.has(job.id));
   const submittedJobs = allJobs.filter((job) => submittedJobIds.has(job.id));
@@ -707,13 +702,6 @@ export function MatchesDashboard() {
             </div>
           )}
 
-          <div className="border-t border-sky-200 bg-sky-50 px-5 py-3 text-sm text-sky-900">
-            {t(
-              "Dina matchningar uppdateras dagligen automatiskt. Vi söker igenom nya jobb varje dag och uppdaterar din lista med de mest relevanta träffarna.",
-              "Your matches update automatically every day. We scan new jobs daily and refresh your list with the most relevant results."
-            )}
-          </div>
-
           <div className="border-t border-slate-200 bg-white px-5 py-4">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               {t("Ansökningsvägar", "Application routes")}
@@ -772,17 +760,17 @@ export function MatchesDashboard() {
         </div>
 
         <Tabs defaultValue="direct" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 rounded-xl bg-slate-100 p-2 sm:grid-cols-4">
-            <TabsTrigger value="direct" className="rounded-lg py-2">
+          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 rounded-2xl bg-gradient-to-br from-slate-100 via-sky-50 to-indigo-50 p-2 min-[430px]:grid-cols-2 sm:grid-cols-4">
+            <TabsTrigger value="direct" className="min-h-[56px] rounded-xl border border-emerald-200/70 bg-white px-3 py-2.5 text-left text-sm leading-snug text-slate-700 data-[state=active]:border-emerald-400 data-[state=active]:bg-emerald-500 data-[state=active]:text-white data-[state=active]:shadow-md">
               {t("Jobben du kan ansöka till direkt", "Jobs you can apply to directly")} ({directApplyJobs.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="external" className="rounded-lg py-2">
+            <TabsTrigger value="external" className="min-h-[56px] rounded-xl border border-sky-200/70 bg-white px-3 py-2.5 text-left text-sm leading-snug text-slate-700 data-[state=active]:border-sky-400 data-[state=active]:bg-sky-500 data-[state=active]:text-white data-[state=active]:shadow-md">
               {t("Jobb med extern ansökningslänk", "Jobs with external application link")} ({externalApplyJobs.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="submitted" className="rounded-lg py-2">
+            <TabsTrigger value="submitted" className="min-h-[56px] rounded-xl border border-violet-200/70 bg-white px-3 py-2.5 text-left text-sm leading-snug text-slate-700 data-[state=active]:border-violet-400 data-[state=active]:bg-violet-500 data-[state=active]:text-white data-[state=active]:shadow-md">
               {t("Skickade ansökningar", "Submitted applications")} ({submittedJobs.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="saved" className="rounded-lg py-2">
+            <TabsTrigger value="saved" className="min-h-[56px] rounded-xl border border-amber-200/70 bg-white px-3 py-2.5 text-left text-sm leading-snug text-slate-700 data-[state=active]:border-amber-400 data-[state=active]:bg-amber-400 data-[state=active]:text-slate-950 data-[state=active]:shadow-md">
               {t("Sparade jobb", "Saved jobs")} ({savedJobs.length || 0})
             </TabsTrigger>
           </TabsList>
@@ -838,7 +826,7 @@ export function MatchesDashboard() {
               jobs={submittedJobs}
               type="submitted"
               emptyMessage={t("Du har inga markerade ansökningar ännu.", "You do not have any marked submitted applications yet.")}
-              sectionDescription={t("Här samlas jobben du har markerat som skickade ansökningar.", "Here we collect the jobs you have marked as submitted applications.")}
+              sectionDescription={t("Här samlas jobben du har skickat eller markerat som skickade. Härifrån kan du också starta intervjuförberedelse när du vill öva inför nästa steg.", "Here you will find the jobs you have sent or marked as submitted. From here you can also start interview preparation when you want to prepare for the next step.")}
               scoreMode={selectedScoreMode}
               candidateCvText={candidateCvText}
               visibleLimit={visibleJobLimit}
@@ -1039,11 +1027,13 @@ function SlimMatchCard({
     const candidateSkills = extractCandidateSkills(candidateCvText);
     return analyzeSkillGap(candidateSkills, job.skills_data);
   }, [showInsights, candidateCvText, job.skills_data]);
+  const [generatedCvText, setGeneratedCvText] = useState("");
   const [generatedEmailText, setGeneratedEmailText] = useState("");
-  const [emailLoading, setEmailLoading] = useState(false);
+  const [packageLoading, setPackageLoading] = useState(false);
   const [emailSendLoading, setEmailSendLoading] = useState(false);
+  const [testSendLoading, setTestSendLoading] = useState(false);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
-  const [showEmailComposer, setShowEmailComposer] = useState(false);
+  const [showApplicationPackage, setShowApplicationPackage] = useState(false);
   const [interviewPrepLoading, setInterviewPrepLoading] = useState(false);
   const [showInterviewPreparation, setShowInterviewPreparation] = useState(false);
   const [interviewPreparation, setInterviewPreparation] = useState("");
@@ -1061,42 +1051,52 @@ function SlimMatchCard({
   const portal = detectPortal(externalApplyUrl);
   const emailActionsLocked = !hasAutoApplySubscription && freeApplicationsRemaining <= 0;
   const interviewPrepLocked = !hasAutoApplySubscription && interviewPreparationsRemaining <= 0;
+  const canShowInterviewPreparation = submitted;
+  const hasUsefulInsights = Boolean(
+    (job.matchReasons && job.matchReasons.length > 0) ||
+    (job.keyword_hits && job.keyword_hits.length > 0) ||
+    gapAnalysis ||
+    job.manager_explanation ||
+    job.manager_score !== undefined
+  );
 
-  async function handleGenerateEmail() {
+  async function handleGenerateApplicationPackage() {
     try {
-      setEmailLoading(true);
+      setPackageLoading(true);
       setEmailStatus(null);
-      const res = await fetch("/api/apply/email/generate", {
+      const res = await fetch("/api/apply/package/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId: job.id }),
       });
       const json = await res.json();
       if (!res.ok) {
-        throw new Error(json?.error || "Kunde inte generera email");
+        throw new Error(json?.error || "Kunde inte generera ansökningspaket");
       }
+      setGeneratedCvText(typeof json?.cvText === "string" ? json.cvText : "");
       setGeneratedEmailText(typeof json?.email === "string" ? json.email : "");
-      setShowEmailComposer(true);
+      setShowApplicationPackage(true);
     } catch (error) {
-      setEmailStatus(error instanceof Error ? error.message : "Kunde inte generera email");
+      setEmailStatus(error instanceof Error ? error.message : "Kunde inte generera ansökningspaket");
     } finally {
-      setEmailLoading(false);
+      setPackageLoading(false);
     }
   }
 
   async function handleSendEmail() {
-    if (!generatedEmailText.trim() || !job.contact_email) return;
+    if (!generatedEmailText.trim() || !generatedCvText.trim() || !job.contact_email) return;
 
     try {
       setEmailSendLoading(true);
       setEmailStatus(null);
-      const res = await fetch("/api/apply/email/send", {
+      const res = await fetch("/api/apply/package/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jobId: job.id,
           recipientEmail: job.contact_email,
           emailText: generatedEmailText,
+          cvText: generatedCvText,
         }),
       });
       const json = await res.json();
@@ -1106,13 +1106,45 @@ function SlimMatchCard({
       if (typeof json?.freeApplicationsUsed === "number" && typeof json?.freeApplicationsRemaining === "number") {
         onApplicationRecorded(json.freeApplicationsUsed, json.freeApplicationsRemaining);
       }
-      setEmailStatus("Ansökan skickad. Ditt CV bifogades automatiskt.");
-      setShowEmailComposer(false);
+      if (!submitted) {
+        onToggleSubmittedJob(job.id);
+      }
+      setEmailStatus("Ansökan skickad. Jobbet ligger nu under 'Skickade ansökningar' där du också kan starta intervjuförberedelse.");
+      setShowApplicationPackage(false);
       setShowInterviewPreparation(false);
     } catch (error) {
       setEmailStatus(error instanceof Error ? error.message : "Kunde inte skicka email");
     } finally {
       setEmailSendLoading(false);
+    }
+  }
+
+  async function handleSendTestToSelf() {
+    if (!generatedEmailText.trim() || !generatedCvText.trim()) return;
+
+    try {
+      setTestSendLoading(true);
+      setEmailStatus(null);
+      const res = await fetch("/api/apply/package/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.id,
+          recipientEmail: job.contact_email || "test@example.com",
+          emailText: generatedEmailText,
+          cvText: generatedCvText,
+          sendTestToSelf: true,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Kunde inte skicka test till dig själv");
+      }
+      setEmailStatus("Test skickat till din egen mailbox med samma CV-bilaga och emailupplägg.");
+    } catch (error) {
+      setEmailStatus(error instanceof Error ? error.message : "Kunde inte skicka test till dig själv");
+    } finally {
+      setTestSendLoading(false);
     }
   }
 
@@ -1316,8 +1348,8 @@ function SlimMatchCard({
           <div className="relative p-4 sm:p-5">
             <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-sky-400 via-cyan-400 to-emerald-400" />
             <div className="pl-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
+              <div className="flex flex-col gap-3 sm:gap-4">
+                <div className="min-w-0">
                   <div className="mb-1 flex flex-wrap items-center gap-2">
                     {roundedPrimaryScore !== null && (
                       <Badge variant="secondary" className="border border-sky-200 bg-sky-50 text-sky-800">
@@ -1329,12 +1361,12 @@ function SlimMatchCard({
                     </Badge>
                   </div>
 
-                <Link
+                  <Link
                   href={job.job_url || job.webpage_url || `/job/${job.id}`}
                   onClick={locked ? (e) => e.preventDefault() : undefined}
                   target={job.job_url || job.webpage_url ? "_blank" : undefined}
                   rel={job.job_url || job.webpage_url ? "noopener noreferrer" : undefined}
-                  className="block whitespace-normal break-words text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-sky-700"
+                  className="block text-balance whitespace-normal break-words text-lg font-semibold leading-tight tracking-tight text-slate-900 transition-colors hover:text-sky-700 sm:text-xl"
                 >
                   {job.title || t("Okänd tjänst", "Unknown role")}
                   </Link>
@@ -1354,15 +1386,15 @@ function SlimMatchCard({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 sm:justify-start">
                   {job.occupation_field_label && (
-                    <Badge variant="outline" className="text-xs">
+                    <Badge variant="outline" className="max-w-full text-xs whitespace-normal break-words text-left leading-snug">
                       <Briefcase className="mr-1 h-3 w-3" />
                       {job.occupation_field_label}
                     </Badge>
                   )}
                   {job.occupation_group_label && (
-                    <Badge variant="secondary" className="text-xs">
+                    <Badge variant="secondary" className="max-w-full whitespace-normal break-words text-left text-xs leading-snug">
                       {job.occupation_group_label}
                     </Badge>
                   )}
@@ -1393,21 +1425,23 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || emailActionsLocked || emailLoading}
-                        onClick={() => void handleGenerateEmail()}
+                        disabled={locked || emailActionsLocked || packageLoading}
+                        onClick={() => void handleGenerateApplicationPackage()}
                       >
                         <Mail className="h-4 w-4" />
-                        {emailLoading ? t("Genererar...", "Generating...") : t("Generera email", "Generate email")}
+                        {packageLoading ? t("Genererar...", "Generating...") : t("Generera CV + mejl", "Generate CV + email")}
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={locked || interviewPrepLocked || interviewPrepLoading}
-                        onClick={() => void handleInterviewPreparation()}
-                      >
-                        <Sparkles className="h-4 w-4" />
-                        {interviewPrepLoading ? t("Skapar...", "Creating...") : t("Interview preparation", "Interview preparation")}
-                      </Button>
+                      {canShowInterviewPreparation && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={locked || interviewPrepLocked || interviewPrepLoading}
+                          onClick={() => void handleInterviewPreparation()}
+                        >
+                          <Sparkles className="h-4 w-4" />
+                          {interviewPrepLoading ? t("Skapar...", "Creating...") : t("Intervjuförberedelse", "Interview preparation")}
+                        </Button>
+                      )}
                     </div>
                   </div>
 
@@ -1420,42 +1454,87 @@ function SlimMatchCard({
                     </p>
                   )}
 
-                  <label className="flex items-center gap-2 text-xs text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={submitted}
-                      onChange={() => void handleMarkSubmitted()}
-                      disabled={locked}
-                    />
-                    {t("Jag har skickat ansökan", "I have submitted the application")}
-                  </label>
+                  {!submitted && (
+                    <p className="text-xs text-slate-500">
+                      {t(
+                        "När ansökan är skickad flyttas jobbet till fliken 'Skickade ansökningar'. Där kan du sedan starta intervjuförberedelse.",
+                        "Once the application is sent, the job moves to the 'Submitted applications' tab. From there you can start interview preparation."
+                      )}
+                    </p>
+                  )}
 
-                  {showEmailComposer && (
-                    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                  {showApplicationPackage && (
+                    <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-sm font-medium text-slate-800">
-                          {t("Förhandsgranska och redigera email", "Preview and edit email")}
+                          {t("Granska ansökningspaket", "Review application package")}
                         </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={locked || emailActionsLocked || emailSendLoading || !generatedEmailText.trim()}
-                          onClick={() => void handleSendEmail().then(() => {
-                            if (!submitted) onToggleSubmittedJob(job.id);
-                          })}
-                        >
-                          <Send className="h-4 w-4" />
-                          {emailSendLoading ? t("Skickar...", "Sending...") : t("Skicka email", "Send email")}
-                        </Button>
                       </div>
-                      <textarea
-                        className="min-h-[220px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                        value={generatedEmailText}
-                        onChange={(event) => setGeneratedEmailText(event.target.value)}
-                      />
-                      <p className="text-xs text-slate-500">
-                        {t("Ditt CV bifogas automatiskt när mailet skickas från din anslutna Gmail/Outlook.", "Your CV is attached automatically when the email is sent from your connected Gmail/Outlook account.")}
-                      </p>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-slate-800">
+                            {t("CV anpassat till jobbet", "CV tailored to the job")}
+                          </div>
+                          <textarea
+                            className="min-h-[420px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            value={generatedCvText}
+                            onChange={(event) => setGeneratedCvText(event.target.value)}
+                          />
+                          <p className="text-xs text-slate-500">
+                            {t(
+                              "Detta är redigerbar CV-text. När du skickar den formateras den först genom JobbNus CV-template för att bli en tydlig och snygg bilaga.",
+                              "This is editable CV text. When you send it, it is first formatted through JobbNu's CV template to become a polished attachment."
+                            )}
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-slate-800">
+                            {t("Mejl / personligt brev", "Email / cover letter")}
+                          </div>
+                          <textarea
+                            className="min-h-[360px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            value={generatedEmailText}
+                            onChange={(event) => setGeneratedEmailText(event.target.value)}
+                          />
+                          <p className="text-xs text-slate-500">
+                            {t(
+                              "Granska båda delarna innan du skickar. Mejlet går först iväg efter din uttryckliga bekräftelse.",
+                              "Review both parts before sending. The email is only sent after your explicit confirmation."
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={locked || testSendLoading || !generatedEmailText.trim() || !generatedCvText.trim()}
+                            onClick={() => void handleSendTestToSelf()}
+                          >
+                            <Mail className="h-4 w-4" />
+                            {testSendLoading ? t("Skickar test...", "Sending test...") : t("Skicka test till mig själv", "Send test to myself")}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={locked || emailActionsLocked || emailSendLoading || !generatedEmailText.trim() || !generatedCvText.trim()}
+                            onClick={() => void handleSendEmail()}
+                          >
+                            <Send className="h-4 w-4" />
+                            {emailSendLoading ? t("Skickar...", "Sending...") : t("Skicka CV + mejl", "Send CV + email")}
+                          </Button>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={submitted}
+                            onChange={() => void handleMarkSubmitted()}
+                            disabled={locked}
+                          />
+                          {t("Jag har skickat ansökan", "I have submitted the application")}
+                        </label>
+                      </div>
                     </div>
                   )}
 
@@ -1501,11 +1580,11 @@ function SlimMatchCard({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={locked || emailActionsLocked || emailLoading}
-                        onClick={() => void handleGenerateEmail()}
+                        disabled={locked || emailActionsLocked || packageLoading}
+                        onClick={() => void handleGenerateApplicationPackage()}
                       >
                         <Mail className="h-4 w-4" />
-                        {emailLoading ? t("Genererar...", "Generating...") : t("Generera brev", "Generate letter")}
+                        {packageLoading ? t("Genererar...", "Generating...") : t("Generera CV + mejl", "Generate CV + email")}
                       </Button>
                       <Button
                         variant="outline"
@@ -1516,15 +1595,17 @@ function SlimMatchCard({
                         <Download className="h-4 w-4" />
                         {cvDownloadLoading ? t("Hämtar CV...", "Fetching CV...") : t("Ladda ner CV", "Download CV")}
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={locked || interviewPrepLocked || interviewPrepLoading}
-                        onClick={() => void handleInterviewPreparation()}
-                      >
-                        <Sparkles className="h-4 w-4" />
-                        {interviewPrepLoading ? t("Skapar...", "Creating...") : t("Interview preparation", "Interview preparation")}
-                      </Button>
+                      {canShowInterviewPreparation && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={locked || interviewPrepLocked || interviewPrepLoading}
+                          onClick={() => void handleInterviewPreparation()}
+                        >
+                          <Sparkles className="h-4 w-4" />
+                          {interviewPrepLoading ? t("Skapar...", "Creating...") : t("Intervjuförberedelse", "Interview preparation")}
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
@@ -1554,53 +1635,96 @@ function SlimMatchCard({
                       )}
                     </p>
                   )}
-                  <label className="flex items-center gap-2 text-xs text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={submitted}
-                      onChange={() => void handleMarkSubmitted()}
-                      disabled={locked}
-                    />
-                    {t("Jag har skickat ansökan", "I have submitted the application")}
-                  </label>
-                  {showEmailComposer && (
-                    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-slate-800">
-                          {t("Personligt brev / emailtext", "Cover letter / application text")}
-                        </span>
+                  {!submitted && (
+                    <p className="text-xs text-slate-500">
+                      {t(
+                        "När du har skickat ansökan kan du hitta jobbet under 'Skickade ansökningar' och starta intervjuförberedelse där.",
+                        "Once you have sent the application, you can find the job under 'Submitted applications' and start interview preparation there."
+                      )}
+                    </p>
+                  )}
+                  {showApplicationPackage && (
+                    <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex flex-wrap justify-end gap-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={locked || emailActionsLocked || !generatedEmailText.trim()}
-                          onClick={handleDownloadGeneratedText}
+                          disabled={locked || testSendLoading || !generatedEmailText.trim() || !generatedCvText.trim()}
+                          onClick={() => void handleSendTestToSelf()}
                         >
-                          <Download className="h-4 w-4" />
-                          {t("Ladda ner text", "Download text")}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={locked || emailActionsLocked || !generatedEmailText.trim()}
-                          onClick={handleDownloadGeneratedPdf}
-                        >
-                          <Download className="h-4 w-4" />
-                          {t("Spara som PDF", "Save as PDF")}
+                          <Mail className="h-4 w-4" />
+                          {testSendLoading ? t("Skickar test...", "Sending test...") : t("Skicka test till mig själv", "Send test to myself")}
                         </Button>
                       </div>
-                      <textarea
-                        className="min-h-[220px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                        value={generatedEmailText}
-                        onChange={(event) => setGeneratedEmailText(event.target.value)}
-                      />
-                      <p className="text-xs text-slate-500">
-                        {t(
-                          "Använd texten i fritextfält, ladda ner den som underlag eller låt extensionen fylla den automatiskt när den är live.",
-                          "Use this text in free-text fields, download it as supporting material, or let the extension fill it automatically once it is live."
-                        )}
-                      </p>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-slate-800">
+                            {t("CV anpassat till jobbet", "CV tailored to the job")}
+                          </div>
+                          <textarea
+                            className="min-h-[420px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            value={generatedCvText}
+                            onChange={(event) => setGeneratedCvText(event.target.value)}
+                          />
+                          <p className="text-xs text-slate-500">
+                            {t(
+                              "Detta är redigerbar CV-text. När du använder den i ansökan formateras den först genom samma CV-template.",
+                              "This is editable CV text. When you use it in the application, it is first formatted through the same CV template."
+                            )}
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-sm font-medium text-slate-800">
+                              {t("Mejl / personligt brev", "Email / cover letter")}
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={locked || emailActionsLocked || !generatedEmailText.trim()}
+                                onClick={handleDownloadGeneratedText}
+                              >
+                                <Download className="h-4 w-4" />
+                                {t("Ladda ner text", "Download text")}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={locked || emailActionsLocked || !generatedEmailText.trim()}
+                                onClick={handleDownloadGeneratedPdf}
+                              >
+                                <Download className="h-4 w-4" />
+                                {t("Spara som PDF", "Save as PDF")}
+                              </Button>
+                            </div>
+                          </div>
+                          <textarea
+                            className="min-h-[320px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            value={generatedEmailText}
+                            onChange={(event) => setGeneratedEmailText(event.target.value)}
+                          />
+                          <p className="text-xs text-slate-500">
+                            {t(
+                              "Använd texten i fritextfält, ladda ner den som underlag eller låt extensionen fylla den automatiskt när den är live.",
+                              "Use this text in free-text fields, download it as supporting material, or let the extension fill it automatically once it is live."
+                            )}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   )}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                    <label className="flex items-center gap-2 text-xs text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={submitted}
+                        onChange={() => void handleMarkSubmitted()}
+                        disabled={locked}
+                      />
+                      {t("Jag har skickat ansökan", "I have submitted the application")}
+                    </label>
+                  </div>
                   {showExtensionHelp && (
                     <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
                       <div className="font-medium text-slate-900">
@@ -1680,16 +1804,20 @@ function SlimMatchCard({
                 caption={primaryCaption}
               />
               <div className="flex items-center justify-between gap-2 pt-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={locked}
-                  onClick={() => setShowInsights((v) => !v)}
-                  className="h-8 px-2 text-slate-700 hover:text-slate-900"
-                >
-                  {showInsights ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  {showInsights ? t("Dölj analys", "Hide analysis") : t("Visa analys", "Show analysis")}
-                </Button>
+                {hasUsefulInsights ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={locked}
+                    onClick={() => setShowInsights((v) => !v)}
+                    className="h-8 px-2 text-slate-700 hover:text-slate-900"
+                  >
+                    {showInsights ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    {showInsights ? t("Dölj analys", "Hide analysis") : t("Visa analys", "Show analysis")}
+                  </Button>
+                ) : (
+                  <div />
+                )}
 
                 <Link
                   href={job.job_url || job.webpage_url || `/job/${job.id}`}
@@ -1718,7 +1846,7 @@ function SlimMatchCard({
           </div>
         </div>
 
-        {showInsights && !locked && (
+        {showInsights && !locked && hasUsefulInsights && (
           <div className="border-t border-slate-200 bg-white px-4 py-4 sm:px-5">
             <MatchInsights
               scoreMode={scoreMode}
@@ -1731,6 +1859,7 @@ function SlimMatchCard({
               skillsData={job.skills_data}
               gapAnalysis={gapAnalysis}
               keywordHits={job.keyword_hits ?? []}
+              matchReasons={job.matchReasons ?? []}
             />
           </div>
         )}

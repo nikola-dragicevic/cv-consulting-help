@@ -25,9 +25,11 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-RETRIEVAL_POOL_LIMIT = int(os.getenv("PRECOMPUTE_MATCH_RETRIEVAL_LIMIT", "1000"))
+RETRIEVAL_POOL_LIMIT = int(os.getenv("PRECOMPUTE_MATCH_RETRIEVAL_LIMIT", "500"))
 SAVED_MATCH_LIMIT = int(os.getenv("PRECOMPUTE_MATCH_SAVE_LIMIT", "500"))
 INCREMENTAL_INSERT_LIMIT = int(os.getenv("PRECOMPUTE_MATCH_INCREMENTAL_LIMIT", "300"))
+NATIONAL_RETRIEVAL_POOL_LIMIT = int(os.getenv("PRECOMPUTE_MATCH_NATIONAL_RETRIEVAL_LIMIT", "1200"))
+NATIONAL_INCREMENTAL_INSERT_LIMIT = int(os.getenv("PRECOMPUTE_MATCH_NATIONAL_INCREMENTAL_LIMIT", "500"))
 PROFILE_BATCH_SIZE = int(os.getenv("PRECOMPUTE_MATCH_PROFILE_BATCH_SIZE", "100"))
 UPSERT_BATCH_SIZE = int(os.getenv("PRECOMPUTE_MATCH_UPSERT_BATCH_SIZE", "100"))
 
@@ -56,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["auto", "full", "incremental"], default="auto")
     parser.add_argument("--user-id", type=str, default=None, help="Only process one user")
     parser.add_argument("--limit-users", type=int, default=None, help="Stop after processing this many users")
+    parser.add_argument("--scope", choices=["auto", "local", "national"], default="auto")
     return parser
 
 
@@ -129,6 +132,19 @@ def compute_profile_signature(profile: dict) -> str:
     return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
 
 
+def effective_radius_km(profile: dict, state: dict | None = None) -> float | None:
+    if isinstance(state, dict):
+        active_radius = state.get("active_radius_km")
+        if isinstance(active_radius, (int, float)) and math.isfinite(active_radius) and active_radius > 0:
+            return float(active_radius)
+
+    commute_radius = profile.get("commute_radius_km")
+    if isinstance(commute_radius, (int, float)) and math.isfinite(commute_radius) and commute_radius > 0:
+        return float(commute_radius)
+
+    return None
+
+
 def calc_distance_m(lat1, lon1, lat2, lon2):
     if not all(isinstance(v, (int, float)) for v in [lat1, lon1, lat2, lon2]):
         return None
@@ -180,7 +196,8 @@ def score_job(profile: dict, job_row: dict, match_source: str) -> dict:
     taxonomy_bonus = min(0.15 * taxonomy_hit_count, 0.45)
 
     vector_similarity = clamp(float(job_row.get("vector_similarity") or 0.0), 0.0, 1.0)
-    base_score = (0.70 * vector_similarity) + (0.20 * keyword_hit_rate) - (0.10 * keyword_miss_rate)
+    seniority_penalty = compute_seniority_penalty(profile, job_row)
+    base_score = (0.70 * vector_similarity) + (0.20 * keyword_hit_rate) - (0.10 * keyword_miss_rate) - seniority_penalty
     final_score = clamp(base_score + taxonomy_bonus, 0.0, 1.0)
 
     job_lat = job_row.get("location_lat")
@@ -200,6 +217,7 @@ def score_job(profile: dict, job_row: dict, match_source: str) -> dict:
         "user_id": profile["user_id"],
         "job_id": str(job_row["id"]),
         "match_source": match_source,
+        "match_scope": "national" if match_source.startswith("national_") else "local",
         "vector_similarity": vector_similarity,
         "keyword_hits": keyword_hits,
         "keyword_hit_count": keyword_hit_count,
@@ -208,6 +226,7 @@ def score_job(profile: dict, job_row: dict, match_source: str) -> dict:
         "keyword_miss_rate": keyword_miss_rate,
         "taxonomy_hit_count": taxonomy_hit_count,
         "taxonomy_bonus": taxonomy_bonus,
+        "seniority_penalty": seniority_penalty,
         "base_score": clamp(base_score, 0.0, 1.0),
         "final_score": final_score,
         "distance_m": distance_m,
@@ -217,16 +236,67 @@ def score_job(profile: dict, job_row: dict, match_source: str) -> dict:
     }
 
 
+def infer_job_seniority(job_row: dict) -> str | None:
+    text = f"{job_row.get('title') or ''}\n{job_row.get('description') or ''}".lower()
+
+    if any(token in text for token in ["junior", "trainee", "praktik", "lärling", "entry level", "nyexaminerad"]):
+        return "junior"
+
+    if any(token in text for token in ["senior", "lead", "principal", "chef", "manager", "erfaren", "specialist"]):
+        return "senior"
+
+    years_match = re.search(r"(\d+)\s*(?:\+)?\s*år", text)
+    if years_match:
+        years = int(years_match.group(1))
+        if years >= 5:
+            return "senior"
+        if years >= 2:
+            return "mid"
+        return "junior"
+
+    return None
+
+
+def compute_seniority_penalty(profile: dict, job_row: dict) -> float:
+    candidate_seniority = (profile.get("seniority_level") or "").strip().lower()
+    job_seniority = infer_job_seniority(job_row)
+
+    levels = {"junior": 1, "mid": 2, "senior": 3}
+    candidate_level = levels.get(candidate_seniority)
+    required_level = levels.get(job_seniority)
+
+    if not candidate_level or not required_level:
+        return 0.0
+
+    gap = required_level - candidate_level
+    if gap <= 0:
+        return 0.0
+    if gap == 1:
+        return 0.15
+    return 0.30
+
+
+def rank_scored_rows(_profile: dict, rows: list[dict]) -> list[dict]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            -float(row.get("final_score") or 0.0),
+            -float(row.get("vector_similarity") or 0.0),
+            float(row.get("distance_m")) if isinstance(row.get("distance_m"), (int, float)) else float("inf"),
+        ),
+    )
+
+
 def upsert_match_rows(rows: list[dict]) -> None:
     for i in range(0, len(rows), UPSERT_BATCH_SIZE):
         batch = rows[i:i + UPSERT_BATCH_SIZE]
         supabase.table("candidate_job_matches").upsert(
             batch,
-            on_conflict="user_id,job_id",
+            on_conflict="user_id,job_id,match_scope",
         ).execute()
 
 
-def delete_match_rows(user_id: str, job_ids: list[str]) -> None:
+def delete_match_rows(user_id: str, job_ids: list[str], match_scope: str) -> None:
     if not job_ids:
         return
     for i in range(0, len(job_ids), UPSERT_BATCH_SIZE):
@@ -235,6 +305,7 @@ def delete_match_rows(user_id: str, job_ids: list[str]) -> None:
             supabase.table("candidate_job_matches")
             .delete()
             .eq("user_id", user_id)
+            .eq("match_scope", match_scope)
             .in_("job_id", batch)
             .execute()
         )
@@ -269,7 +340,7 @@ def fetch_candidate_profiles(user_id: str | None = None, limit_users: int | None
     while True:
         query = (
             supabase.table("candidate_profiles")
-            .select("user_id,profile_vector,candidate_text_vector,search_keywords,category_tags,location_lat,location_lon,commute_radius_km")
+            .select("user_id,profile_vector,candidate_text_vector,search_keywords,category_tags,location_lat,location_lon,commute_radius_km,seniority_level")
             .not_.is_("user_id", "null")
             .order("user_id")
             .limit(PROFILE_BATCH_SIZE)
@@ -308,103 +379,99 @@ def fetch_match_state_map(user_ids: list[str]) -> dict[str, dict]:
     return {row["user_id"]: row for row in (response.data or [])}
 
 
-def fetch_existing_matches(user_id: str) -> list[dict]:
+def fetch_existing_matches(user_id: str, match_scope: str) -> list[dict]:
     response = (
         supabase.table("candidate_job_matches")
         .select("job_id,final_score")
         .eq("user_id", user_id)
+        .eq("match_scope", match_scope)
         .execute()
     )
     return response.data or []
 
 
-def run_full_refresh(profile: dict, latest_seen_at: str | None) -> tuple[int, str]:
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "processing",
-            "last_error": None,
-            "last_pool_size": 0,
-            "saved_job_count": 0,
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
+def run_full_refresh(profile: dict, state: dict | None, latest_seen_at: str | None, match_scope: str, track_progress: bool) -> tuple[int, str]:
+    radius_km = effective_radius_km(profile, state)
+    if track_progress:
+        update_match_state(
+            profile["user_id"],
+            {
+                "profile_signature": compute_profile_signature(profile),
+                "match_ready": True,
+                "status": "processing",
+                "last_error": None,
+                "last_pool_size": 0,
+                "saved_job_count": 0,
+                "active_radius_km": radius_km,
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+            },
+        )
 
-    response = supabase.rpc(
-        "fetch_candidate_semantic_pool",
-        {
-            "candidate_vector": profile["profile_vector"],
-            "limit_count": RETRIEVAL_POOL_LIMIT,
-        },
-    ).execute()
+    if match_scope == "national":
+        response = supabase.rpc(
+            "fetch_candidate_semantic_pool_national",
+            {
+                "candidate_vector": profile["profile_vector"],
+                "limit_count": NATIONAL_RETRIEVAL_POOL_LIMIT,
+            },
+        ).execute()
+    else:
+        response = supabase.rpc(
+            "fetch_candidate_semantic_pool",
+            {
+                "candidate_vector": profile["profile_vector"],
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+                "radius_km": radius_km,
+                "limit_count": RETRIEVAL_POOL_LIMIT,
+            },
+        ).execute()
     rows = response.data or []
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "semantic_pool_ready",
-            "last_error": None,
-            "last_pool_size": len(rows),
-            "saved_job_count": 0,
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
+    if track_progress:
+        update_match_state(
+            profile["user_id"],
+            {
+                "profile_signature": compute_profile_signature(profile),
+                "match_ready": True,
+                "status": "semantic_pool_ready",
+                "last_error": None,
+                "last_pool_size": len(rows),
+                "saved_job_count": 0,
+                "active_radius_km": radius_km,
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+            },
+        )
 
-    scored = [score_job(profile, row, "full_refresh") for row in rows]
-    scored.sort(key=lambda row: (row["final_score"], row["vector_similarity"]), reverse=True)
-    top_rows = scored[:SAVED_MATCH_LIMIT]
+    scored = [score_job(profile, row, f"{match_scope}_full_refresh") for row in rows]
+    ranked_rows = rank_scored_rows(profile, scored)
+    top_rows = ranked_rows[:SAVED_MATCH_LIMIT]
     top_ids = [row["job_id"] for row in top_rows]
 
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "saving_matches",
-            "last_error": None,
-            "last_pool_size": len(rows),
-            "saved_job_count": 0,
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
+    if track_progress:
+        update_match_state(
+            profile["user_id"],
+            {
+                "profile_signature": compute_profile_signature(profile),
+                "match_ready": True,
+                "status": "saving_matches",
+                "last_error": None,
+                "last_pool_size": len(rows),
+                "saved_job_count": 0,
+                "active_radius_km": radius_km,
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+            },
+        )
 
     upsert_match_rows(top_rows)
 
-    existing_ids = {str(row["job_id"]) for row in fetch_existing_matches(profile["user_id"])}
+    existing_ids = {str(row["job_id"]) for row in fetch_existing_matches(profile["user_id"], match_scope)}
     stale_ids = sorted(existing_ids.difference(top_ids))
-    delete_match_rows(profile["user_id"], stale_ids)
+    delete_match_rows(profile["user_id"], stale_ids, match_scope)
 
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "success",
-            "last_error": None,
-            "last_full_refresh_at": datetime.now(timezone.utc).isoformat(),
-            "last_job_ingest_seen_at": latest_seen_at,
-            "last_pool_size": len(rows),
-            "saved_job_count": len(top_rows),
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
-    return len(top_rows), "full"
-
-
-def run_incremental_refresh(profile: dict, state: dict, latest_seen_at: str | None) -> tuple[int, str]:
-    seen_after = state.get("last_job_ingest_seen_at")
-    if not latest_seen_at or not seen_after or latest_seen_at <= seen_after:
+    if track_progress:
         update_match_state(
             profile["user_id"],
             {
@@ -412,93 +479,129 @@ def run_incremental_refresh(profile: dict, state: dict, latest_seen_at: str | No
                 "match_ready": True,
                 "status": "success",
                 "last_error": None,
-                "active_radius_km": profile.get("commute_radius_km"),
+                "last_full_refresh_at": datetime.now(timezone.utc).isoformat(),
+                "last_job_ingest_seen_at": latest_seen_at,
+                "last_pool_size": len(rows),
+                "saved_job_count": len(top_rows),
+                "active_radius_km": radius_km,
                 "candidate_lat": profile.get("location_lat"),
                 "candidate_lon": profile.get("location_lon"),
             },
         )
-        return 0, "noop"
+    return len(top_rows), f"{match_scope}_full"
 
-    response = supabase.rpc(
-        "fetch_recent_candidate_semantic_pool",
-        {
-            "candidate_vector": profile["profile_vector"],
-            "seen_after": seen_after,
-            "limit_count": INCREMENTAL_INSERT_LIMIT,
-        },
-    ).execute()
+
+def run_incremental_refresh(profile: dict, state: dict, latest_seen_at: str | None, match_scope: str, track_progress: bool) -> tuple[int, str]:
+    radius_km = effective_radius_km(profile, state)
+    seen_after = state.get("last_job_ingest_seen_at")
+    if not latest_seen_at or not seen_after or latest_seen_at <= seen_after:
+        if track_progress:
+            update_match_state(
+                profile["user_id"],
+                {
+                    "profile_signature": compute_profile_signature(profile),
+                    "match_ready": True,
+                    "status": "success",
+                    "last_error": None,
+                    "active_radius_km": radius_km,
+                    "candidate_lat": profile.get("location_lat"),
+                    "candidate_lon": profile.get("location_lon"),
+                },
+            )
+        return 0, f"{match_scope}_noop"
+
+    if match_scope == "national":
+        response = supabase.rpc(
+            "fetch_recent_candidate_semantic_pool_national",
+            {
+                "candidate_vector": profile["profile_vector"],
+                "seen_after": seen_after,
+                "limit_count": NATIONAL_INCREMENTAL_INSERT_LIMIT,
+            },
+        ).execute()
+    else:
+        response = supabase.rpc(
+            "fetch_recent_candidate_semantic_pool",
+            {
+                "candidate_vector": profile["profile_vector"],
+                "seen_after": seen_after,
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+                "radius_km": radius_km,
+                "limit_count": INCREMENTAL_INSERT_LIMIT,
+            },
+        ).execute()
     rows = response.data or []
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "semantic_pool_ready",
-            "last_error": None,
-            "last_pool_size": len(rows),
-            "saved_job_count": state.get("saved_job_count") if isinstance(state.get("saved_job_count"), int) else 0,
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
-    scored = [score_job(profile, row, "incremental_refresh") for row in rows]
-    scored.sort(key=lambda row: (row["final_score"], row["vector_similarity"]), reverse=True)
-    top_incremental = scored[:INCREMENTAL_INSERT_LIMIT]
+    if track_progress:
+        update_match_state(
+            profile["user_id"],
+            {
+                "profile_signature": compute_profile_signature(profile),
+                "match_ready": True,
+                "status": "semantic_pool_ready",
+                "last_error": None,
+                "last_pool_size": len(rows),
+                "saved_job_count": state.get("saved_job_count") if isinstance(state.get("saved_job_count"), int) else 0,
+                "active_radius_km": radius_km,
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+            },
+        )
+    scored = [score_job(profile, row, f"{match_scope}_incremental_refresh") for row in rows]
+    ranked_rows = rank_scored_rows(profile, scored)
+    scope_incremental_limit = NATIONAL_INCREMENTAL_INSERT_LIMIT if match_scope == "national" else INCREMENTAL_INSERT_LIMIT
+    top_incremental = ranked_rows[:scope_incremental_limit]
 
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "saving_matches",
-            "last_error": None,
-            "last_pool_size": len(rows),
-            "saved_job_count": state.get("saved_job_count") if isinstance(state.get("saved_job_count"), int) else 0,
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
+    if track_progress:
+        update_match_state(
+            profile["user_id"],
+            {
+                "profile_signature": compute_profile_signature(profile),
+                "match_ready": True,
+                "status": "saving_matches",
+                "last_error": None,
+                "last_pool_size": len(rows),
+                "saved_job_count": state.get("saved_job_count") if isinstance(state.get("saved_job_count"), int) else 0,
+                "active_radius_km": radius_km,
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+            },
+        )
 
     upsert_match_rows(top_incremental)
 
     all_rows = (
         supabase.table("candidate_job_matches")
-        .select("job_id,final_score,vector_similarity")
+        .select("job_id,final_score,vector_similarity,distance_m")
         .eq("user_id", profile["user_id"])
+        .eq("match_scope", match_scope)
         .execute()
     ).data or []
-    all_rows.sort(
-        key=lambda row: (
-            float(row.get("final_score") or 0.0),
-            float(row.get("vector_similarity") or 0.0),
-        ),
-        reverse=True,
-    )
-    stale_ids = [str(row["job_id"]) for row in all_rows[SAVED_MATCH_LIMIT:]]
-    delete_match_rows(profile["user_id"], stale_ids)
+    ranked_existing = rank_scored_rows(profile, all_rows)
+    stale_ids = [str(row["job_id"]) for row in ranked_existing[SAVED_MATCH_LIMIT:]]
+    delete_match_rows(profile["user_id"], stale_ids, match_scope)
 
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "success",
-            "last_error": None,
-            "last_incremental_refresh_at": datetime.now(timezone.utc).isoformat(),
-            "last_job_ingest_seen_at": latest_seen_at,
-            "last_pool_size": len(rows),
-            "saved_job_count": min(len(all_rows), SAVED_MATCH_LIMIT),
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
-    return len(top_incremental), "incremental"
+    if track_progress:
+        update_match_state(
+            profile["user_id"],
+            {
+                "profile_signature": compute_profile_signature(profile),
+                "match_ready": True,
+                "status": "success",
+                "last_error": None,
+                "last_incremental_refresh_at": datetime.now(timezone.utc).isoformat(),
+                "last_job_ingest_seen_at": latest_seen_at,
+                "last_pool_size": len(rows),
+                "saved_job_count": min(len(all_rows), SAVED_MATCH_LIMIT),
+                "active_radius_km": radius_km,
+                "candidate_lat": profile.get("location_lat"),
+                "candidate_lon": profile.get("location_lon"),
+            },
+        )
+    return len(top_incremental), f"{match_scope}_incremental"
 
 
-def should_run_full_refresh(profile: dict, state: dict | None, mode: str) -> bool:
+def should_run_full_refresh(profile: dict, state: dict | None, mode: str, match_scope: str) -> bool:
     if mode == "full":
         return True
     if mode == "incremental":
@@ -513,52 +616,56 @@ def should_run_full_refresh(profile: dict, state: dict | None, mode: str) -> boo
         supabase.table("candidate_job_matches")
         .select("job_id")
         .eq("user_id", profile["user_id"])
+        .eq("match_scope", match_scope)
         .limit(1)
         .execute()
     ).data or []
     return len(existing_matches) == 0
 
 
-def process_profile(profile: dict, state: dict | None, mode: str, latest_seen_at: str | None) -> tuple[int, str]:
+def process_scope(profile: dict, state: dict | None, mode: str, latest_seen_at: str | None, match_scope: str, track_progress: bool) -> tuple[int, str]:
+    radius_km = effective_radius_km(profile, state)
     if not has_vector_value(profile.get("profile_vector")):
+        if track_progress:
+            update_match_state(
+                profile["user_id"],
+                {
+                    "profile_signature": state.get("profile_signature") if state else "",
+                    "match_ready": False,
+                    "status": "pending",
+                    "last_error": None,
+                    "last_pool_size": 0,
+                    "saved_job_count": 0,
+                    "active_radius_km": radius_km,
+                    "candidate_lat": profile.get("location_lat"),
+                    "candidate_lon": profile.get("location_lon"),
+                },
+            )
+        return 0, f"{match_scope}_pending"
+
+    if track_progress:
         update_match_state(
             profile["user_id"],
             {
-                "profile_signature": state.get("profile_signature") if state else "",
-                "match_ready": False,
-                "status": "pending",
+                "profile_signature": compute_profile_signature(profile),
+                "match_ready": True,
+                "status": "processing",
                 "last_error": None,
-                "last_pool_size": 0,
-                "saved_job_count": 0,
-                "active_radius_km": profile.get("commute_radius_km"),
+                "last_pool_size": state.get("last_pool_size") if state and isinstance(state.get("last_pool_size"), int) else 0,
+                "saved_job_count": state.get("saved_job_count") if state and isinstance(state.get("saved_job_count"), int) else 0,
+                "active_radius_km": radius_km,
                 "candidate_lat": profile.get("location_lat"),
                 "candidate_lon": profile.get("location_lon"),
             },
         )
-        return 0, "pending"
 
-    update_match_state(
-        profile["user_id"],
-        {
-            "profile_signature": compute_profile_signature(profile),
-            "match_ready": True,
-            "status": "processing",
-            "last_error": None,
-            "last_pool_size": state.get("last_pool_size") if state and isinstance(state.get("last_pool_size"), int) else 0,
-            "saved_job_count": state.get("saved_job_count") if state and isinstance(state.get("saved_job_count"), int) else 0,
-            "active_radius_km": profile.get("commute_radius_km"),
-            "candidate_lat": profile.get("location_lat"),
-            "candidate_lon": profile.get("location_lon"),
-        },
-    )
-
-    if should_run_full_refresh(profile, state, mode):
-        return run_full_refresh(profile, latest_seen_at)
-    return run_incremental_refresh(profile, state or {}, latest_seen_at)
+    if should_run_full_refresh(profile, state, mode, match_scope):
+        return run_full_refresh(profile, state, latest_seen_at, match_scope, track_progress)
+    return run_incremental_refresh(profile, state or {}, latest_seen_at, match_scope, track_progress)
 
 
-def run_precomputed_match_refresh(mode: str = "auto", user_id: str | None = None, limit_users: int | None = None) -> None:
-    print(f"🧠 [MATCH PRECOMPUTE] Starting refresh mode={mode} user_id={user_id or '-'}")
+def run_precomputed_match_refresh(mode: str = "auto", user_id: str | None = None, limit_users: int | None = None, scope: str = "auto") -> None:
+    print(f"🧠 [MATCH PRECOMPUTE] Starting refresh mode={mode} scope={scope} user_id={user_id or '-'}")
     profiles = fetch_candidate_profiles(user_id=user_id, limit_users=limit_users)
     if not profiles:
         print("ℹ️ [MATCH PRECOMPUTE] No candidate profiles found.")
@@ -578,19 +685,28 @@ def run_precomputed_match_refresh(mode: str = "auto", user_id: str | None = None
         if not profile_user_id:
             continue
         try:
-            affected, run_kind = process_profile(profile, state_map.get(profile_user_id), mode, latest_seen_at)
-            processed += 1
-            if run_kind == "full":
-                full_runs += 1
-            elif run_kind == "incremental":
-                incremental_runs += 1
-            else:
-                skipped += 1
+            scopes = ["local", "national"] if scope == "auto" else [scope]
+            for current_scope in scopes:
+                affected, run_kind = process_scope(
+                    profile,
+                    state_map.get(profile_user_id),
+                    mode,
+                    latest_seen_at,
+                    current_scope,
+                    current_scope == "local",
+                )
+                processed += 1
+                if run_kind.endswith("full"):
+                    full_runs += 1
+                elif run_kind.endswith("incremental"):
+                    incremental_runs += 1
+                else:
+                    skipped += 1
 
-            print(
-                f"   user={profile_user_id} kind={run_kind} affected={affected}",
-                flush=True,
-            )
+                print(
+                    f"   user={profile_user_id} scope={current_scope} kind={run_kind} affected={affected}",
+                    flush=True,
+                )
         except Exception as exc:
             update_match_state(
                 profile_user_id,
@@ -599,7 +715,7 @@ def run_precomputed_match_refresh(mode: str = "auto", user_id: str | None = None
                     "match_ready": True,
                     "status": "failed",
                     "last_error": str(exc),
-                    "active_radius_km": profile.get("commute_radius_km"),
+                    "active_radius_km": effective_radius_km(profile, state_map.get(profile_user_id)),
                     "candidate_lat": profile.get("location_lat"),
                     "candidate_lon": profile.get("location_lon"),
                 },
@@ -614,7 +730,7 @@ def run_precomputed_match_refresh(mode: str = "auto", user_id: str | None = None
 
 def main() -> None:
     args = build_parser().parse_args()
-    run_precomputed_match_refresh(mode=args.mode, user_id=args.user_id, limit_users=args.limit_users)
+    run_precomputed_match_refresh(mode=args.mode, user_id=args.user_id, limit_users=args.limit_users, scope=args.scope)
 
 
 if __name__ == "__main__":

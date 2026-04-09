@@ -339,6 +339,27 @@ export default function ProfilePage() {
     return raw;
   }, [t, vectorStatus?.progress?.matchLastError]);
 
+  const profileStatusLabel = useMemo(() => {
+    if (!vectorStatus || vectorStatus.status === "idle") {
+      return t("ingen uppdatering pågår", "no update in progress");
+    }
+
+    if (vectorStatus.progress && !vectorStatus.progress.step3SavedMatchesReady) {
+      if (vectorStatus.progress.step1ProfileReady && vectorStatus.progress.step2SemanticPoolReady) {
+        return t("sparar jobblistan", "saving the job list");
+      }
+      if (vectorStatus.progress.step1ProfileReady) {
+        return t("hämtar relevanta jobb", "retrieving relevant jobs");
+      }
+    }
+
+    if (vectorStatus.status === "pending") return t("väntar på start", "pending");
+    if (vectorStatus.status === "processing") return t("uppdaterar profil", "updating profile");
+    if (vectorStatus.status === "success") return t("klar", "success");
+    if (vectorStatus.status === "failed") return t("misslyckades", "failed");
+    return t("ingen uppdatering pågår", "no update in progress");
+  }, [t, vectorStatus]);
+
   const handleUpdateProfile = async (e: FormEvent) => {
     e.preventDefault();
     if (!profile) return;
@@ -628,6 +649,12 @@ export default function ProfilePage() {
                 <div className="space-y-2">
                   <Label htmlFor="street">{t("Gatuadress", "Street address")}</Label>
                   <Input id="street" name="street" value={profile.street} onChange={handleInputChange} />
+                  <p className="text-xs text-slate-500">
+                    {t(
+                      "Används för att hitta jobb lokalt i ditt område.",
+                      "Used to find jobs locally in your area."
+                    )}
+                  </p>
                 </div>
               </div>
             </div>
@@ -663,7 +690,12 @@ export default function ProfilePage() {
                   {t("När du sparar ändringar kommer din matchningsprofil att regenereras automatiskt.", "When you save changes, your matching profile will be regenerated automatically.")}
                 </p>
                 <div className="space-y-2">
-                  <Label htmlFor="cv-text">{t("Eller klistra in CV-text", "Or paste CV text")}</Label>
+                  <Label htmlFor="cv-text">
+                    {t(
+                      "Eller klistra in CV-text som används och anpassas mot valda jobb i dashboarden",
+                      "Or paste CV text that will be used and tailored against selected jobs in the dashboard"
+                    )}
+                  </Label>
                   <textarea
                     id="cv-text"
                     value={cvTextInput}
@@ -677,8 +709,8 @@ export default function ProfilePage() {
                   />
                   <p className="text-xs text-slate-500">
                     {t(
-                      "Den här texten används som CV-underlag och triggar samma matchningspipeline som en vanlig CV-uppladdning.",
-                      "This text is used as CV input and triggers the same matching pipeline as a regular CV upload."
+                      "Den här texten används som CV-underlag, triggar samma matchningspipeline som en vanlig CV-uppladdning och kan senare anpassas mot valda jobb i dashboarden.",
+                      "This text is used as CV input, triggers the same matching pipeline as a regular CV upload, and can later be tailored against selected jobs in the dashboard."
                     )}
                   </p>
                 </div>
@@ -1000,7 +1032,7 @@ export default function ProfilePage() {
                 (typeof vectorStatus?.progress?.savedCount === "number" && vectorStatus.progress.savedCount > 0) ? (
                   <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                     {vectorStatus?.progress?.poolSize > 0 && (
-                      <div>{t("Semantisk pool:", "Semantic pool:")} {vectorStatus.progress.poolSize}</div>
+                      <div>{t("Jobb hittades:", "Jobs found:")} {vectorStatus.progress.poolSize}</div>
                     )}
                     {vectorStatus?.progress?.savedCount > 0 && (
                       <div>{t("Sparade matchningar:", "Saved matches:")} {vectorStatus.progress.savedCount}</div>
@@ -1021,12 +1053,7 @@ export default function ProfilePage() {
               <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                 <div>
                   <span className="font-medium">{t("Status:", "Status:")}</span>{" "}
-                  {vectorStatus?.status === "pending" && t("väntar på start", "pending")}
-                  {vectorStatus?.status === "processing" && t("uppdaterar profil", "updating profile")}
-                  {vectorStatus?.status === "success" && t("klar", "success")}
-                  {vectorStatus?.status === "failed" && t("misslyckades", "failed")}
-                  {(!vectorStatus || vectorStatus.status === "idle") &&
-                    t("ingen uppdatering pågår", "no update in progress")}
+                  {profileStatusLabel}
                 </div>
                 {typeof vectorStatus?.attempts === "number" && vectorStatus.attempts > 0 && (
                   <div className="mt-1 text-xs text-slate-500">

@@ -58,15 +58,15 @@ export default function Header() {
   return (
     <header className="bg-white/80 backdrop-blur-md sticky top-0 z-40 border-b">
       <div className="container mx-auto px-4 py-2.5">
-        <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-start lg:min-w-0">
+        <div className="flex flex-col gap-2.5 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-4">
+          <div className="flex items-center justify-between gap-3 lg:flex-row lg:justify-start lg:min-w-0">
             <Link href="/" className="flex items-center gap-2 shrink-0">
               <Image
                 src="/jobbnu_app_icon_centered_128.png"
                 alt=""
                 width={32}
                 height={32}
-                className="h-8 w-8"
+                className="h-7 w-7"
                 priority
               />
               <Image
@@ -74,28 +74,52 @@ export default function Header() {
                 alt="JobbNu"
                 width={596}
                 height={168}
-                className="h-7 w-auto"
+                className="h-6 w-auto sm:h-7"
                 priority
               />
             </Link>
+            <div className="flex justify-end lg:hidden">
+              <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setLang("sv")}
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    lang === "sv" ? "bg-slate-900 text-white" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  aria-label="Svenska"
+                >
+                  SV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLang("en")}
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    lang === "en" ? "bg-slate-900 text-white" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  aria-label="English"
+                >
+                  EN
+                </button>
+              </div>
+            </div>
+          </div>
 
-            <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:min-w-0">
+          <div className="flex flex-wrap items-center justify-center gap-2 lg:flex-nowrap lg:justify-start lg:min-w-0">
               <Link
                 href="/dashboard"
-                className="rounded-full border border-amber-400 bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-colors hover:bg-amber-500 hover:border-amber-500"
+                className="rounded-full border border-amber-400 bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-colors hover:bg-amber-500 hover:border-amber-500 sm:px-5 sm:text-base"
               >
                 {t("Jobbmatchning", "Job Matching")}
               </Link>
               <Link
                 href="/cv"
-                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-900"
               >
                 CV
               </Link>
-            </div>
           </div>
 
-          <div className="flex justify-center lg:justify-center">
+          <div className="hidden justify-center lg:flex lg:justify-center">
             <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-sm">
               <button
                 type="button"
@@ -122,12 +146,12 @@ export default function Header() {
 
           <nav className="min-w-0">
             {loading ? (
-              <div className="flex items-center justify-end gap-2">
+              <div className="flex items-center justify-center gap-2 lg:justify-end">
                 <span className="text-sm text-gray-400">{t("Laddar...", "Loading...")}</span>
               </div>
             ) : user ? (
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <span className="hidden text-sm text-gray-600 sm:block">{user.email}</span>
+              <div className="flex flex-wrap items-center justify-center gap-2 lg:justify-end">
+                <span className="hidden w-full text-center text-sm text-gray-600 sm:block lg:w-auto lg:text-right">{user.email}</span>
                 {isAdminOrModerator(user) && (
                   <Link href="/admin">
                     <Button variant="outline" size="sm">Admin</Button>
@@ -139,7 +163,7 @@ export default function Header() {
                 <Button onClick={handleLogout} variant="destructive" size="sm">{t("Logga ut", "Log out")}</Button>
               </div>
             ) : (
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-2 lg:justify-end">
                 <Link href="/login">
                   <Button variant="ghost" size="sm">{t("Logga in", "Log in")}</Button>
                 </Link>
@@ -149,7 +173,7 @@ export default function Header() {
               </div>
             )}
           </nav>
-          </div>
+        </div>
       </div>
     </header>
   );

@@ -13,6 +13,18 @@ export interface GenerationResult {
   error?: string
 }
 
+export type TailoredCvProfileInput = {
+  full_name?: string | null
+  email?: string | null
+  phone?: string | null
+  city?: string | null
+  street?: string | null
+  candidate_text_vector?: string | null
+  skills_text?: string | null
+  experience_titles?: string[] | null
+  education_titles?: string[] | null
+}
+
 type GeneratedCvData = {
   name?: string
   title?: string
@@ -145,6 +157,60 @@ export async function generateCvFromFreeText(text: string): Promise<string> {
   return sanitizeGeneratedCv(raw, text)
 }
 
+function buildTailoredCvUserPrompt(profile: TailoredCvProfileInput, job: JobAdContext): string {
+  const experienceTitles = Array.isArray(profile.experience_titles)
+    ? profile.experience_titles.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : []
+  const educationTitles = Array.isArray(profile.education_titles)
+    ? profile.education_titles.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : []
+
+  const sourceText = String(profile.candidate_text_vector ?? "").trim()
+  const skillsText = String(profile.skills_text ?? "").trim()
+  const locationParts = [profile.street, profile.city].filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+
+  return `Skapa ett professionellt och jobb-anpassat CV på svenska för följande kandidat.
+
+VIKTIGT:
+- Anpassa CV:t mot jobbannonsen för att lyfta rätt erfarenhet, rätt kompetenser och rätt formuleringar.
+- Använd ENBART kandidatens verkliga underlag.
+- Hitta ALDRIG på nya arbetsgivare, utbildningar, årtal, certifikat eller prestationer.
+- Ta ALDRIG med ålder eller födelsedata i CV:t.
+- Om något saknas i underlaget ska du utelämna det eller formulera försiktigt, aldrig fylla i med gissningar.
+
+JOBBANNONS:
+Tjänst: ${job.headline}
+Företag: ${job.company ?? ""}
+Beskrivning:
+${job.description_text.slice(0, 3500)}
+
+KANDIDATENS GRUNDUPPGIFTER:
+Namn: ${profile.full_name ?? ""}
+E-post: ${profile.email ?? ""}
+Telefon: ${profile.phone ?? ""}
+Ort/adress: ${locationParts.join(", ")}
+
+KANDIDATENS KÄRNROLLER:
+${experienceTitles.join(", ") || "(ej angivet)"}
+
+UTBILDNING ATT TA HÄNSYN TILL:
+${educationTitles.join(", ") || "(ej angivet)"}
+
+EXTRA KOMPETENSER:
+${skillsText || "(ej angivet)"}
+
+FULLT CV-UNDERLAG:
+${sourceText.slice(0, 8000)}
+
+Returnera ENBART JSON enligt systemprompten.`
+}
+
+export async function generateTailoredCvForJob(profile: TailoredCvProfileInput, job: JobAdContext): Promise<string> {
+  const prompt = buildTailoredCvUserPrompt(profile, job)
+  const raw = await callClaude(buildCvSystemPrompt(), prompt, 0.2)
+  return sanitizeGeneratedCv(raw, prompt)
+}
+
 // ---------------------------------------------------------------------------
 // CV prompt — outputs structured JSON for the CvPreview template renderer
 // ---------------------------------------------------------------------------
@@ -161,6 +227,9 @@ ABSOLUTA REGLER – BRYTS ALDRIG:
 6. Normalisera uppenbart felstavade eller grammatiskt felaktiga yrkestitlar till korrekt svensk yrkestitel när betydelsen är tydlig, till exempel "hundsköter" -> "hundskötare".
 7. Ange ALDRIG ett exakt totalt antal års erfarenhet i profiltexten om det inte uttryckligen angetts av användaren eller säkert kan verifieras från underlaget.
 8. Förväxla ALDRIG ålder, födelseår eller andra siffror med antal års erfarenhet.
+9. Byt inte ut kandidatens huvudsakliga professionella identitet eller nuvarande titel mot jobbannonsens titel om det inte finns tydligt stöd i underlaget.
+10. Om kandidaten har en tvärfunktionell eller specialiserad bakgrund ska den bevaras i profiltext och titel i stället för att förenklas för hårt.
+11. När CV:t anpassas mot en jobbannons ska du lyfta relevanta delar av kandidatens riktiga bakgrund, inte skriva om kandidaten som om hen redan haft exakt den sökta rollen.
 
 OUTPUT: Returnera ENBART ett JSON-objekt med exakt denna struktur (ingen text utanför JSON):
 

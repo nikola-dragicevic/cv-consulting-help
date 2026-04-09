@@ -148,16 +148,17 @@ def maybe_run_startup_catchup():
 def trigger_single_user_precompute(user_id: str):
     try:
         print(f"🧠 [MATCH PRECOMPUTE] Triggering first-build refresh for user={user_id}")
-        run_precomputed_match_refresh(mode="full", user_id=user_id, limit_users=1)
+        run_precomputed_match_refresh(mode="full", user_id=user_id, limit_users=1, scope="local")
     except Exception as e:
         print(f"⚠️ [MATCH PRECOMPUTE] First-build refresh failed for user={user_id}: {e}")
 
 
-def trigger_precompute_for_user(user_id: str, mode: str = "auto"):
+def trigger_precompute_for_user(user_id: str, mode: str = "auto", scope: str = "auto"):
     try:
         resolved_mode = mode if mode in {"auto", "full", "incremental"} else "auto"
-        print(f"🧠 [MATCH PRECOMPUTE] Triggering refresh for user={user_id} mode={resolved_mode}")
-        run_precomputed_match_refresh(mode=resolved_mode, user_id=user_id, limit_users=1)
+        resolved_scope = scope if scope in {"auto", "local", "national"} else "auto"
+        print(f"🧠 [MATCH PRECOMPUTE] Triggering refresh for user={user_id} mode={resolved_mode} scope={resolved_scope}")
+        run_precomputed_match_refresh(mode=resolved_mode, user_id=user_id, limit_users=1, scope=resolved_scope)
     except Exception as e:
         print(f"⚠️ [MATCH PRECOMPUTE] Refresh failed for user={user_id}: {e}")
 
@@ -207,6 +208,8 @@ class ProfileUpdateWebhook(BaseModel):
 class MatchPrecomputeWebhook(BaseModel):
     user_id: str
     mode: str = "auto"
+    scope: str = "auto"
+    radius_km: float | None = None
 
 
 def _clean_string_list(values, limit: int = 12) -> list[str]:
@@ -1280,6 +1283,12 @@ async def webhook_precompute_matches(req: MatchPrecomputeWebhook):
         if not profile:
             raise HTTPException(404, "Profile not found")
 
+        requested_radius_km = (
+            float(req.radius_km)
+            if isinstance(req.radius_km, (int, float)) and math.isfinite(req.radius_km) and req.radius_km > 0
+            else profile.get("commute_radius_km")
+        )
+
         profile_vector = profile.get("profile_vector")
         if not has_vector_value(profile_vector):
             try:
@@ -1291,7 +1300,7 @@ async def webhook_precompute_matches(req: MatchPrecomputeWebhook):
                         "last_error": None,
                         "last_pool_size": 0,
                         "saved_job_count": 0,
-                        "active_radius_km": profile.get("commute_radius_km"),
+                        "active_radius_km": requested_radius_km,
                         "candidate_lat": profile.get("location_lat"),
                         "candidate_lon": profile.get("location_lon"),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -1317,7 +1326,7 @@ async def webhook_precompute_matches(req: MatchPrecomputeWebhook):
                     "last_error": None,
                     "last_pool_size": 0,
                     "saved_job_count": 0,
-                    "active_radius_km": profile.get("commute_radius_km"),
+                    "active_radius_km": requested_radius_km,
                     "candidate_lat": profile.get("location_lat"),
                     "candidate_lon": profile.get("location_lon"),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -1329,7 +1338,7 @@ async def webhook_precompute_matches(req: MatchPrecomputeWebhook):
 
         Thread(
             target=trigger_precompute_for_user,
-            args=(req.user_id, req.mode),
+            args=(req.user_id, req.mode, req.scope),
             daemon=True,
         ).start()
 
@@ -1337,6 +1346,7 @@ async def webhook_precompute_matches(req: MatchPrecomputeWebhook):
             "status": "queued",
             "user_id": req.user_id,
             "mode": req.mode if req.mode in {"auto", "full", "incremental"} else "auto",
+            "scope": req.scope if req.scope in {"auto", "local", "national"} else "auto",
         }
     except HTTPException:
         raise

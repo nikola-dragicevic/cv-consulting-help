@@ -36,6 +36,7 @@ interface MatchInsightsProps {
   skillsData?: SkillsData;
   gapAnalysis?: GapAnalysis;
   keywordHits?: string[];
+  matchReasons?: string[];
 
   // Display mode
   compact?: boolean;
@@ -49,14 +50,12 @@ function normalizePercentValue(value: number) {
 
 export function MatchInsights({
   scoreMode = "jobbnu",
-  vectorSimilarity,
-  keywordScore,
-  keywordMissRate,
   finalScore,
   managerScore,
   managerExplanation,
   gapAnalysis,
   keywordHits,
+  matchReasons,
   compact = false,
 }: MatchInsightsProps) {
   const { t } = useLanguage();
@@ -66,49 +65,52 @@ export function MatchInsights({
 
   return (
     <div className="space-y-4">
-      {/* Candidate-facing summary: keep this useful without exposing the scoring recipe. */}
       {finalScore !== undefined && (
         <Card className="p-4">
-          <h3 className="font-semibold mb-3">
-            {scoreMode === "jobbnu" ? t("Varför jobbet passar dig", "Why this job fits you") : t("Matchsammanfattning", "Match summary")}
-          </h3>
-          <p className="mb-3 text-sm text-slate-600">
-            {scoreMode === "jobbnu"
-              ? t(
-                  "Det här jobbet har valts ut utifrån hur väl din profil, erfarenhet och dina nyckelkompetenser passar annonsen.",
-                  "This job was selected based on how well your profile, experience, and key skills fit the ad."
-                )
-              : t(
-                  "Vi har jämfört din profil med innehållet i annonsen för att uppskatta hur stark matchningen är.",
-                  "We compared your profile with the content of the ad to estimate how strong the match is."
-                )}
-          </p>
-          <div className="space-y-2 text-sm">
-            <ScoreBar
-              label={t("Relevanta kompetenser", "Relevant skills")}
-              value={keywordScore || vectorSimilarity || 0}
-              color="green"
-            />
-            {scoreMode === "jobbnu" && (
-              <ScoreBar
-                label={t("Täckning mot kravprofil", "Coverage against role requirements")}
-                value={1 - (keywordMissRate || 0)}
-                color="amber"
-              />
-            )}
-            <div className="pt-2 border-t">
-              <ScoreBar
-                label={scoreMode === "jobbnu" ? t("Total matchning", "Overall match") : t("Total matchning", "Overall match")}
-                value={finalScore}
-                color="indigo"
-                bold
-              />
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h3 className="font-semibold mb-2">
+                {scoreMode === "jobbnu" ? t("Det här stack ut i matchningen", "What stood out in the match") : t("Matchsammanfattning", "Match summary")}
+              </h3>
+              <p className="text-sm text-slate-600">
+                {scoreMode === "jobbnu"
+                  ? t(
+                      "Här ser du varför jobbet togs med i din lista och vad du bör lyfta i ditt CV eller mejl innan du skickar ansökan.",
+                      "Here you can see why this job was included in your list and what to highlight in your CV or email before applying."
+                    )
+                  : t(
+                      "Här ser du vad i din profil som ligger närmast annonsens innehåll.",
+                      "Here you can see what in your profile is closest to the job ad."
+                    )}
+              </p>
             </div>
+            <Badge variant="secondary" className="border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-900">
+              {getMatchLabel(finalScore, t)} · {normalizePercentValue(finalScore)}%
+            </Badge>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <InsightStat
+              label={t("Styrkor från annonsen", "Strengths from the ad")}
+              value={String((gapAnalysis?.matched_required?.length || 0) + (keywordHits?.length || 0))}
+              caption={t("matchpunkter hittade", "match points found")}
+              tone="emerald"
+            />
+            <InsightStat
+              label={t("Att lyfta i ansökan", "To highlight in the application")}
+              value={String(keywordHits?.length || gapAnalysis?.matched_required?.length || 0)}
+              caption={t("områden att betona", "areas to emphasize")}
+              tone="sky"
+            />
+            <InsightStat
+              label={t("Att stärka", "To strengthen")}
+              value={String((gapAnalysis?.missing_required?.length || 0) + (gapAnalysis?.missing_preferred?.length || 0))}
+              caption={t("punkter att bemöta", "points to address")}
+              tone="amber"
+            />
           </div>
         </Card>
       )}
 
-      {/* Layer 3: Manager Opinion */}
       {managerScore !== undefined && (
         <Card className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950">
           <div className="flex items-start gap-3">
@@ -129,19 +131,51 @@ export function MatchInsights({
         </Card>
       )}
 
-      {/* Layer 4: Gap Analysis */}
+      {(matchReasons && matchReasons.length > 0) || (keywordHits && keywordHits.length > 0) ? (
+        <Card className="p-4">
+          <h3 className="font-semibold">{t("Därför valdes jobbet ut", "Why this job was selected")}</h3>
+          {matchReasons && matchReasons.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-2 text-sm font-medium text-slate-700">
+                {t("Matchade delar av din profil", "Matched parts of your profile")}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {matchReasons.slice(0, 6).map((reason, idx) => (
+                  <Badge key={`${reason}-${idx}`} variant="secondary" className="text-xs">
+                    {reason}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+          {keywordHits && keywordHits.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-2 text-sm font-medium text-slate-700">
+                {t("Ord och kompetenser som redan finns i din profil", "Words and skills already found in your profile")}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {keywordHits.slice(0, 8).map((keyword) => (
+                  <Badge key={keyword} variant="outline" className="text-xs">
+                    {keyword}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      ) : null}
+
       {gapAnalysis && (
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold">{t("Kompetensmatch", "Skill Match")}</h3>
+            <h3 className="font-semibold">{t("Det här kan du betona eller stärka", "What you can emphasize or strengthen")}</h3>
             <CompletionBadge score={gapAnalysis.completion_score} />
           </div>
 
-          {/* Missing Required Skills */}
           {gapAnalysis.missing_required.length > 0 && (
             <div className="mb-3">
               <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-2">
-                {t("⚠️ Du saknar:", "⚠️ You are missing:")}
+                {t("Saknas tydligt i din profil eller i annonsmatchningen", "Not clearly visible in your profile or ad match")}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {gapAnalysis.missing_required.map((skill, idx) => (
@@ -153,11 +187,10 @@ export function MatchInsights({
             </div>
           )}
 
-          {/* Missing Preferred Skills */}
           {gapAnalysis.missing_preferred.length > 0 && (
             <div className="mb-3">
               <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mb-2">
-                {t("💡 Bra att ha:", "💡 Nice to have:")}
+                {t("Bra att få med om du har erfarenhet av det", "Good to mention if you have experience with it")}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {gapAnalysis.missing_preferred.map((skill, idx) => (
@@ -169,11 +202,10 @@ export function MatchInsights({
             </div>
           )}
 
-          {/* Matched Skills */}
           {gapAnalysis.matched_required.length > 0 && (
             <div>
               <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-2">
-                {t("✅ Du har:", "✅ You have:")}
+                {t("Det här matchar redan väl", "These parts already match well")}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {gapAnalysis.matched_required.slice(0, 8).map((skill, idx) => (
@@ -191,23 +223,42 @@ export function MatchInsights({
           )}
         </Card>
       )}
+    </div>
+  );
+}
 
-      {keywordHits && (
-        <Card className="p-4">
-          <h3 className="mb-3 font-semibold">{t("Nyckelord du innehåller", "Keywords you contain")}</h3>
-          {keywordHits.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {keywordHits.map((keyword) => (
-                <Badge key={keyword} variant="secondary" className="text-xs">
-                  {keyword}
-                </Badge>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">{t("Inga nyckelord hittades i den här annonsen.", "No keyword hits were found in this job ad.")}</p>
-          )}
-        </Card>
-      )}
+function getMatchLabel(
+  finalScore: number,
+  t: (sv: string, en: string) => string,
+) {
+  const pct = normalizePercentValue(finalScore);
+  if (pct >= 75) return t("Stark match", "Strong match");
+  if (pct >= 55) return t("Relevant match", "Relevant match");
+  return t("Möjlig match", "Possible match");
+}
+
+function InsightStat({
+  label,
+  value,
+  caption,
+  tone,
+}: {
+  label: string;
+  value: string;
+  caption: string;
+  tone: "emerald" | "sky" | "amber";
+}) {
+  const tones: Record<string, string> = {
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    sky: "border-sky-200 bg-sky-50 text-sky-950",
+    amber: "border-amber-200 bg-amber-50 text-amber-950",
+  };
+
+  return (
+    <div className={`rounded-xl border p-3 ${tones[tone]}`}>
+      <div className="text-xs font-medium uppercase tracking-wide opacity-80">{label}</div>
+      <div className="mt-2 text-2xl font-semibold">{value}</div>
+      <div className="mt-1 text-xs opacity-80">{caption}</div>
     </div>
   );
 }
@@ -237,42 +288,6 @@ function CompactMatchInsights({
         </div>
       )}
       {gapAnalysis && <CompletionBadge score={gapAnalysis.completion_score} />}
-    </div>
-  );
-}
-
-function ScoreBar({
-  label,
-  value,
-  color,
-  bold,
-}: {
-  label: string;
-  value: number;
-  color: string;
-  bold?: boolean;
-}) {
-  const percentage = normalizePercentValue(value);
-  const colorClasses: Record<string, string> = {
-    blue: "bg-blue-500",
-    green: "bg-green-500",
-    amber: "bg-amber-500",
-    purple: "bg-purple-500",
-    indigo: "bg-indigo-600",
-  };
-
-  return (
-    <div>
-      <div className="flex justify-between mb-1">
-        <span className={bold ? "font-semibold" : ""}>{label}</span>
-        <span className={bold ? "font-semibold" : ""}>{percentage}%</span>
-      </div>
-      <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className={`h-full ${colorClasses[color]} transition-all duration-300`}
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
     </div>
   );
 }

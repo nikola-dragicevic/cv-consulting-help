@@ -1,6 +1,7 @@
 // src/app/api/profile/route.ts
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { cityToGeo } from "@/lib/city-geo";
 import { geocodeAddress } from "@/lib/geocoder";
 import { triggerProfileVectorization } from "@/lib/profileVectorization";
@@ -245,6 +246,7 @@ export async function POST(req: Request) {
 
 export async function DELETE() {
   const supabase = await getServerSupabase();
+  const admin = getSupabaseAdmin();
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
 
   if (userErr || !user) {
@@ -266,7 +268,7 @@ export async function DELETE() {
       typeof existingProfile?.cv_bucket_path === "string" ? existingProfile.cv_bucket_path.trim() : "";
 
     if (cvBucketPath) {
-      const { error: removeStorageError } = await supabase.storage.from("cvs").remove([cvBucketPath]);
+      const { error: removeStorageError } = await admin.storage.from("cvs").remove([cvBucketPath]);
       if (removeStorageError) {
         console.error("Failed to remove CV from storage:", removeStorageError);
       }
@@ -284,7 +286,7 @@ export async function DELETE() {
       vector_generation_attempts: 0,
     };
 
-    const { error: updateError } = await supabase
+    const { error: updateError } = await admin
       .from("candidate_profiles")
       .update(clearedProfileFields)
       .eq("user_id", user.id);
@@ -293,7 +295,7 @@ export async function DELETE() {
       throw new Error(`Could not clear CV data: ${updateError.message}`);
     }
 
-    const { error: deleteMatchesError } = await supabase
+    const { error: deleteMatchesError } = await admin
       .from("candidate_job_matches")
       .delete()
       .eq("user_id", user.id);
@@ -306,7 +308,7 @@ export async function DELETE() {
       console.error("Failed to remove candidate_job_matches rows:", deleteMatchesError);
     }
 
-    const { error: resetMatchStateError } = await supabase
+    const { error: resetMatchStateError } = await admin
       .from("candidate_match_state")
       .upsert(
         {

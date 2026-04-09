@@ -1,4 +1,6 @@
 FROM node:20-alpine AS base
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont
+ENV CHROMIUM_PATH=/usr/bin/chromium-browser
 
 # Install dependencies only when needed
 FROM base AS deps

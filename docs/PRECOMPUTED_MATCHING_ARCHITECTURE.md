@@ -10,22 +10,24 @@ The old dashboard pipeline starts from a taxonomy-filtered pool. That is fast, b
 
 The new pipeline changes the order:
 
-1. retrieve a broad semantic pool across all active Sweden jobs
-2. re-score that pool in the worker
-3. save the best jobs per user
-4. let the dashboard read from saved rows
+1. filter active jobs by the candidate's radius first
+2. sort the radius-filtered pool by vector similarity
+3. re-score that pool in the worker
+4. save the best jobs per user
+5. let the dashboard read from saved rows
 
 ## Core Matching Model
 
 For each user:
 
-1. Retrieve the top `1000` active jobs in Sweden by vector similarity only.
+1. Retrieve the top `500` active jobs within the candidate's radius, ordered by vector similarity.
 2. Re-score each retrieved job with:
    - vector similarity
    - keyword hits
    - keyword misses
+   - seniority penalty
    - taxonomy bonus
-3. Save the top `500` scored jobs in `candidate_job_matches`.
+3. Save the top `500` jobs in `candidate_job_matches`.
 
 The dashboard then reads from `candidate_job_matches` and applies:
 
@@ -39,10 +41,16 @@ The old live `/api/match/for-user` flow stays alive as a fallback until the prec
 
 Current worker-side scoring formula:
 
-- `base_score = 0.70 * vector_similarity + 0.20 * keyword_hit_rate - 0.10 * keyword_miss_rate`
+- `base_score = 0.70 * vector_similarity + 0.20 * keyword_hit_rate - 0.10 * keyword_miss_rate - seniority_penalty`
 - `taxonomy_bonus = 0.15 * taxonomy_hit_count`
 - `taxonomy_bonus = min(taxonomy_bonus, 0.45)`
 - `final_score = clamp(base_score + taxonomy_bonus, 0, 1)`
+
+Cheap seniority implementation:
+
+- candidate side uses `candidate_profiles.seniority_level`
+- job side uses lightweight title/description heuristics such as `junior`, `trainee`, `senior`, `lead`, `manager`, `erfaren` and explicit year phrases
+- when the job appears to require a higher level than the candidate profile, a negative score penalty is applied
 
 ## Taxonomy Bonus
 
@@ -65,14 +73,14 @@ Future expansion candidates:
 
 Current limits:
 
-- semantic retrieval pool per full refresh: `1000`
+- semantic retrieval pool per full refresh: `500`
 - saved final jobs per user: `500`
 - max incremental new inserts/replacements per user per run: `300`
 
 Why:
 
-- `1000` gives semantic breadth
-- `500` is enough depth for a user-facing dashboard
+- `500` keeps the SQL radius-first pool bounded and fast enough to run nightly
+- `500` gives enough depth for local dashboard reads
 - `300` keeps daily incremental updates bounded
 
 ## What "Offline" Means
@@ -136,7 +144,7 @@ Used when:
 
 Flow:
 
-1. retrieve top `1000` semantic jobs
+1. retrieve top `500` radius-filtered semantic jobs
 2. score them in worker code
 3. save top `500`
 4. delete stale rows for that user
@@ -193,14 +201,37 @@ So first-time users no longer need to rely on a heavy live Whole Sweden run to g
 
 ### Radius and Whole Sweden
 
-Precomputed rows are retrieved nationally first.
+Precomputed rows are now built from the candidate's radius first for the local scope.
 
 Dashboard filtering is then applied on top of saved rows:
 
-- `Hela Sverige` shows the saved national set
+- `Hela Sverige` shows the saved set without local filtering
 - local dashboard mode filters by `distance_m <= selected radius`
 
-This keeps matching broad while making dashboard reads cheap.
+This makes saved matches much more locally relevant while keeping dashboard reads cheap.
+
+### Local Radius Reuse
+
+Local matching should avoid unnecessary heavy re-runs when the user lowers the radius.
+
+Desired behavior:
+
+- if the local saved pool was last built for `40 km`
+- and the user lowers the dashboard radius to `20 km`
+- then the dashboard should reuse the existing saved local pool
+- and simply filter saved rows by `distance_m <= 20 km`
+
+Heavy local recompute is only needed when:
+
+- the user increases the local radius beyond the saved local pool radius
+- the saved local pool is missing
+- the profile changed
+- nightly/incremental refresh decides the pool is stale
+
+This gives us the best of both:
+
+- larger local saved pool when needed
+- cheap smaller-area reads after that
 
 ## Worker Integration
 

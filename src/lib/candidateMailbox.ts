@@ -98,6 +98,14 @@ function encodeBase64Url(value: string | Buffer) {
     .replace(/=+$/g, "")
 }
 
+function encodeMimeHeader(value: string) {
+  if (!/[^\x20-\x7E]/.test(value)) {
+    return value
+  }
+  const base64 = Buffer.from(value, "utf-8").toString("base64")
+  return `=?UTF-8?B?${base64}?=`
+}
+
 function buildMimeMessage(params: {
   from: string
   to: string
@@ -128,7 +136,7 @@ function buildMimeMessage(params: {
   const mime = [
     `From: ${params.from}`,
     `To: ${params.to}`,
-    `Subject: ${params.subject}`,
+    `Subject: ${encodeMimeHeader(params.subject)}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
     "",
